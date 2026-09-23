@@ -1,0 +1,35 @@
+name: Detector request
+description: Propose a new failure pattern for agent-postmortem to detect.
+title: "[detector]: "
+labels: ["detector-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A good detector request pins down an observable pattern in the run
+        data (journal, meta, or transcript), not just a symptom you noticed
+        once. See `docs/DESIGN.md` section 4.3 for what an existing detector
+        looks like and section 6 for the fixture format.
+  - type: textarea
+    attributes:
+      label: The failure pattern
+      description: What silently went wrong, and how you'd recognize it from the run data alone.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Evidence
+      description: |
+        A redacted excerpt from `journal.jsonl`, a `meta.json`, or a
+        transcript line that shows the pattern (use
+        `agent-postmortem run <id> --bug-report`, or hand-redact it
+        yourself; never paste a real session id or absolute path).
+      render: json
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: What rule would have prevented it
+      description: If this became a suggested rule (docs/DESIGN.md section 9), what should it say?
+    validations:
+      required: false

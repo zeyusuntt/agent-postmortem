@@ -1,0 +1,3 @@
+{"type":"launched","timestamp":"2026-01-08T14:00:00.000Z"}
+{"type":"started","timestamp":"2026-01-08T14:00:01.000Z","key":"v2:review-report","agentId":"ac400000000000001","label":"review:report","phase":"Review"}
+{"type":"result","timestamp":"2026-01-08T14:00:12.000Z","agentId":"ac400000000000001","key":"v2:review-report","outcome":"completed"}

@@ -1,0 +1,13 @@
+{
+  "name": "agent-postmortem",
+  "owner": {
+    "name": "zeyusuntt"
+  },
+  "plugins": [
+    {
+      "name": "agent-postmortem",
+      "source": "./plugin",
+      "description": "Read-only post-mortem analysis for multi-agent Claude Code runs, surfaced automatically as you work."
+    }
+  ]
+}

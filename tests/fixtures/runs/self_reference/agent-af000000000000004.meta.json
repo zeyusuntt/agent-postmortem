@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Explain a pasted review comment.",
+  "workflowPhase": "Review",
+  "spawnDepth": "1",
+  "requestShape": "single",
+  "requestNonInteractive": "true"
+}

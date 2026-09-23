@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Use the sandboxed reviewer to write a findings report.",
+  "workflowPhase": "Review",
+  "spawnDepth": "1",
+  "requestShape": "single",
+  "requestNonInteractive": "true"
+}

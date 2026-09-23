@@ -1,0 +1,4 @@
+{"type":"launched","timestamp":"2026-09-20T10:00:00.000Z"}
+NOT-VALID-JSON
+{"type":"started","timestamp":"2026-09-20T10:00:01.000Z","key":"v2:incomplete0001","agentId":"ad000000000000001","label":"impl:incomplete","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-20T10:05:00.000Z","agentId":"ad000000000000001","key":"v2:incomplete0001","outcome":"completed"}

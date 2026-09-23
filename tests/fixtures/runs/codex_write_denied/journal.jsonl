@@ -1,0 +1,7 @@
+{"type":"launched","timestamp":"2026-01-09T08:00:00.000Z"}
+{"type":"started","timestamp":"2026-01-09T08:00:01.000Z","key":"v2:codex-review","agentId":"ac500000000000001","label":"review:proxy-doctor","phase":"Review"}
+{"type":"result","timestamp":"2026-01-09T08:05:00.000Z","agentId":"ac500000000000001","key":"v2:codex-review","outcome":"completed"}
+{"type":"started","timestamp":"2026-01-09T08:10:00.000Z","key":"v2:shell-cleanup","agentId":"ac500000000000002","label":"impl:cleanup","phase":"Implement"}
+{"type":"result","timestamp":"2026-01-09T08:15:00.000Z","agentId":"ac500000000000002","key":"v2:shell-cleanup","outcome":"completed"}
+{"type":"started","timestamp":"2026-01-09T08:20:00.000Z","key":"v2:print-marker","agentId":"ac500000000000003","label":"impl:print-marker","phase":"Implement"}
+{"type":"result","timestamp":"2026-01-09T08:25:00.000Z","agentId":"ac500000000000003","key":"v2:print-marker","outcome":"completed"}

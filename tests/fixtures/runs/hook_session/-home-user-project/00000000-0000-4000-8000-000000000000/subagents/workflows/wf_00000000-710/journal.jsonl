@@ -1,0 +1,4 @@
+{"type":"launched","timestamp":"2026-02-01T10:00:01.000Z"}
+{"type":"started","timestamp":"2026-02-01T10:00:02.000Z","key":"v2:impl-alpha","agentId":"ae100000000000001","label":"impl:alpha","phase":"Implement"}
+{"type":"started","timestamp":"2026-02-01T10:05:02.000Z","key":"v2:impl-alpha","agentId":"ae100000000000002","label":"impl:alpha","phase":"Implement"}
+{"type":"result","timestamp":"2026-02-01T10:10:02.000Z","agentId":"ae100000000000002","key":"v2:impl-alpha","outcome":"completed"}

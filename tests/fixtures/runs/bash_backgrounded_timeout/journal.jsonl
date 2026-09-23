@@ -1,0 +1,3 @@
+{"type":"launched","timestamp":"2026-01-07T09:00:00.000Z"}
+{"type":"started","timestamp":"2026-01-07T09:00:01.000Z","key":"v2:bg-timeout","agentId":"ac300000000000001","label":"impl:longrunner","phase":"Implement"}
+{"type":"result","timestamp":"2026-01-07T09:20:00.000Z","agentId":"ac300000000000001","key":"v2:bg-timeout","outcome":"completed"}

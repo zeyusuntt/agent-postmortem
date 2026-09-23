@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Run the long build and the slow test suite.",
+  "workflowPhase": "Implement",
+  "spawnDepth": "1",
+  "requestShape": "single",
+  "requestNonInteractive": "true"
+}

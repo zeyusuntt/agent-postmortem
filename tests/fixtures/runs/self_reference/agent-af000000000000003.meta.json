@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Run the codex companion task runner.",
+  "workflowPhase": "Implement",
+  "spawnDepth": "1",
+  "requestShape": "single",
+  "requestNonInteractive": "true"
+}

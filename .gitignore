@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+docs/review-*.md.tmp
+
+.reviews/
+tests/privacy-denylist.local

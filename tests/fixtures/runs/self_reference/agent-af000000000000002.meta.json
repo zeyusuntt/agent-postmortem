@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "sed the classifier-outage marker constant.",
+  "workflowPhase": "Review",
+  "spawnDepth": "1",
+  "requestShape": "single",
+  "requestNonInteractive": "true"
+}

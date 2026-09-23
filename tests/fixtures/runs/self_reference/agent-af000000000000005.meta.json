@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Loop over the marker source file with cat.",
+  "workflowPhase": "Review",
+  "spawnDepth": "1",
+  "requestShape": "single",
+  "requestNonInteractive": "true"
+}

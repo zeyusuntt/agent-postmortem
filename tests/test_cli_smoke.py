@@ -1,0 +1,738 @@
+"""Smoke tests for the postmortem CLI: right exit codes, right header, valid JSON."""
+
+import json
+from pathlib import Path
+
+import agent_postmortem
+from agent_postmortem import __version__, rules, state
+from agent_postmortem.cli import _build_parser, main
+
+FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs" / "reader_minimal"
+MAIN_RUN = (
+    FIXTURES_ROOT
+    / "-home-user-project"
+    / "00000000-0000-4000-8000-000000000000"
+    / "subagents"
+    / "workflows"
+    / "wf_b0000000-002"
+)
+DEMO_RUN = Path(agent_postmortem.__file__).parent / "demo" / "wf_00000000-d30"
+
+
+def test_run_on_fixture_path_exits_four_and_prints_run_header(capsys):
+    # wf_b0000000-002's agent-a1111111111111111.jsonl carries one
+    # undecodable line (NOT-JSON-AT-ALL, docs/DESIGN.md 4.6) out of five, a
+    # 20% rate well past the 5% threshold: this run's status is INCOMPLETE
+    # (docs/DESIGN.md 4.6), and since it has no critical finding, exit code
+    # 4 (INCOMPLETE without FAILED), not 0.
+    code = main(["run", str(MAIN_RUN)])
+    captured = capsys.readouterr()
+    assert code == 4, captured.err
+    assert captured.out.splitlines()[0].startswith("RUN wf_b0000000-002")
+    assert "(INCOMPLETE)" in captured.out.splitlines()[0]
+
+
+def test_run_json_flag_emits_valid_json(capsys):
+    code = main(["run", str(MAIN_RUN), "--json"])
+    captured = capsys.readouterr()
+    # See test_run_on_fixture_path_exits_four_and_prints_run_header: this
+    # fixture's status is INCOMPLETE, so exit code 4, not 0.
+    assert code == 4, captured.err
+    payload = json.loads(captured.out)
+    assert payload["run"]["run_id"] == "wf_b0000000-002"
+    assert "findings" in payload
+    assert "verdict" in payload
+    assert payload["status"] == "INCOMPLETE"
+
+
+INCOMPLETE_JOURNAL_RUN = Path(__file__).parent / "fixtures" / "runs" / "incomplete_journal"
+
+
+def test_run_on_incomplete_journal_fixture_exits_four_without_a_critical_finding(capsys):
+    """docs/DESIGN.md 4.6: a journal with an undecodable line makes
+    Run.status INCOMPLETE; with no critical finding (this run is CLEAN
+    otherwise) that is exit code 4, not 0."""
+    code = main(["run", str(INCOMPLETE_JOURNAL_RUN)])
+    captured = capsys.readouterr()
+    assert code == 4, captured.err
+    assert "(INCOMPLETE)" in captured.out.splitlines()[0]
+    assert "CLEAN" in captured.out.splitlines()[0]
+
+
+def test_scan_with_no_runs_under_root_exits_two(tmp_path, capsys):
+    code = main(["scan", "--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "no runs found" in captured.err
+
+
+def test_run_with_unknown_run_id_exits_two(capsys):
+    code = main(["run", "wf_does-not-exist", "--root", str(FIXTURES_ROOT)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+
+
+def test_run_with_ambiguous_prefix_exits_one_and_lists_candidates(tmp_path, capsys):
+    """docs/DESIGN.md 4.8: RUN_ID may be a prefix of either kind; a prefix
+    matching more than one run is a usage error listing every candidate."""
+    project = tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
+    for suffix in ("001", "002"):
+        run_dir = project / "subagents" / "workflows" / f"wf_dup00000-{suffix}"
+        run_dir.mkdir(parents=True)
+        (run_dir / "journal.jsonl").write_text("", encoding="utf-8")
+
+    code = main(["run", "wf_dup", "--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "wf_dup00000-001" in captured.err
+    assert "wf_dup00000-002" in captured.err
+
+
+def test_run_on_a_session_jsonl_path_exits_zero(capsys):
+    session_path = (
+        Path(__file__).parent / "fixtures" / "runs" / "session_clean" / "-home-user-project"
+        / "00000000-0000-4000-8000-000000000000.jsonl"
+    )
+    code = main(["run", str(session_path)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert "(session)" in captured.out.splitlines()[0]
+
+
+def test_run_on_an_arbitrary_file_is_refused_not_reported_clean(tmp_path, capsys):
+    """A file that happens to exist (for example README.md) is not a run
+    directory and must never be silently scored CLEAN with zero attempts."""
+    readme = tmp_path / "README.md"
+    readme.write_text("not a run\n", encoding="utf-8")
+    code = main(["run", str(readme)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "CLEAN" not in captured.out
+    assert captured.out == ""
+
+
+def test_run_on_a_directory_without_a_journal_is_refused_not_reported_clean(tmp_path, capsys):
+    empty_dir = tmp_path / "not-a-run"
+    empty_dir.mkdir()
+    code = main(["run", str(empty_dir)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "CLEAN" not in captured.out
+    assert captured.out == ""
+
+
+def test_rules_all_lists_the_full_library_even_with_no_runs(tmp_path, capsys):
+    code = main(["rules", "--root", str(tmp_path), "--all"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert "R-RETRY-SAFE" in captured.out
+    assert "R-MODEL-ALLOCATION" in captured.out
+
+
+def test_rules_json_flag_emits_valid_json(tmp_path, capsys):
+    """M8 review D2/D6: rules gains --json like the other commands."""
+    code = main(["rules", "--root", str(tmp_path), "--all", "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    payload = json.loads(captured.out)
+    assert any(row["rule_id"] == "R-RETRY-SAFE" for row in payload)
+
+
+def test_rules_show_json_flag_emits_valid_json(capsys):
+    code = main(["rules", "--show", "R-RETRY-SAFE", "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    payload = json.loads(captured.out)
+    assert payload["rule_id"] == "R-RETRY-SAFE"
+
+
+def test_rules_no_runs_error_is_redacted_by_default_and_raw_with_no_redact(capsys):
+    """M8 review D2: rules' own error messages route through the active
+    Redactor exactly like run/scan/apply/trend's do -- a --root under the
+    user's home is exactly the kind of path redaction exists for."""
+    missing_root = Path.home() / "agent-postmortem-fixture-missing-root"
+    assert not missing_root.exists()
+
+    code = main(["rules", "--root", str(missing_root)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert str(Path.home()) not in captured.err
+    assert "~" in captured.err
+
+    code = main(["rules", "--root", str(missing_root), "--no-redact"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert str(missing_root) in captured.err
+
+
+def test_apply_dry_run_exits_zero_and_prints_a_diff(tmp_path, capsys):
+    target = tmp_path / "CLAUDE.md"
+    code = main(["apply", "R-RETRY-SAFE", "--target", str(target)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert not target.exists()
+    assert "R-RETRY-SAFE" in captured.out
+
+
+def test_apply_dry_run_diff_is_redacted_by_default_and_raw_with_no_redact(capsys):
+    """M8 review D2: apply's own diff (a unified diff quotes its target path
+    twice, in the --- and +++ headers) routes through the active Redactor
+    exactly like its error messages already do."""
+    target = Path.home() / "agent-postmortem-fixture-apply-target.md"
+    assert not target.exists()
+
+    code = main(["apply", "R-RETRY-SAFE", "--target", str(target)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert not target.exists()
+    assert str(Path.home()) not in captured.out
+    assert "~" in captured.out
+
+    code = main(["apply", "R-RETRY-SAFE", "--target", str(target), "--no-redact"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert str(target) in captured.out
+
+
+def test_apply_write_reports_already_present_recorded_for_drift(tmp_path, capsys, monkeypatch):
+    """docs/DESIGN.md 9: a target that already carries the rule but has no
+    matching applied entry gets a distinct message from a true no-op, and
+    --write records the missing entry."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    target = tmp_path / "CLAUDE.md"
+    target.write_text(
+        f"{rules.BEGIN_MARKER}\n- R-GIT-CWD: {rules.RULES['R-GIT-CWD'].text}\n{rules.END_MARKER}\n",
+        encoding="utf-8",
+    )
+
+    code = main(["apply", "R-GIT-CWD", "--target", str(target), "--write"])
+    captured = capsys.readouterr()
+
+    assert code == 0, captured.err
+    assert "already present, recorded" in captured.out
+    assert len(state.load_state()["applied"]) == 1
+
+
+def test_apply_dry_run_reports_already_present_recorded_for_drift_without_writing(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    target = tmp_path / "CLAUDE.md"
+    target.write_text(
+        f"{rules.BEGIN_MARKER}\n- R-GIT-CWD: {rules.RULES['R-GIT-CWD'].text}\n{rules.END_MARKER}\n",
+        encoding="utf-8",
+    )
+
+    code = main(["apply", "R-GIT-CWD", "--target", str(target)])
+    captured = capsys.readouterr()
+
+    assert code == 0, captured.err
+    assert "already present, recorded" in captured.out
+    assert not state.state_path().exists()  # dry run: no write happened
+
+
+def test_apply_second_write_still_reports_plain_nothing_to_do(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    target = tmp_path / "CLAUDE.md"
+
+    main(["apply", "R-GIT-CWD", "--target", str(target), "--write"])
+    capsys.readouterr()
+    code = main(["apply", "R-GIT-CWD", "--target", str(target), "--write"])
+    captured = capsys.readouterr()
+
+    assert code == 0, captured.err
+    assert "nothing to do" in captured.out
+    assert "recorded" not in captured.out
+
+
+def test_apply_error_message_is_redacted_by_default_and_raw_with_no_redact(tmp_path, capsys, monkeypatch):
+    """docs/DESIGN.md 5: every CLI error message that may carry a path
+    passes through the active Redactor before printing."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    target = tmp_path / "CLAUDE.md"
+    session_id = "00000000-0000-4000-8000-000000000000"
+
+    def _boom(rule_id, target, write=False):
+        raise OSError(f"could not lock state.lock (session {session_id})")
+
+    monkeypatch.setattr(rules, "apply_rule", _boom)
+
+    code = main(["apply", "R-GIT-CWD", "--target", str(target), "--write"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert session_id not in captured.err
+    assert "uuid:0000" in captured.err
+
+    code = main(["apply", "R-GIT-CWD", "--target", str(target), "--write", "--no-redact"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert session_id in captured.err
+
+
+def test_apply_write_on_a_symlinked_target_exits_one_with_a_clear_message(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    real_target = tmp_path / "real.md"
+    real_target.write_text("# rules\n", encoding="utf-8")
+    link = tmp_path / "CLAUDE.md"
+    link.symlink_to(real_target)
+
+    code = main(["apply", "R-RETRY-SAFE", "--target", str(link), "--write"])
+    captured = capsys.readouterr()
+
+    assert code == 1
+    assert "symlink" in captured.err
+    assert real_target.read_text(encoding="utf-8") == "# rules\n"
+
+
+def test_scan_wasted_hours_reflects_the_wasted_time_metric(capsys):
+    """wf_b0000000-002 has one killed, non-final attempt (5 minutes); the
+    fleet total must reflect it, not stay 0.0h. This fixture root also
+    contains that same run's INCOMPLETE status (docs/DESIGN.md 4.6), and no
+    FAILED run, so scan's own exit code is 4, matching 'run' on that run
+    alone (see test_run_on_fixture_path_exits_four_and_prints_run_header)."""
+    code = main(["scan", "--root", str(FIXTURES_ROOT), "--json"])
+    captured = capsys.readouterr()
+    assert code == 4, captured.err
+    payload = json.loads(captured.out)
+    assert payload["totals"]["workflow"]["wasted_hours"] > 0.0
+
+
+def test_scan_exits_three_when_any_run_is_failed(tmp_path, capsys):
+    """docs/DESIGN.md 4.6/4.7: scan's exit code must reflect the worst
+    verdict across the fleet, the same as 'run' does for a single run
+    (exit code 3, verdict FAILED, whenever any critical finding fires)."""
+    project = tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
+    run_dir = project / "subagents" / "workflows" / "wf_00000000-930"
+    run_dir.mkdir(parents=True)
+    (run_dir / "journal.jsonl").write_text(
+        '{"type":"started","key":"v2:a","agentId":"a1111111111111111",'
+        '"label":"impl:x","phase":"Implement"}\n',
+        encoding="utf-8",
+    )
+    (run_dir / "agent-a1111111111111111.jsonl").write_text(
+        '{"type":"user","message":{"role":"user","content":'
+        '"write the summary to /tmp/agent-postmortem-scan-exit-930.md"},'
+        '"timestamp":"2026-09-01T10:00:00Z"}\n',
+        encoding="utf-8",
+    )
+    code = main(["scan", "--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 3, captured.err
+    assert "FAILED" in captured.out
+
+
+def test_scan_exits_four_when_a_run_is_incomplete_without_any_failed(tmp_path, capsys):
+    """docs/DESIGN.md 4.6/4.7: exit code 4 (INCOMPLETE without FAILED) when
+    no scanned run is FAILED but at least one is INCOMPLETE."""
+    project = tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
+    run_dir = project / "subagents" / "workflows" / "wf_00000000-940"
+    run_dir.mkdir(parents=True)
+    (run_dir / "journal.jsonl").write_text(
+        "NOT-VALID-JSON\n"
+        '{"type":"started","key":"v2:a","agentId":"a1111111111111111",'
+        '"label":"impl:x","phase":"Implement"}\n',
+        encoding="utf-8",
+    )
+    code = main(["scan", "--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 4, captured.err
+    assert "INCOMPLETE" in captured.out
+
+
+def test_scan_exits_zero_when_every_run_is_clean_and_complete(tmp_path, capsys):
+    _write_minimal_session(tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000")
+    code = main(["scan", "--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+
+
+def test_scan_runs_with_retries_ignores_an_unkeyed_attempt(tmp_path, capsys):
+    """A run whose only 'started' journal event carries no key must not be
+    counted as a run with retries: it has one agent, one attempt, zero
+    actual restarts."""
+    project = tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
+    run_dir = project / "subagents" / "workflows" / "wf_00000000-999"
+    run_dir.mkdir(parents=True)
+    (run_dir / "journal.jsonl").write_text(
+        '{"type":"started","agentId":"a9999999999999999","label":"impl:x","phase":"Implement"}\n',
+        encoding="utf-8",
+    )
+    code = main(["scan", "--root", str(tmp_path), "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    payload = json.loads(captured.out)
+    assert payload["totals"]["workflow"]["runs_with_retries"] == 0
+
+
+def test_trend_with_no_runs_under_root_exits_two(tmp_path, capsys):
+    code = main(["trend", "--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "no runs found" in captured.err
+
+
+def test_trend_state_read_error_message_is_redacted_by_default_and_raw_with_no_redact(
+    tmp_path, capsys, monkeypatch
+):
+    """docs/DESIGN.md 5: every CLI error message that may carry a path
+    passes through the active Redactor before printing, including a
+    filesystem error reading the state file."""
+    session_id = "00000000-0000-4000-8000-000000000000"
+
+    def _boom(path=None):
+        raise OSError(f"permission denied reading state (session {session_id})")
+
+    monkeypatch.setattr(state, "load_state", _boom)
+
+    code = main(["trend", "--root", str(FIXTURES_ROOT)])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert session_id not in captured.err
+    assert "uuid:0000" in captured.err
+
+    code = main(["trend", "--root", str(FIXTURES_ROOT), "--no-redact"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert session_id in captured.err
+
+
+def test_trend_redacts_applied_rule_target_by_default(tmp_path, monkeypatch, capsys):
+    """docs/DESIGN.md 5.1: by default a trend target renders as
+    'target-N (basename)', never the raw path (structural redact() alone
+    would leave everything past the home directory, such as a client name
+    in the path, untouched); the raw path only shows with --no-redact."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+    real_home_target = Path.home() / ".claude" / "CLAUDE.md"
+    entry = {"rule_id": "R-RETRY-SAFE", "target": str(real_home_target), "applied_at": state.now_iso()}
+    state.update(lambda s: s["applied"].append(entry))
+
+    code = main(["trend", "--root", str(FIXTURES_ROOT)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert str(Path.home()) not in captured.out
+    assert "target-1 (CLAUDE.md)" in captured.out
+
+    code = main(["trend", "--root", str(FIXTURES_ROOT), "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert str(Path.home()) not in captured.out
+    payload = json.loads(captured.out)
+    assert payload["before_after"][0]["target"] == "target-1 (CLAUDE.md)"
+
+    code = main(["trend", "--root", str(FIXTURES_ROOT), "--no-redact"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert str(real_home_target) in captured.out
+
+
+def test_scan_tolerates_a_stray_workflow_dir_without_journal(tmp_path, capsys):
+    """docs/DESIGN.md 4.2: discover_runs finds every wf_* directory
+    regardless of contents; a stray one with no journal.jsonl must not
+    abort the whole fleet scan with an uncaught NotARun. It still loads (with
+    a missing-journal diagnostic, docs/DESIGN.md 4.6), so its status is
+    INCOMPLETE and scan's own exit code reflects that (4, not 0)."""
+    stray = (
+        tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
+        / "subagents" / "workflows" / "wf_00000000-777"
+    )
+    stray.mkdir(parents=True)
+    code = main(["scan", "--root", str(tmp_path), "--json"])
+    captured = capsys.readouterr()
+    assert code == 4, captured.err
+    payload = json.loads(captured.out)
+    assert payload["totals"]["workflow"]["runs"] == 1
+
+
+def _write_minimal_session(root: Path, slug: str, uuid: str) -> Path:
+    slug_dir = root / slug
+    slug_dir.mkdir(parents=True, exist_ok=True)
+    session_path = slug_dir / f"{uuid}.jsonl"
+    session_path.write_text(
+        '{"type":"user","message":{"role":"user","content":"hi"},'
+        f'"sessionId":"{uuid}","timestamp":"2026-09-01T10:00:00Z"}}\n',
+        encoding="utf-8",
+    )
+    return session_path
+
+
+def _write_minimal_workflow(root: Path, slug: str, uuid: str, wf_id: str) -> Path:
+    run_dir = root / slug / uuid / "subagents" / "workflows" / wf_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "journal.jsonl").write_text("", encoding="utf-8")
+    return run_dir
+
+
+def test_scan_kind_filter_session_only_in_text_and_json(tmp_path, capsys):
+    _write_minimal_session(tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000")
+    _write_minimal_workflow(
+        tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000", "wf_00000000-820"
+    )
+
+    code = main(["scan", "--root", str(tmp_path), "--kind", "session"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    # Row lines carry each run's own kind and must reflect the filter; the
+    # stratified totals section (docs/DESIGN.md 4.7, M3b) always shows a
+    # "workflow runs" line, even at zero, so only the row lines are checked
+    # for the literal word "workflow".
+    row_lines = captured.out.split("\n\n", 1)[0]
+    assert "session" in row_lines
+    assert "workflow" not in row_lines
+    assert "0 workflow runs" in captured.out
+
+    code = main(["scan", "--root", str(tmp_path), "--kind", "session", "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    payload = json.loads(captured.out)
+    assert len(payload["rows"]) == 1
+    assert payload["rows"][0]["kind"] == "session"
+
+
+def test_scan_kind_filter_workflow_only_in_json(tmp_path, capsys):
+    _write_minimal_session(tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000")
+    _write_minimal_workflow(
+        tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000", "wf_00000000-820"
+    )
+    code = main(["scan", "--root", str(tmp_path), "--kind", "workflow", "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    payload = json.loads(captured.out)
+    assert len(payload["rows"]) == 1
+    assert payload["rows"][0]["kind"] == "workflow"
+
+
+def test_scan_text_output_shows_the_kind_column(tmp_path, capsys):
+    _write_minimal_session(tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000")
+    code = main(["scan", "--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert "session" in captured.out.splitlines()[0]
+
+
+def test_scan_totals_are_stratified_by_kind(tmp_path, capsys):
+    """docs/DESIGN.md 4.7: scan's totals are stratified by kind, not one
+    combined count -- a fleet with both kinds must report workflow and
+    session numbers separately, each over its own runs."""
+    _write_minimal_session(tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000")
+    _write_minimal_workflow(
+        tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000", "wf_00000000-820"
+    )
+    code = main(["scan", "--root", str(tmp_path), "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    payload = json.loads(captured.out)
+    totals = payload["totals"]
+    assert totals["workflow"]["runs"] == 1
+    assert totals["session"]["runs"] == 1
+    assert set(totals["workflow"]) == {"runs", "runs_with_retries", "attempts", "wasted_hours"}
+    assert set(totals["session"]) == {"runs", "subagents", "interrupted"}
+
+    code = main(["scan", "--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert "workflow runs" in captured.out
+    assert "session runs" in captured.out
+
+
+def test_scan_marks_an_unfinished_workflow_row_unfinished(tmp_path, capsys):
+    """docs/DESIGN.md 12's D-C: a workflow whose journal has a 'started'
+    key with no matching 'result' (Run.finished is False) gets its verdict
+    followed by an 'unfinished' marker on its scan row (not replaced by
+    one, docs/DESIGN.md 4.7), so `latest` can skip it."""
+    _write_minimal_session(tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000")
+    workflow_dir = _write_minimal_workflow(
+        tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000", "wf_00000000-820"
+    )
+    (workflow_dir / "journal.jsonl").write_text(
+        '{"type":"started","timestamp":"2026-09-01T10:00:00Z","key":"v2:a",'
+        '"agentId":"a1111111111111111","label":"impl:a","phase":"Implement"}\n',
+        encoding="utf-8",
+    )
+    code = main(["scan", "--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    lines = {line.split("  ")[0]: line for line in captured.out.splitlines() if line.startswith("wf_") or line.startswith("s_")}
+    workflow_line = next(line for run_id, line in lines.items() if run_id.startswith("wf_"))
+    session_line = next(line for run_id, line in lines.items() if run_id.startswith("s_"))
+    assert "CLEAN unfinished" in workflow_line
+    assert "unfinished" not in session_line
+
+    code = main(["scan", "--root", str(tmp_path), "--json"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    rows_by_kind = {row["kind"]: row for row in payload["rows"]}
+    assert rows_by_kind["workflow"]["finished"] is False
+    assert rows_by_kind["session"]["finished"] is True
+
+
+def test_run_on_an_unfinished_workflow_still_computes_and_prints_findings(tmp_path, capsys):
+    """docs/DESIGN.md 12's D-C: `run` on a workflow that has not finished
+    still computes and prints its real findings and verdict -- an
+    unfinished, retried, or abandoned run is exactly the run a user most
+    wants to inspect, so hiding it behind a bare "no verdict yet" line
+    would hide the most interesting runs. The header just adds an
+    '(unfinished)' tag; a critical finding still exits 3, same as any
+    other run (docs/DESIGN.md 4.6's exit codes are unaffected by
+    finished-ness)."""
+    workflow_dir = _write_minimal_workflow(
+        tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000", "wf_00000000-960",
+    )
+    (workflow_dir / "journal.jsonl").write_text(
+        '{"type":"started","timestamp":"2026-09-01T10:00:00Z","key":"v2:a",'
+        '"agentId":"a1111111111111111","label":"impl:a","phase":"Implement"}\n',
+        encoding="utf-8",
+    )
+    (workflow_dir / "agent-a1111111111111111.jsonl").write_text(
+        '{"type":"user","message":{"role":"user","content":'
+        '"write the summary to /tmp/agent-postmortem-scan-exit-960.md"},'
+        '"timestamp":"2026-09-01T10:00:01Z"}\n',
+        encoding="utf-8",
+    )
+    code = main(["run", str(workflow_dir)])
+    captured = capsys.readouterr()
+    # missing_artifact fires (critical): the message names a path that was
+    # never actually created -- exactly the kind of real finding the old
+    # short-circuit hid.
+    assert code == 3, captured.err
+    assert captured.out.startswith("RUN wf_00000000-960  FAILED (unfinished)\n")
+    assert "FINDINGS (critical 1" in captured.out
+
+
+def test_run_resolves_a_session_by_a_unique_s_prefix(tmp_path, capsys):
+    _write_minimal_session(tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000")
+    code = main(["scan", "--root", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    run_id = payload["rows"][0]["run_id"]
+    assert run_id.startswith("s_")
+
+    code = main(["run", run_id[:5], "--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert captured.out.splitlines()[0].startswith(f"RUN {run_id}")
+
+
+def test_json_export_omits_event_text(capsys):
+    # docs/DESIGN.md 5.3 (M3b): the export allowlist carries event_count, not
+    # an event list at all -- no per-event dict to check "text" against
+    # (findings carry curated, redacted evidence instead; the JSON export
+    # must not dump every tool-output excerpt, for privacy and size).
+    fixture = DEMO_RUN
+    rc = main(["run", str(fixture), "--json"])
+    assert rc in (0, 3)
+    data = json.loads(capsys.readouterr().out)
+    attempt = data["run"]["attempts"][0]
+    assert "events" not in attempt
+    assert "text" not in attempt
+    assert attempt["event_count"] > 0
+
+
+# --- CLAUDE_CONFIG_DIR ------------------------------------------------------
+
+
+def test_default_root_honors_claude_config_dir(tmp_path, monkeypatch):
+    """docs/DESIGN.md 4.8: default --root is ~/.claude/projects, overridable
+    by CLAUDE_CONFIG_DIR (first entry when comma-separated), for parity
+    with ccusage."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    parser = _build_parser()
+    args = parser.parse_args(["scan"])
+    assert args.root == tmp_path / "projects"
+
+
+def test_default_root_uses_the_first_of_several_comma_separated_dirs(tmp_path, monkeypatch):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", f"{first},{second}")
+    parser = _build_parser()
+    args = parser.parse_args(["scan"])
+    assert args.root == first / "projects"
+
+
+def test_default_root_falls_back_to_dot_claude_without_the_env_var(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    parser = _build_parser()
+    args = parser.parse_args(["scan"])
+    assert args.root == Path("~/.claude/projects").expanduser()
+
+
+def test_claude_config_dir_actually_changes_where_scan_looks(tmp_path, monkeypatch, capsys):
+    config_dir = tmp_path / "custom-config"
+    _write_minimal_session(config_dir / "projects", "-home-user-project", "00000000-0000-4000-8000-000000000000")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+    code = main(["scan"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert "session" in captured.out
+
+
+# --- --version ---------------------------------------------------------
+
+
+def test_version_flag_prints_version_and_exits_zero(capsys):
+    try:
+        code = main(["--version"])
+    except SystemExit as exc:
+        code = exc.code
+    captured = capsys.readouterr()
+    assert code == 0
+    assert captured.out.strip() == f"agent-postmortem {__version__}"
+
+
+# --- demo (docs/DESIGN.md 8.2) -----------------------------------------
+
+
+def test_demo_renders_the_packaged_run_through_the_normal_report_path(capsys):
+    code = main(["demo"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert captured.out.startswith("RUN ")
+    # docs/DESIGN.md 5.1: the packaged run's own label is pseudonymized by
+    # default, same as any other run's -- demo is not a redaction exemption.
+    assert "impl:silent-alpha" not in captured.out
+
+
+def test_demo_json_flag_emits_valid_json_for_the_packaged_run(capsys):
+    code = main(["demo", "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    payload = json.loads(captured.out)
+    assert payload["run"]["attempts"]
+
+
+def test_demo_loads_the_run_that_actually_lives_in_the_package(capsys):
+    assert DEMO_RUN.is_dir()
+    assert (DEMO_RUN / "journal.jsonl").exists()
+
+
+def test_demo_exit_code_matches_run_exit_code_on_the_packaged_run(capsys):
+    """docs/DESIGN.md 8.2's D5: demo is rendered through the normal run
+    path end to end, exit code included -- it must never diverge from
+    what `run` itself reports for the exact same directory."""
+    demo_code = main(["demo"])
+    capsys.readouterr()
+    run_code = main(["run", str(DEMO_RUN)])
+    capsys.readouterr()
+    assert demo_code == run_code
+
+
+def test_demo_exit_code_reflects_a_critical_finding_not_hardcoded_zero(monkeypatch, capsys):
+    """docs/DESIGN.md 8.2's D5: demo derives its exit code exactly like run
+    (3 critical, 4 INCOMPLETE, else 0); it must not hardcode 0 regardless
+    of what the packaged run's own findings turn out to be. The comparison
+    test above cannot expose this on its own, since the packaged demo run
+    happens to be DEGRADED (not FAILED/INCOMPLETE) today -- 0 either way."""
+    from agent_postmortem import cli as cli_module
+    from agent_postmortem.models import Finding
+
+    def _fake_findings(run):
+        return [
+            Finding(
+                detector="fake", severity="critical", title="synthetic",
+                run_id=run.run_id, agent_id=None, evidence=[], metrics={}, rule_id=None,
+            )
+        ]
+
+    monkeypatch.setattr(cli_module, "_run_findings", _fake_findings)
+    code = main(["demo"])
+    capsys.readouterr()
+    assert code == 3

@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Read the sandbox-denial marker constants.",
+  "workflowPhase": "Review",
+  "spawnDepth": "1",
+  "requestShape": "single",
+  "requestNonInteractive": "true"
+}

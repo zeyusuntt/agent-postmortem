@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Investigate the deploy-script timeout.",
+  "workflowPhase": "Implement",
+  "spawnDepth": "1",
+  "requestShape": "single",
+  "requestNonInteractive": "true"
+}

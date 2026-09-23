@@ -1,0 +1,5 @@
+{"type":"launched","timestamp":"2026-01-10T11:00:00.000Z"}
+{"type":"started","timestamp":"2026-01-10T11:00:01.000Z","key":"v2:audit-missing","agentId":"ac600000000000001","label":"audit:missing","phase":"Review"}
+{"type":"result","timestamp":"2026-01-10T11:05:00.000Z","agentId":"ac600000000000001","key":"v2:audit-missing","outcome":"completed"}
+{"type":"started","timestamp":"2026-01-10T11:10:00.000Z","key":"v2:audit-present","agentId":"ac600000000000002","label":"audit:present","phase":"Review"}
+{"type":"result","timestamp":"2026-01-10T11:15:00.000Z","agentId":"ac600000000000002","key":"v2:audit-present","outcome":"completed"}

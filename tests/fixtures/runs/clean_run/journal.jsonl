@@ -1,0 +1,5 @@
+{"type":"launched","timestamp":"2026-01-05T10:00:00.000Z"}
+{"type":"started","timestamp":"2026-01-05T10:00:01.000Z","key":"v2:clean-alpha","agentId":"ac100000000000001","label":"impl:alpha","phase":"Implement"}
+{"type":"started","timestamp":"2026-01-05T10:00:02.000Z","key":"v2:clean-beta","agentId":"ac100000000000002","label":"impl:beta","phase":"Implement"}
+{"type":"result","timestamp":"2026-01-05T10:05:00.000Z","agentId":"ac100000000000001","key":"v2:clean-alpha","outcome":"completed"}
+{"type":"result","timestamp":"2026-01-05T10:06:00.000Z","agentId":"ac100000000000002","key":"v2:clean-beta","outcome":"completed"}

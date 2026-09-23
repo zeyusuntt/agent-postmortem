@@ -1,0 +1,11 @@
+{"type":"launched","timestamp":"2026-01-11T08:00:00.000Z"}
+{"type":"started","timestamp":"2026-01-11T08:00:01.000Z","key":"v2:self-ref-a","agentId":"af000000000000001","label":"review:read-self","phase":"Review"}
+{"type":"result","timestamp":"2026-01-11T08:02:00.000Z","agentId":"af000000000000001","key":"v2:self-ref-a","outcome":"completed"}
+{"type":"started","timestamp":"2026-01-11T08:10:00.000Z","key":"v2:self-ref-b","agentId":"af000000000000002","label":"review:sed-self","phase":"Review"}
+{"type":"result","timestamp":"2026-01-11T08:12:00.000Z","agentId":"af000000000000002","key":"v2:self-ref-b","outcome":"completed"}
+{"type":"started","timestamp":"2026-01-11T08:20:00.000Z","key":"v2:self-ref-c","agentId":"af000000000000003","label":"impl:node-task","phase":"Implement"}
+{"type":"result","timestamp":"2026-01-11T08:22:00.000Z","agentId":"af000000000000003","key":"v2:self-ref-c","outcome":"completed"}
+{"type":"started","timestamp":"2026-01-11T08:30:00.000Z","key":"v2:self-ref-d","agentId":"af000000000000004","label":"review:pasted-comment","phase":"Review"}
+{"type":"result","timestamp":"2026-01-11T08:32:00.000Z","agentId":"af000000000000004","key":"v2:self-ref-d","outcome":"completed"}
+{"type":"started","timestamp":"2026-01-11T08:40:00.000Z","key":"v2:self-ref-e","agentId":"af000000000000005","label":"review:loop-cat-self","phase":"Review"}
+{"type":"result","timestamp":"2026-01-11T08:42:00.000Z","agentId":"af000000000000005","key":"v2:self-ref-e","outcome":"completed"}

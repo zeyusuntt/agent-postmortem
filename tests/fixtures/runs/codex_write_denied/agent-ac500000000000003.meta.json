@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Print the marker fixture text from a small python script.",
+  "workflowPhase": "Implement",
+  "spawnDepth": "1",
+  "requestShape": "single",
+  "requestNonInteractive": "true"
+}
