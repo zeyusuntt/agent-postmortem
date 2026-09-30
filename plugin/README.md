@@ -30,7 +30,10 @@ raises, the hook prints nothing and exits 0.
 - **SessionEnd** runs the read-only tooling checks over the main thread
   itself.
 - **PostToolUse** (on `Workflow`) registers a workflow run the moment it is
-  launched, so it is tracked even if its own directory does not exist yet.
+  launched, so it is tracked even if its own directory does not exist yet,
+  and hands the session the exact `agent-postmortem watch <run id>` command
+  to arm a Monitor with -- the hook arms nothing itself. Opt out of the hint
+  with `AGENT_POSTMORTEM_WATCH_HINT=0`; registration still happens either way.
 
 ## The one network action
 

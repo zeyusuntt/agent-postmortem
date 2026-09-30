@@ -14,8 +14,14 @@ One JSON object per line, in chronological order. Observed `type` values:
   logical `agent()` call), `agentId`, `label`, `phase`. The same `key`
   appearing in more than one `started` event means that logical agent was
   restarted; attempts are ordered by their position in the journal.
-- `result`: `type`, `timestamp`, `agentId`, `key`, `outcome`. Marks the final
-  attempt of a logical agent call completing.
+- `result`: `type`, `timestamp`, `agentId`, `key`, `result`. Marks the
+  attempt of a logical agent call completing. Real journals carry the
+  agent's return value in `result` (a dict or a string); a fixture may use
+  any small value. A killed-and-restarted attempt has no `result` of its
+  own: the next `started` for the same key is its only trace.
+- `failed`: `type`, `timestamp`, `agentId`, `key`. Marks an attempt the
+  runtime gave up on. It may be followed by another `started` for the same
+  key (a retry) or be the key's last event (terminal).
 
 ### `agent-<id>.meta.json`
 
@@ -105,6 +111,16 @@ the two non-final, killed attempts) is exactly **1200s**.
 
 Expected numbers: attempts 4, keys 2, retries 2 (both keys), 416s of silence
 per killed attempt (2 findings), 1200s wasted in total.
+
+silent_retry itself (unit M1d) still fires once per retried key (2
+findings total here, one per agent, each carrying `rule_ids =
+("R-RETRY-SAFE",)`: the two agents start 30 minutes apart, well outside the
+5s burst window). Its evidence no longer quotes either attempt's prompt:
+for the first pair it is `agent-ac200000000000001.jsonl:5: [Request
+interrupted by user]` (the kill sentinel line) followed by
+`agent-ac200000000000002.jsonl:1: attempt 2 started` (a plain pointer, no
+excerpt), and the second pair follows the same shape on
+`agent-ac200000000000003.jsonl`/`agent-ac200000000000004.jsonl`.
 
 ### `bash_backgrounded_timeout`
 
@@ -315,3 +331,200 @@ The main transcript's `Workflow` `tool_result` (line 3) says "Run ID:
 wf_00000000-710" so a `workflow-launched` payload built from it exercises
 the regex fallback in `hooks_cli._extract_run_id`, alongside a synthetic
 `tool_response` dict for the structured-field path.
+
+### `journal_state_resolved`
+
+Workflow kind (flat). Seven keys exercising the journal state machine of
+docs/DESIGN.md section 3: `started, result`; `started, failed`; `started,
+failed, started, result`; `started, started, result` where the first
+transcript ends in the kill sentinel; `started, started, result` where it
+does not; `started, failed, failed`; `started, failed` where the transcript
+also ends in the kill sentinel.
+
+Expected numbers: outcomes `completed`, `failed`, `failed` then `completed`,
+`killed` then `completed`, `superseded` then `completed`, `failed`, `failed`
+(with `interrupt` set); `run.finished` is true; `run.status` is
+`"INCOMPLETE"` because of the superseded attempt and the second `failed`
+for an attempt already closed.
+
+Its four `failed` attempts double as `attempt_failed` detector fixtures
+(none of their transcripts carries a cause marker, so all four come back
+`unattributed`): `v2:jsm-failed` and `v2:jsm-double-fail` are terminal
+(severity major), `v2:jsm-retry-after-fail`'s first attempt is retried and
+the key later completes (severity minor), and `v2:jsm-failed-with-sentinel`
+gives cause `interrupted` instead, since its last transcript entry is the
+kill sentinel rather than plain text. See `attempt_failed_causes` below for
+the four marker-based causes and the decoy and non-triggering cases.
+
+### `attempt_failed_causes`
+
+Workflow kind (flat). Six keys exercising the `attempt_failed` detector's
+cause attribution from a `failed` attempt's own last transcript entry:
+
+- `v2:af-usage-session`: last line `You've hit your session limit ·
+  resets 2pm`. Expected cause `usage_limit_session`, `retry_now` `no`,
+  `reset_time` `2pm`, severity major (no later attempt), rule_id
+  `R-USAGE-LIMIT`.
+- `v2:af-usage-weekly`: last line `You've hit your weekly limit ·
+  resets Monday 9am`. Expected cause `usage_limit_weekly`, `retry_now` `no`,
+  `reset_time` `Monday 9am`.
+- `v2:af-machine-sleep`: last line `API Error: Your computer went to sleep`.
+  Expected cause `machine_sleep`, `retry_now` `yes`, `reset_time` `None`, no
+  rule_id.
+- `v2:af-api-error`: last line `API Error: Server error mid-response`.
+  Expected cause `api_error`, `retry_now` `yes`, `reset_time` `None`, no
+  rule_id.
+- `v2:af-decoy`: the first user message (the prompt) mentions "API Error:
+  Server error mid-response" but the attempt's own last line is plain text
+  with no marker. Expected cause `unattributed` (the detector never reads
+  further back than the last entry), title says "cause not recorded in the
+  transcript".
+- `v2:af-marker-not-last`: `started, result` (completed, not failed). The
+  first assistant line carries the session-limit marker but a second,
+  ordinary assistant line follows it as the actual last entry. Expected:
+  `attempt_failed` never fires for this key at all (the outcome gate alone
+  already excludes it; the marker's mid-transcript position is not what
+  keeps it out).
+
+Every fixture that does trigger has exactly one attempt for its key, so
+severity is always major here; the two severities of the unattributed cause
+(major for a terminal failure, minor once a later attempt of the same key
+completed) are exercised by `journal_state_resolved`'s own `v2:jsm-failed`
+and `v2:jsm-retry-after-fail` keys instead (see below), which already have
+that shape from the journal-state-machine fixture and need no marker text of
+their own. `journal_state_resolved`'s `v2:jsm-failed-with-sentinel` key is
+also the `interrupted` cause fixture: its last transcript entry is the kill
+sentinel itself, so `attempt_failed` reports cause `interrupted`, `retry_now`
+`unknown`, independently of the pre-existing `Attempt.interrupt` evidence the
+journal state machine tests already check on that same key.
+
+### `journal_state_unresolved`
+
+Workflow kind (flat). One key: `started`, then a `result` whose `agentId`
+names a different agent. The result closes nothing.
+
+Expected numbers: one attempt, `run.finished` false, `run.status`
+`"INCOMPLETE"`, one diagnostic naming the agent id mismatch.
+
+### `journal_state_orphan_failed`
+
+Workflow kind (flat). A `failed` event with no `started` before it.
+
+Expected numbers: zero attempts, `run.finished` false, `run.status`
+`"INCOMPLETE"`, one diagnostic naming the orphan event.
+
+### `claim_contradiction`
+
+Workflow kind (flat). Eleven keys exercising `Attempt.reported` (docs/
+DESIGN.md section 3/4.1) and the `claim_contradiction` detector. Unlike
+every other case here, none of its eleven attempts has an `agent-<id>.jsonl`
+transcript at all: this detector's evidence is the `journal.jsonl` line of
+the `result` event itself, never a transcript excerpt, so no transcript is
+needed to exercise it (only `journal.jsonl` exists on disk).
+
+- `v2:cc-tests-failed`: `result` `{"ok": true, "tests_passed": 8,
+  "tests_failed": 2}` (line 3). One clause, `tests_failed`.
+- `v2:cc-suite-failed`: `{"suite_passed": 4, "suite_failed": 1}` (line 5).
+  One clause, `suite_failed`.
+- `v2:cc-ok-false`: `{"ok": false, "status": "blocked"}` (line 7). One
+  clause, `ok_false`.
+- `v2:cc-ready-false`: `{"ready": false}` (line 9). One clause,
+  `ready_false`.
+- `v2:cc-blockers`: `{"blockers": [3 strings]}` (line 11). One clause,
+  `blockers` (`blockers_count` 3; the blocker text itself is never stored,
+  only the count).
+- `v2:cc-report-missing`: `{"report_path":
+  "/tmp/agent-postmortem-fixture/claim/missing-report.md"}` (line 13), a
+  path never created. One clause, `report_path_missing`.
+- `v2:cc-two-clauses`: `{"ok": false, "tests_passed": 3, "tests_failed": 1}`
+  (line 15). Two clauses in one finding, `tests_failed` then `ok_false`.
+- `v2:cc-clean-dict`: `{"ok": true, "tests_passed": 10, "tests_failed": 0,
+  "report_path": "/tmp/agent-postmortem-fixture/claim/present-report.md",
+  "note": "looks fine", "summary": "all good"}` (line 17). `present-
+  report.md` is created by a fixture in `tests/test_claim_contradiction.py`
+  before each test and removed after (mirroring `missing_artifact`'s own
+  convention), so this key never fires: `tests_failed` is 0, `ok` is true,
+  and the path exists. `note` and `summary` are not on the claim allowlist
+  and appear in `reported.keys` but never in `reported.claims`.
+- `v2:cc-text-result`: `result` is the string `"All tests pass and the
+  report has been written."` (line 19). `reported` is `{"type": "text",
+  "text_length": 47}`; the string itself is never stored.
+- `v2:cc-commits-mixed`: `{"commits": ["abc1234", "not-a-hash!",
+  "deadbeefcafe0123"]}` (line 21). `commits_count` is 3 (the claimed list's
+  own length); `commits` keeps only the two entries that match a commit-id
+  shape (`^[0-9a-f]{7,40}$`), dropping `not-a-hash!`. Commits alone are
+  never a contradiction clause (the "commit id not in the repo" check is
+  deferred to M2), so this key never fires either.
+- `v2:cc-failed-attempt`: `started` then `failed`, no `result` at all.
+  `reported` is `None`; `claim_contradiction` never fires on a `failed`
+  attempt regardless of what its transcript might say.
+
+Expected numbers: attempts 11, `claim_contradiction` findings 7 (every key
+above except `clean-dict`, `text-result`, `commits-mixed`, and
+`failed-attempt`).
+
+### `attempt_facts`
+
+Workflow kind (one run, `wf_00000000-af0`). Twelve keys, one fact each
+(docs/DESIGN.md 4.1/4.2's v0.2 reader changes, unit M2a: `ToolCall` and
+`AttemptFacts`). File targets use `/tmp/agent-postmortem-fixture/
+attempt_facts/...` rather than the usual `/home/user/project` cwd, since a
+path under `/tmp` collapses to `.../<basename>` under redaction regardless
+of the machine's own home directory, while `/home/user/...` only collapses
+when the redactor's `home` is literally set to it (see `claim_contradiction`
+for the same convention).
+
+- `v2:af-edit-ok` (`af2...001`): one Edit, result not an error.
+  `facts.paths_written` is the edited path; `facts.
+  seconds_since_last_tool_at_end` is 25.0 (a final assistant text line
+  lands 25s after the Edit's own `tool_use` line).
+- `v2:af-write-error` (`af2...002`): one Write, `tool_result.is_error`
+  true. `facts.paths_written` is `[]`.
+- `v2:af-killed` (`af2...003`): one Edit with no `tool_result` ever seen;
+  the journal never closes this key (only `started`), so the outcome falls
+  back to the transcript alone, which ends in the kill sentinel: `killed`.
+  `facts.in_flight` names the Edit's path and its `tool_use` line number.
+- `v2:af-completed-inflight` (`af2...004`): the same shape (an Edit with no
+  result), but the journal closes this attempt with a `result` event:
+  `completed`. `facts.in_flight` is `[]` regardless -- a completed
+  attempt's verdict always wins over a stray unresolved call.
+- `v2:af-commit` (`af2...005`): two Bash calls. The first's command
+  contains `git commit`; its result `"[main abc1234] synthetic change"`
+  yields `commit_ids ("abc1234",)`. The second's command is `echo done`;
+  its result contains `"[x 1234567]"`, which is never scanned for a commit
+  id because the command itself is not a commit. `facts.commits` is
+  `["abc1234"]`.
+- `v2:af-backgrounded` (`af2...006`): one Bash call whose result carries
+  the `BASH_BACKGROUNDED` marker. `completion` is `backgrounded`;
+  `facts.background_unfinished` is 1.
+- `v2:af-longpath` (`af2...008`): two Edit calls. The first's `file_path`
+  is 600 chars (past the 400-char excerpt limit, under the 1024-char
+  `ToolCall.path` bound): captured whole. The second's is 1100 chars (over
+  the bound): `path` is `None`. `facts.paths_written` holds only the first.
+- `v2:af-cwd` (`af2...009`): two Bash calls with `cwd`
+  `/home/user/project/a/../b` and `/home/user/project/./c`. `ToolCall.cwd`
+  and `facts.cwds` hold the `os.path.normpath`-normalized forms,
+  `/home/user/project/b` and `/home/user/project/c`.
+- `v2:af-no-ts` (`af2...010`): a Bash call, then an Edit call whose own
+  transcript entry carries no `timestamp` field at all. The attempt's
+  `last_ts` still comes from a later `tool_result` event, so
+  `facts.seconds_since_last_tool_at_end` is `None` specifically because the
+  *last tool call's own* timestamp is missing, not because the attempt has
+  no `last_ts`.
+- `v2:af-parallel` (`af2...011`): one assistant entry with two `tool_use`
+  blocks (`toolu_p1` then `toolu_p2`), followed by their `tool_result`s in
+  the opposite order (`toolu_p2`'s result on the earlier line). Proves
+  pairing by id: `tool_calls[0]` (`toolu_p1`) gets the later result line,
+  `tool_calls[1]` (`toolu_p2`) the earlier one.
+- `v2:af-missing` (`af2...012`): `started` then `failed`; deliberately no
+  `agent-af2...012.jsonl` file on disk at all. `Attempt.facts` is `None`
+  (never `FACTS_UNKNOWN` -- that value is for a transcript that exists but
+  could not be read, not one that never existed).
+
+A Bash command over the 2048-char `ToolCall.command` bound, and a
+transcript that exists but cannot be opened (every fact `FACTS_UNKNOWN`),
+are not fixtures here: both are built with `tmp_path` directly in
+`tests/test_attempt_facts.py` instead, since a 2048+-char line would blow
+past this directory's 2000-char fixture line limit (docs/DESIGN.md 5.4) and
+a chmod-based unreadable file cannot be represented as tracked fixture
+content at all.

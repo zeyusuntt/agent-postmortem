@@ -23,7 +23,9 @@ Bash tool.
 
 - **`latest`.** The user means the most recently finished run when one
   exists. Find it yourself rather than guessing an id:
-  1. Run `agent-postmortem scan --since <today, as YYYY-MM-DD>`.
+  1. Run `agent-postmortem scan --all --since <today, as YYYY-MM-DD>`
+     (`--all` here: the default `scan` output is now a NEEDS ATTENTION
+     triage list, not the one-row-per-run list this recipe parses).
   2. Take the newest row with no trailing `unfinished` marker (that marker
      means the run's journal has a started key with no result yet; `run`
      will still report a verdict for it, just tagged unfinished). Scan
@@ -44,20 +46,37 @@ Bash tool.
 
 ## After running it
 
-1. Paste the verdict block back into the chat: the `RUN ...` header line
-   and the summary line right after it. That is the one number and the one
-   word (CLEAN / INCOMPLETE / a severity) the user needs first; do not bury
-   it under the full findings list unless they ask for more detail. A
-   header ending in `(unfinished)` means the workflow had not finished when
-   you ran this -- say so, since every finding below it is provisional.
-2. If the verdict is not CLEAN, the report's own `NEXT ACTION` line already
-   names the top rule and the exact `apply` command for it, for example
-   `agent-postmortem apply R-RETRY-SAFE --target ~/.claude/CLAUDE.md`. Show
-   that line to the user.
-3. **Never run that command with `--write` yourself.** Without `--write`,
-   `apply` only prints a diff and changes nothing, which is safe to run to
-   show what would happen. Ask the user explicitly before re-running it
-   with `--write`, since that edits a file they maintain.
+1. Paste the verdict block back into the chat: the `RUN ...` (or
+   `SESSION ...`) header line, the account sentences right after it, and the
+   `WORK AT RISK` line. That is the one number and the one word (CLEAN /
+   INCOMPLETE / a severity) the user needs first, plus whether any killed or
+   failed attempt left work that could still be lost; do not bury it under
+   the full findings list unless they ask for more detail. A header ending
+   in `(unfinished)` means the workflow had not finished when you ran this
+   -- say so, since every finding below it is provisional. When `WORK AT
+   RISK` names any paths or commits (it is not the `none:`/`unknown:` form),
+   tell the user the `/rescue` skill can walk through recovering it.
+2. Show the `WHAT TO DO` list too: at most 3 items, each tagged `[look]`
+   (read-only, safe to run yourself) or `[decide]` (needs the user's
+   judgment). If it names `agent-postmortem rules propose`, that is how to
+   see which rules across the whole fleet would have prevented failures
+   like this one -- run it and show the result; it only prints rule text
+   and diffs, never writes anything.
+3. `STORIES` gives one short paragraph per agent that had a finding. Paste
+   those too when the user wants to know what happened to a specific agent.
+   Evidence excerpts and info-severity findings are hidden by default; add
+   `--evidence` or `--verbose` (or both) only when the user wants to see
+   the raw transcript lines or the full finding list, and say when you do.
+4. If a run's header carries `(unfinished)`, or the session just launched a
+   workflow and got the "arm a Monitor" hint, offer `agent-postmortem watch
+   <run-id>` instead of re-running `scan`/`run` on a loop -- it notices a
+   killed or failed agent within seconds instead of hours.
+5. If the user wants to adopt a rule `rules propose` showed, run
+   `agent-postmortem apply <rule-id> --target <file>` to print the rule
+   text and a unified diff for that file; it only ever prints, it never
+   writes the file for you. Ask the user before you paste the block into
+   their file or run `git apply` on their behalf, since editing a prompt
+   or the instructions they maintain is their call, not yours.
 
 ## Notes
 

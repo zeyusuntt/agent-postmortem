@@ -67,11 +67,14 @@ def test_session_summary_line_counts_interrupted_and_unattributed():
 
 
 def test_render_run_text_uses_the_session_summary_not_the_workflow_one():
+    # unit M3a: a session's header word is "SESSION" (not "RUN ... (session)")
+    # and its account line 2 is the same session summary sentence as before,
+    # with a trailing period since it is now a full account sentence.
     run = _load("session_clean")
     text = report.render_run_text(run, [], Redactor(enabled=False))
     lines = text.splitlines()
-    assert lines[0].startswith(f"RUN {run.run_id} (session)")
-    assert lines[1] == "session ran 4m; 2 subagents, 0 interrupted (0 unattributed); retries not observable"
+    assert lines[0].startswith(f"SESSION {run.run_id}")
+    assert lines[1] == "session ran 4m; 2 subagents, 0 interrupted (0 unattributed); retries not observable."
 
 
 # --- AGENT table lists subagents only ---------------------------------------

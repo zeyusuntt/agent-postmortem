@@ -561,6 +561,42 @@ def test_assistant_tool_use_input_not_an_object_becomes_a_diagnostic_not_a_crash
     assert any("tool_use input is not an object" in diag for diag in run.diagnostics)
 
 
+# --- duplicate tool_use_id (docs/DESIGN.md 4.2, F5 hardening) --------------
+
+
+def test_duplicate_tool_use_id_in_one_transcript_diagnostic_incomplete_and_ambiguous(tmp_path):
+    """Two tool_use blocks sharing a tool_use_id in the same transcript: the
+    reader must diagnose it, force Run.status INCOMPLETE, and mark every
+    ToolCall that shares the id ambiguous (never counted as ok/error by a
+    downstream consumer like `rescue status`)."""
+    run_dir = tmp_path / "wf_dup_tool_id"
+    run_dir.mkdir()
+    (run_dir / "journal.jsonl").write_text(_minimal_started_journal_line(), encoding="utf-8")
+    (run_dir / "agent-a1111111111111111.jsonl").write_text(
+        '{"type":"assistant","message":{"role":"assistant",'
+        '"content":[{"type":"tool_use","id":"toolu_dup","name":"Bash",'
+        '"input":{"command":"echo one"}}]},"timestamp":"2026-09-01T10:00:00Z"}\n'
+        '{"type":"user","message":{"role":"user","content":['
+        '{"type":"tool_result","tool_use_id":"toolu_dup","content":"one","is_error":false}]},'
+        '"timestamp":"2026-09-01T10:00:01Z"}\n'
+        '{"type":"assistant","message":{"role":"assistant",'
+        '"content":[{"type":"tool_use","id":"toolu_dup","name":"Bash",'
+        '"input":{"command":"echo two"}}]},"timestamp":"2026-09-01T10:00:02Z"}\n'
+        '{"type":"user","message":{"role":"user","content":['
+        '{"type":"tool_result","tool_use_id":"toolu_dup","content":"two","is_error":false}]},'
+        '"timestamp":"2026-09-01T10:00:03Z"}\n',
+        encoding="utf-8",
+    )
+    run = reader.load_run(run_dir)
+    assert run.status == "INCOMPLETE"
+    assert any(
+        "duplicate tool_use_id toolu_dup at lines 1 and 3" in diag for diag in run.diagnostics
+    )
+    (attempt,) = run.attempts
+    assert len(attempt.tool_calls) == 2
+    assert all(call.completion == "ambiguous" for call in attempt.tool_calls)
+
+
 def test_attachment_not_an_object_becomes_a_diagnostic_not_a_crash(tmp_path):
     run_dir = tmp_path / "wf_attachment_shape"
     run_dir.mkdir()

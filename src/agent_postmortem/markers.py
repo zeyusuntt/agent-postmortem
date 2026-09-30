@@ -113,3 +113,36 @@ CLASSIFIER_UNAVAILABLE = ("temporarily unavailable", "cannot determine the safet
 # carries this marker; it is exercised by the in-memory run
 # tests/test_detectors_tooling.py builds for git_cwd_mismatch.
 GIT_NOT_REPO = ("fatal: not a git repository",)
+
+# A workflow attempt the journal closed with a `failed` event has, as the
+# last entry of its own transcript, an assistant message the runtime itself
+# appends -- never something the agent wrote. Observed on Claude Code 2.1.251
+# to 2.1.280, 13 of 21 real `failed` events on this machine: "You've hit your
+# session limit · resets 2pm" ("·" is U+00B7 MIDDLE DOT; the time
+# after "resets " varies per case). Carried by
+# tests/fixtures/runs/attempt_failed_causes (agent-af100000000000001.jsonl,
+# last line). detectors/attempt_failed.py treats everything up to and
+# including "resets " as this fixed prefix and the remainder of the line as
+# the reset time.
+USAGE_LIMIT_SESSION = ("You've hit your session limit · resets ",)
+
+# Same shape as USAGE_LIMIT_SESSION for the weekly limit instead of the
+# session one. Observed on Claude Code 2.1.251 to 2.1.280, 2 of 21 real
+# `failed` events. Carried by tests/fixtures/runs/attempt_failed_causes
+# (agent-af100000000000002.jsonl, last line).
+USAGE_LIMIT_WEEKLY = ("You've hit your weekly limit · resets ",)
+
+# A workflow attempt's last transcript entry stating the machine slept
+# mid-request, appended by the runtime the same way the two usage-limit
+# markers above are. Observed as "API Error: Your computer went to sleep" on
+# Claude Code 2.1.251 to 2.1.280, 4 of 21 real `failed` events. Carried by
+# tests/fixtures/runs/attempt_failed_causes (agent-af100000000000003.jsonl,
+# last line). Unlike the usage limits, no reset time follows.
+MACHINE_SLEEP = ("API Error: Your computer went to sleep",)
+
+# A workflow attempt's last transcript entry stating the runtime's own API
+# call failed mid-response. Observed as "API Error: Server error
+# mid-response" on Claude Code 2.1.251 to 2.1.280, 1 of 21 real `failed`
+# events. Carried by tests/fixtures/runs/attempt_failed_causes
+# (agent-af100000000000004.jsonl, last line).
+API_ERROR = ("API Error: Server error mid-response",)

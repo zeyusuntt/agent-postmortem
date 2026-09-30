@@ -27,9 +27,10 @@ migrates the current file and yields it; on normal exit it writes the
 directory, fsynced, renamed over state.json, then the containing directory
 itself fsynced -- and verifies the final permissions by stat before
 releasing the lock. If the caller's code raises instead, nothing is written.
-Because the caller's own code runs under the lock, apply_rule() (docs/
-DESIGN.md 9) uses transaction() directly to make writing its target file and
-recording that write into state one atomic unit.
+`applied` (docs/DESIGN.md 9) is legacy: nothing in this build ever appends a
+new entry to it (rules.apply_rule() only ever reads a target file, never
+writes one), but existing entries are still read here, migrated, and kept,
+so a v0.1 state file's history still feeds `rules review`.
 
 The state directory and state.lock are lstat-checked before every use and
 rejected as StateError if either is a symlink or the wrong kind of thing
@@ -492,7 +493,7 @@ def _acquire_lock(fd: int) -> None:
 
 @contextmanager
 def transaction(path: Path | None = None) -> Iterator[dict]:
-    """The primitive both update() and apply_rule() are built on.
+    """The primitive update() is built on.
 
     Acquires state.lock (StateLocked on timeout), loads and migrates the
     current state -- backing up and repairing under the lock as needed --
@@ -505,12 +506,13 @@ def transaction(path: Path | None = None) -> Iterator[dict]:
     in every case (commit, exception, or a raise from the load/migrate
     step itself).
 
-    Because the caller's own code runs while the lock is held, a rule
-    library or hook can make an external write (docs/DESIGN.md 9: writing
-    the target file apply_rule edits) and its matching state record part
-    of one transaction: the state lock then also serializes concurrent
-    operations against that same external target, not only concurrent
-    state.json writers.
+    Because the caller's own code runs while the lock is held, a hook can
+    make an external write of its own and a matching state record part of
+    one transaction, the state lock then serializing concurrent operations
+    against that same external target too, not only concurrent state.json
+    writers. Nothing in this build does that for a rule any more: rules.
+    apply_rule() (docs/DESIGN.md 9) only ever reads a target file, so it
+    never calls this function at all.
     """
     state_file = Path(path) if path is not None else state_path()
     directory = state_file.parent

@@ -1,0 +1,8 @@
+{"type":"launched","timestamp":"2026-09-27T09:00:00.000Z"}
+{"type":"started","timestamp":"2026-09-27T09:00:01.000Z","key":"v2:aft-both-failed","agentId":"afa10000000000001","label":"impl:both-failed","phase":"Implement"}
+{"type":"failed","timestamp":"2026-09-27T09:05:00.000Z","key":"v2:aft-both-failed","agentId":"afa10000000000001"}
+{"type":"started","timestamp":"2026-09-27T09:06:00.000Z","key":"v2:aft-both-failed","agentId":"afa10000000000002","label":"impl:both-failed","phase":"Implement"}
+{"type":"failed","timestamp":"2026-09-27T09:10:00.000Z","key":"v2:aft-both-failed","agentId":"afa10000000000002"}
+{"type":"started","timestamp":"2026-09-27T09:20:00.000Z","key":"v2:aft-still-open","agentId":"afb10000000000001","label":"impl:still-open","phase":"Implement"}
+{"type":"failed","timestamp":"2026-09-27T09:25:00.000Z","key":"v2:aft-still-open","agentId":"afb10000000000001"}
+{"type":"started","timestamp":"2026-09-27T09:30:00.000Z","key":"v2:aft-still-open","agentId":"afb10000000000002","label":"impl:still-open","phase":"Implement"}

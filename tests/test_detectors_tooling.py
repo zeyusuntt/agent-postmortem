@@ -14,6 +14,7 @@ non-firing case is the shared clean_run fixture.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -305,19 +306,33 @@ def test_codex_write_denied_ignores_a_python_script_printing_the_marker_token():
         assert not any("ac500000000000003" in line for line in finding.evidence)
 
 
-def test_codex_write_denied_fires_on_a_non_tool_result_event():
-    """DESIGN.md 4.3: fires when 'any event text' contains the marker, not
-    only a tool_result/attachment. An assistant message narrating a denial
-    (for example after summarizing a sandboxed reviewer's own report) must
-    still be caught."""
+def test_codex_write_denied_ignores_assistant_prose_that_quotes_the_marker():
+    """v0.2 (unit M3 follow-up): an assistant message that merely quotes the
+    marker (a reviewer's report pasted into prose, a discussion of this
+    detector) is not a denial. On the build machine every real denial (23
+    of 23) sat in a Bash tool_result of a codex command; the only assistant
+    events carrying the marker that were real denials were the companion's
+    own output echoed verbatim, which starts with "[codex]"."""
     text = f"The reviewer reported: {SANDBOX_WRITE_DENIED[0]}: patch rejected: writing outside of the project"
     run = _build_run(
         "wf_00000000-750",
         "a7500000000000001",
         [{"kind": "assistant", "text": text}],
     )
-    findings = codex_write_denied.DETECTOR.run(run)
-    assert len(findings) == 2
+    assert codex_write_denied.DETECTOR.run(run) == []
+
+
+def test_codex_write_denied_fires_on_assistant_text_echoing_the_companion():
+    text = (
+        "[codex] Starting Codex task\n"
+        f"[codex] {SANDBOX_WRITE_DENIED[0]}: patch rejected: writing outside of the project"
+    )
+    run = _build_run(
+        "wf_00000000-750",
+        "a7500000000000001",
+        [{"kind": "assistant", "text": text}],
+    )
+    assert len(codex_write_denied.DETECTOR.run(run)) == 2
 
 
 # --- classifier_unavailable -------------------------------------------------
@@ -810,3 +825,71 @@ def test_read_only_output_never_suppresses_bash_timeout():
     findings = bash_timeout.DETECTOR.run(run)
     assert len(findings) == 1
     assert findings[0].metrics["count"] == 1
+
+
+def test_codex_write_denied_ignores_a_bash_result_whose_command_only_names_a_codex_file():
+    """v0.2: 'codex' inside a file name (`cat notes-codex.txt`) is not a codex
+    command. On the build machine this was the remaining false positive on
+    sessions working in this repository."""
+    text = f"57:FINDINGS: 9 ... {SANDBOX_WRITE_DENIED[0]}: patch rejected ..."
+    run = _build_run(
+        "wf_00000000-750",
+        "a7500000000000001",
+        [
+            {"kind": "tool_use", "tool_name": "Bash",
+             "text": '{"command": "wc -c .reviews/M3a-review-codex.txt; head -3 .reviews/M3a-review-codex.txt"}'},
+            {"kind": "tool_result", "tool_name": "Bash", "text": text},
+        ],
+    )
+    assert codex_write_denied.DETECTOR.run(run) == []
+
+
+def test_codex_write_denied_fires_on_a_codex_program_and_on_companion_output():
+    text = f"{SANDBOX_WRITE_DENIED[0]}: patch rejected: writing outside of the project"
+    program = _build_run(
+        "wf_00000000-750",
+        "a7500000000000001",
+        [
+            {"kind": "tool_use", "tool_name": "Bash", "text": '{"command": "codex exec --full-auto apply"}'},
+            {"kind": "tool_result", "tool_name": "Bash", "text": text, "is_error": True},
+        ],
+    )
+    assert len(codex_write_denied.DETECTOR.run(program)) == 2
+    companion = _build_run(
+        "wf_00000000-750",
+        "a7500000000000001",
+        [
+            {"kind": "tool_use", "tool_name": "Bash",
+             "text": '{"command": "node ~/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/codex-companion.mjs task x"}'},
+            {"kind": "tool_result", "tool_name": "Bash", "text": "[codex] Starting Codex task\n" + text},
+        ],
+    )
+    assert len(codex_write_denied.DETECTOR.run(companion)) == 2
+
+
+def test_codex_write_denied_ignores_a_heredoc_that_mentions_codex_as_a_word():
+    """The word "codex" inside command data (a heredoc body, a commit message)
+    is not the codex program. Only a command whose segment starts with codex
+    (optionally path-qualified) or that runs codex-companion.mjs counts."""
+    text = f"13300 review.txt ... {SANDBOX_WRITE_DENIED[0]}: patch rejected ..."
+    command = "{ cat <<'X'\\nSources: Codex (14 findings), Claude (4)\\nX\\n} > out.txt; wc -c out.txt"
+    run = _build_run(
+        "wf_00000000-750",
+        "a7500000000000001",
+        [
+            {"kind": "tool_use", "tool_name": "Bash", "text": json.dumps({"command": command})},
+            {"kind": "tool_result", "tool_name": "Bash", "text": text},
+        ],
+    )
+    assert codex_write_denied.DETECTOR.run(run) == []
+    for good in ("cd /x && /opt/bin/codex exec apply", "codex apply patch.diff",
+                 "node ~/.claude/plugins/x/codex-companion.mjs task"):
+        run = _build_run(
+            "wf_00000000-750",
+            "a7500000000000001",
+            [
+                {"kind": "tool_use", "tool_name": "Bash", "text": json.dumps({"command": good})},
+                {"kind": "tool_result", "tool_name": "Bash", "text": text},
+            ],
+        )
+        assert len(codex_write_denied.DETECTOR.run(run)) == 2, good

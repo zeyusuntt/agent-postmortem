@@ -1,0 +1,22 @@
+{"type": "launched"}
+{"type": "started", "key": "v2:af-edit-ok", "agentId": "af200000000000001", "label": "impl:edit-ok", "phase": "Implement"}
+{"type": "result", "key": "v2:af-edit-ok", "agentId": "af200000000000001", "result": "completed"}
+{"type": "started", "key": "v2:af-write-error", "agentId": "af200000000000002", "label": "impl:write-error", "phase": "Implement"}
+{"type": "result", "key": "v2:af-write-error", "agentId": "af200000000000002", "result": "completed"}
+{"type": "started", "key": "v2:af-killed", "agentId": "af200000000000003", "label": "impl:killed-edit", "phase": "Implement"}
+{"type": "started", "key": "v2:af-completed-inflight", "agentId": "af200000000000004", "label": "impl:completed-inflight", "phase": "Implement"}
+{"type": "result", "key": "v2:af-completed-inflight", "agentId": "af200000000000004", "result": "completed"}
+{"type": "started", "key": "v2:af-commit", "agentId": "af200000000000005", "label": "impl:commit", "phase": "Implement"}
+{"type": "result", "key": "v2:af-commit", "agentId": "af200000000000005", "result": "completed"}
+{"type": "started", "key": "v2:af-backgrounded", "agentId": "af200000000000006", "label": "impl:backgrounded", "phase": "Implement"}
+{"type": "result", "key": "v2:af-backgrounded", "agentId": "af200000000000006", "result": "completed"}
+{"type": "started", "key": "v2:af-longpath", "agentId": "af200000000000008", "label": "impl:long-path", "phase": "Implement"}
+{"type": "result", "key": "v2:af-longpath", "agentId": "af200000000000008", "result": "completed"}
+{"type": "started", "key": "v2:af-cwd", "agentId": "af200000000000009", "label": "impl:cwd-norm", "phase": "Implement"}
+{"type": "result", "key": "v2:af-cwd", "agentId": "af200000000000009", "result": "completed"}
+{"type": "started", "key": "v2:af-no-ts", "agentId": "af200000000000010", "label": "impl:no-ts", "phase": "Implement"}
+{"type": "result", "key": "v2:af-no-ts", "agentId": "af200000000000010", "result": "completed"}
+{"type": "started", "key": "v2:af-parallel", "agentId": "af200000000000011", "label": "impl:parallel-order", "phase": "Implement"}
+{"type": "result", "key": "v2:af-parallel", "agentId": "af200000000000011", "result": "completed"}
+{"type": "started", "key": "v2:af-missing", "agentId": "af200000000000012", "label": "impl:missing-transcript", "phase": "Implement"}
+{"type": "failed", "key": "v2:af-missing", "agentId": "af200000000000012"}

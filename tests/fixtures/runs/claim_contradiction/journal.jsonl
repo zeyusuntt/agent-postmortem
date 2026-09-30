@@ -1,0 +1,23 @@
+{"type":"launched","timestamp":"2026-09-28T09:00:00.000Z"}
+{"type":"started","timestamp":"2026-09-28T09:00:01.000Z","key":"v2:cc-tests-failed","agentId":"acd10000000000001","label":"impl:tests-failed","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-28T09:00:10.000Z","key":"v2:cc-tests-failed","agentId":"acd10000000000001","result":{"ok":true,"tests_passed":8,"tests_failed":2}}
+{"type":"started","timestamp":"2026-09-28T09:01:01.000Z","key":"v2:cc-suite-failed","agentId":"acd10000000000002","label":"impl:suite-failed","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-28T09:01:10.000Z","key":"v2:cc-suite-failed","agentId":"acd10000000000002","result":{"suite_passed":4,"suite_failed":1}}
+{"type":"started","timestamp":"2026-09-28T09:02:01.000Z","key":"v2:cc-ok-false","agentId":"acd10000000000003","label":"impl:ok-false","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-28T09:02:10.000Z","key":"v2:cc-ok-false","agentId":"acd10000000000003","result":{"ok":false,"status":"blocked"}}
+{"type":"started","timestamp":"2026-09-28T09:03:01.000Z","key":"v2:cc-ready-false","agentId":"acd10000000000004","label":"impl:ready-false","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-28T09:03:10.000Z","key":"v2:cc-ready-false","agentId":"acd10000000000004","result":{"ready":false}}
+{"type":"started","timestamp":"2026-09-28T09:04:01.000Z","key":"v2:cc-blockers","agentId":"acd10000000000005","label":"impl:blockers","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-28T09:04:10.000Z","key":"v2:cc-blockers","agentId":"acd10000000000005","result":{"blockers":["missing dep","flaky test","needs review"]}}
+{"type":"started","timestamp":"2026-09-28T09:05:01.000Z","key":"v2:cc-report-missing","agentId":"acd10000000000006","label":"impl:report-missing","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-28T09:05:10.000Z","key":"v2:cc-report-missing","agentId":"acd10000000000006","result":{"report_path":"/tmp/agent-postmortem-fixture/claim/missing-report.md"}}
+{"type":"started","timestamp":"2026-09-28T09:06:01.000Z","key":"v2:cc-two-clauses","agentId":"acd10000000000007","label":"impl:two-clauses","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-28T09:06:10.000Z","key":"v2:cc-two-clauses","agentId":"acd10000000000007","result":{"ok":false,"tests_passed":3,"tests_failed":1}}
+{"type":"started","timestamp":"2026-09-28T09:07:01.000Z","key":"v2:cc-clean-dict","agentId":"acd10000000000008","label":"impl:clean-dict","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-28T09:07:10.000Z","key":"v2:cc-clean-dict","agentId":"acd10000000000008","result":{"ok":true,"tests_passed":10,"tests_failed":0,"report_path":"/tmp/agent-postmortem-fixture/claim/present-report.md","note":"looks fine","summary":"all good"}}
+{"type":"started","timestamp":"2026-09-28T09:08:01.000Z","key":"v2:cc-text-result","agentId":"acd10000000000009","label":"impl:text-result","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-28T09:08:10.000Z","key":"v2:cc-text-result","agentId":"acd10000000000009","result":"All tests pass and the report has been written."}
+{"type":"started","timestamp":"2026-09-28T09:09:01.000Z","key":"v2:cc-commits-mixed","agentId":"acd1000000000000a","label":"impl:commits-mixed","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-28T09:09:10.000Z","key":"v2:cc-commits-mixed","agentId":"acd1000000000000a","result":{"commits":["abc1234","not-a-hash!","deadbeefcafe0123"]}}
+{"type":"started","timestamp":"2026-09-28T09:10:01.000Z","key":"v2:cc-failed-attempt","agentId":"acd1000000000000b","label":"impl:failed-attempt","phase":"Implement"}
+{"type":"failed","timestamp":"2026-09-28T09:10:10.000Z","key":"v2:cc-failed-attempt","agentId":"acd1000000000000b"}

@@ -6,4 +6,4 @@ plugin/.claude-plugin/plugin.json's version (docs/DESIGN.md 7.1's D1,
 enforced by tests/test_plugin.py).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

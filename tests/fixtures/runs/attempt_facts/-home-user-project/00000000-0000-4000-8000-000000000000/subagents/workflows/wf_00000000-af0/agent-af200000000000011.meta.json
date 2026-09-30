@@ -1,0 +1,1 @@
+{"agentType": "workflow-subagent", "description": "impl:parallel-order", "workflowPhase": "Implement", "spawnDepth": "1", "requestShape": "text", "requestNonInteractive": "true"}

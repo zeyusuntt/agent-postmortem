@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -27,20 +28,56 @@ from pathlib import Path
 
 from .detectors.base import attribute_interrupt, meaningful_event_before
 from .markers import (
+    API_ERROR,
     BASH_BACKGROUNDED,
     BASH_TIMEOUT,
     CLASSIFIER_UNAVAILABLE,
     GIT_NOT_REPO,
     KILL_SENTINEL_PREFIX,
+    MACHINE_SLEEP,
     SANDBOX_WRITE_DENIED,
     SHELL_GUARD_BLOCK_REGEX,
     STRUCTURED_OUTPUT_MISMATCH,
     TOOL_INPUT_INVALID,
+    USAGE_LIMIT_SESSION,
+    USAGE_LIMIT_WEEKLY,
 )
-from .models import Attempt, Event, Interrupt, LogicalAgent, Run
+from .models import (
+    FACTS_UNKNOWN,
+    Attempt,
+    AttemptFacts,
+    Event,
+    Interrupt,
+    LogicalAgent,
+    Run,
+    ToolCall,
+)
 
 _EXCERPT_LIMIT = 400
 _EXIT_CODE_RE = re.compile(r"[Ee]xit code[: ]+(-?\d+)")
+
+# docs/DESIGN.md 4.1/4.2's v0.2 reader changes: a commit id printed by `git
+# commit` itself ("[main abc1234] message", "[feature/x 0123456789abcdef]
+# ..."), not a runtime marker, so it lives here rather than in markers.py.
+# Matched only against the full result text of a Bash call whose own command
+# contains 'git commit' (ToolCall.commit_ids), never against an arbitrary
+# tool result that happens to contain a bracketed hex run.
+_COMMIT_ID_RE = re.compile(r"\[[^\]\s]+ ([0-9a-f]{7,40})\]")
+_MAX_COMMIT_IDS_PER_CALL = 20
+# ToolCall bounds (docs/DESIGN.md 4.1's v0.2 reader changes): a path or
+# command past these lengths is not truncated (which would silently make it
+# look like a different, shorter one); a path is dropped to None, a command
+# is dropped to None with its sha256 kept instead.
+_TOOL_CALL_PATH_LIMIT = 1024
+_TOOL_CALL_COMMAND_LIMIT = 2048
+# Which tool_use input field ToolCall.path is read from, per tool name
+# (docs/DESIGN.md 4.1's v0.2 reader changes). Every other tool leaves path
+# None.
+_PATH_TOOL_INPUT_FIELD = {
+    "Edit": "file_path",
+    "Write": "file_path",
+    "NotebookEdit": "notebook_path",
+}
 
 # Harness/tooling scaffolding a field's text can carry that is not something
 # the agent said or did (docs/DESIGN.md 4.5): stripped before the excerpt is
@@ -103,6 +140,10 @@ _MARKER_FRAGMENTS: tuple[str, ...] = (
     *SANDBOX_WRITE_DENIED,
     *CLASSIFIER_UNAVAILABLE,
     *GIT_NOT_REPO,
+    *USAGE_LIMIT_SESSION,
+    *USAGE_LIMIT_WEEKLY,
+    *MACHINE_SLEEP,
+    *API_ERROR,
 )
 _SHELL_GUARD_RE = re.compile(SHELL_GUARD_BLOCK_REGEX)
 _SHELL_GUARD_MARKER = "SHELL_GUARD_BLOCK_REGEX"
@@ -369,8 +410,25 @@ def _load_workflow(path: Path) -> Run:
     run_id = _valid_workflow_run_id(path.name, diagnostics)
     project_slug = _project_slug(path)
 
-    journal, started_events, journal_ok = _read_journal(path, diagnostics)
+    journal, started_events, journal_ok, journal_line_numbers = _read_journal(path, diagnostics)
     incomplete = not journal_ok
+
+    # docs/DESIGN.md 4.1 (unit M1a): the per-key state machine decides how
+    # each 'started' occurrence closes (or stays open); _workflow_finished_
+    # from_occurrences turns that into Run.finished below, and every
+    # diagnostic it raises (a mismatched agentId, an orphan result/failed)
+    # forces status INCOMPLETE, same as any other reader diagnostic.
+    journal_attempts, journal_sm_diagnostics = _run_journal_state_machine(
+        journal, journal_line_numbers
+    )
+    attempt_lookup = {id(occ.started_entry): occ for occ in journal_attempts}
+    diagnostics.extend(journal_sm_diagnostics)
+    incomplete = incomplete or bool(journal_sm_diagnostics)
+    # docs/DESIGN.md 4.6: line numbers for every journal entry, by identity,
+    # so a malformed 'started' entry's diagnostic can still cite
+    # 'journal.jsonl:<line>' below -- entries in `started_events` are the
+    # same dict objects `_read_journal` appended from `journal`, never copies.
+    entry_line_no = {id(entry): line_no for entry, line_no in zip(journal, journal_line_numbers)}
 
     claude_version: str | None = None
     session_id: str | None = None
@@ -380,13 +438,69 @@ def _load_workflow(path: Path) -> Run:
     ordinal_counts: dict[str | None, int] = {}
 
     for entry in started_events:
-        key = entry.get("key")
-        raw_agent_id = entry.get("agentId", "")
-        label = entry.get("label", "")
-        phase = entry.get("phase", "")
+        raw_key = entry.get("key")
+        raw_agent_id_field = entry.get("agentId", "")
+        raw_label_field = entry.get("label", "")
+        raw_phase_field = entry.get("phase", "")
+        line_no = entry_line_no.get(id(entry))
 
-        ordinal_counts[key] = ordinal_counts.get(key, 0) + 1
-        ordinal = ordinal_counts[key]
+        # docs/DESIGN.md 4.6: a non-string key or agentId names no attempt
+        # this reader can safely build -- an int/list/bool key can never
+        # index agents_by_key the way a string key does below, and a
+        # non-string agentId used to crash _valid_agent_id (M1 review
+        # finding 2). Skip the whole entry, with a line-specific diagnostic,
+        # and force status INCOMPLETE, rather than build a malformed Attempt.
+        # A missing or explicit-null key/agentId is the existing, valid
+        # "unkeyed"/"blank id" shape and is untouched here; only a *present
+        # but wrongly typed* value is a problem.
+        if raw_key is not None and not isinstance(raw_key, str):
+            diagnostics.append(
+                f"journal.jsonl:{line_no}: started event has a non-string key"
+            )
+            incomplete = True
+            continue
+        if raw_agent_id_field is not None and not isinstance(raw_agent_id_field, str):
+            diagnostics.append(
+                f"journal.jsonl:{line_no}: started event has a non-string agentId"
+            )
+            incomplete = True
+            continue
+
+        key = raw_key
+        raw_agent_id = raw_agent_id_field if raw_agent_id_field is not None else ""
+
+        # A non-string label or phase is cosmetic, never identifying: the
+        # entry still becomes an attempt, with the bad value replaced by ""
+        # (never None -- report.py's AGENT table formats it directly with
+        # f"{label:<22}", which raises on None) and a diagnostic recorded.
+        if isinstance(raw_label_field, str):
+            label = raw_label_field
+        else:
+            label = ""
+            if raw_label_field is not None:
+                diagnostics.append(
+                    f"journal.jsonl:{line_no}: started event has a non-string label"
+                )
+        if isinstance(raw_phase_field, str):
+            phase = raw_phase_field
+        else:
+            phase = ""
+            if raw_phase_field is not None:
+                diagnostics.append(
+                    f"journal.jsonl:{line_no}: started event has a non-string phase"
+                )
+
+        # journal_attempt is None only for an unkeyed entry (key is None --
+        # the state machine tracks attempts per key and has nothing to key
+        # an unkeyed entry's occurrence by either); a non-string key or
+        # agentId already continued past this point above. ordinal falls
+        # back to the same per-key counting v0.1 always did.
+        journal_attempt = attempt_lookup.get(id(entry))
+        if journal_attempt is not None:
+            ordinal = journal_attempt.ordinal
+        else:
+            ordinal_counts[key] = ordinal_counts.get(key, 0) + 1
+            ordinal = ordinal_counts[key]
 
         # Filesystem lookups use the raw journal value: the transcript and
         # meta files on disk are named with it regardless of whether it
@@ -397,10 +511,17 @@ def _load_workflow(path: Path) -> Run:
         agent_id = _valid_agent_id(raw_agent_id, diagnostics, "journal.jsonl")
 
         transcript_path = path / f"agent-{raw_agent_id}.jsonl"
+        unreadable = False
         if transcript_path.exists():
             transcript_result = _read_transcript_tracked(transcript_path, diagnostics)
-            events, version, transcript_session_id, unreadable, over_threshold = transcript_result
+            events, version, transcript_session_id, unreadable, over_threshold, tool_calls = (
+                transcript_result
+            )
             incomplete = incomplete or unreadable or over_threshold
+            # docs/DESIGN.md 4.2 (F5 hardening): a duplicate tool_use_id
+            # anywhere in this attempt's transcript is a reader diagnostic
+            # like any other, so it forces Run.status INCOMPLETE too.
+            incomplete = incomplete or any(call.ambiguous for call in tool_calls)
             if claude_version is None and version:
                 claude_version = version
             if session_id is None and transcript_session_id:
@@ -408,6 +529,7 @@ def _load_workflow(path: Path) -> Run:
         else:
             transcript_path = None
             events = []
+            tool_calls = []
 
         event_ts = [event.ts for event in events if event.ts is not None]
         first_ts = min(event_ts) if event_ts else None
@@ -415,7 +537,45 @@ def _load_workflow(path: Path) -> Run:
         all_event_ts.extend(event_ts)
         incomplete = incomplete or _edge_event_has_timestamp_diagnostic(events, diagnostics)
 
-        outcome = _compute_outcome(transcript_path, events)
+        # docs/DESIGN.md 4.1: the journal state machine decides the final
+        # outcome whenever it closed this attempt ('completed' / 'failed'
+        # always win, even over a trailing kill sentinel; 'superseded'
+        # becomes 'killed' instead when the sentinel is present -- the v0.1
+        # silent retry, unchanged). An attempt the state machine never
+        # closed (still open at end of journal) falls back to the
+        # transcript alone, exactly as v0.1 always did for every attempt.
+        base_outcome = _compute_outcome(transcript_path, events)
+        closed_by = journal_attempt.closed_by if journal_attempt is not None else None
+        if closed_by == "completed":
+            outcome = "completed"
+        elif closed_by == "failed":
+            outcome = "failed"
+        elif closed_by == "superseded":
+            if base_outcome == "killed":
+                outcome = "killed"
+            else:
+                outcome = "superseded"
+                incomplete = True
+                diagnostics.append(
+                    f"journal.jsonl: key {key!r} attempt {ordinal} was replaced by a "
+                    "later attempt with no recorded outcome"
+                )
+        else:
+            outcome = base_outcome
+
+        # docs/DESIGN.md section 3/4.1: reported is read only for an
+        # attempt the state machine actually closed with a 'result' event
+        # (closed_by == 'completed') -- never for 'failed', 'superseded',
+        # or an attempt still open at the end of the journal, even when
+        # base_outcome alone would otherwise read 'completed' for one of
+        # those (an attempt with no journal-recorded result at all has
+        # nothing of its own to report).
+        reported = None
+        reported_line = None
+        if closed_by == "completed" and journal_attempt is not None:
+            reported = _build_reported(journal_attempt.closing_entry)
+            reported_line = journal_attempt.closing_line
+
         attempt = Attempt(
             agent_id=agent_id,
             key=key,
@@ -430,8 +590,18 @@ def _load_workflow(path: Path) -> Run:
             ordinal=ordinal,
             outcome=outcome,
             usage=_sum_usage(events),
+            reported=reported,
+            reported_line=reported_line,
+            tool_calls=tool_calls,
         )
-        if outcome == "killed":
+        attempt.facts = _build_attempt_facts(
+            tool_calls, outcome, last_ts, transcript_path, unreadable
+        )
+        # Interrupt tracks the transcript's own kill sentinel, independent
+        # of the final outcome above (docs/DESIGN.md 4.4): a 'failed'
+        # attempt whose transcript also ends in the sentinel still keeps it
+        # as evidence rather than losing it to the journal's own verdict.
+        if base_outcome == "killed":
             attempt.interrupt = _build_interrupt(attempt)
         attempts.append(attempt)
 
@@ -442,19 +612,7 @@ def _load_workflow(path: Path) -> Run:
                 agents_by_key[key] = agent
             agent.attempts.append(attempt)
 
-    # docs/DESIGN.md 7.4's D8: finished when the journal has a 'result' for
-    # every 'started' key -- the same rule hooks_cli._workflow_finished
-    # uses to decide whether to analyze a unit at all, computed here so a
-    # loaded Run can answer the question for itself (scan's display, run's
-    # RUNNING fast path).
-    started_keys = {
-        entry.get("key") for entry in started_events if isinstance(entry.get("key"), str)
-    }
-    result_keys = {
-        entry.get("key") for entry in journal
-        if entry.get("type") == "result" and isinstance(entry.get("key"), str)
-    }
-    finished = bool(started_keys) and started_keys <= result_keys
+    finished = _workflow_finished_from_occurrences(journal_attempts)
 
     run = Run(
         run_id=run_id,
@@ -492,17 +650,24 @@ def _project_slug(path: Path) -> str:
     return path.parent.name
 
 
-def _read_journal(path: Path, diagnostics: list[str]) -> tuple[list[dict], list[dict], bool]:
-    """journal, started_events, and whether the journal could be parsed
-    cleanly (docs/DESIGN.md 4.6): False when the file is missing or any line
-    in it failed to decode as a JSON object, in which case Run.status must
-    be INCOMPLETE rather than trusting a partial read."""
+def _read_journal(
+    path: Path, diagnostics: list[str]
+) -> tuple[list[dict], list[dict], bool, list[int]]:
+    """journal, started_events, whether the journal could be parsed cleanly
+    (docs/DESIGN.md 4.6: False when the file is missing or any line in it
+    failed to decode as a JSON object, in which case Run.status must be
+    INCOMPLETE rather than trusting a partial read), and line_numbers -- the
+    1-based journal.jsonl line number of each entry in `journal`, in the same
+    order, so a caller can later point evidence at the exact line a 'result'
+    or 'failed' event came from (docs/DESIGN.md section 3,
+    Attempt.reported_line)."""
     journal: list[dict] = []
     started_events: list[dict] = []
+    line_numbers: list[int] = []
     journal_path = path / "journal.jsonl"
     if not journal_path.exists():
         diagnostics.append("journal.jsonl: missing")
-        return journal, started_events, False
+        return journal, started_events, False, line_numbers
 
     ok = True
     try:
@@ -522,15 +687,244 @@ def _read_journal(path: Path, diagnostics: list[str]) -> tuple[list[dict], list[
                     ok = False
                     continue
                 journal.append(entry)
+                line_numbers.append(line_no)
                 if entry.get("type") == "started":
                     started_events.append(entry)
     except OSError as exc:
         diagnostics.append(f"journal.jsonl: unreadable: {exc}")
-        return journal, started_events, False
+        return journal, started_events, False, line_numbers
     except UnicodeError as exc:
         diagnostics.append(f"journal.jsonl: undecodable: {exc}")
-        return journal, started_events, False
-    return journal, started_events, ok
+        return journal, started_events, False, line_numbers
+    return journal, started_events, ok, line_numbers
+
+
+# --- per-key journal state machine (docs/DESIGN.md 4.1, unit M1a) ------
+#
+# Real Claude Code journals carry a `failed` event ("type", "key",
+# "agentId") that v0.1 never read, and a real `result` event carries
+# "type", "key", "agentId", "result" -- never the "outcome" field v0.1's
+# fixtures happened to include but no code ever looked at. Because `failed`
+# was ignored, a run whose every key actually ended (some by result, some
+# by failure) was shown as unfinished forever. `_run_journal_state_machine`
+# is the one place that tracks, per key, at most one open attempt at a
+# time, consuming events in file order; `_load_workflow` and
+# `workflow_journal_finished` (in turn used by hooks_cli._workflow_finished)
+# both build on it, so the two can never define "finished" differently.
+
+
+@dataclass
+class _JournalAttempt:
+    """One 'started' occurrence of a key and how the state machine below
+    resolved it, in journal order. `closed_by` is None while the attempt
+    is still open at the end of the journal. reader._load_workflow turns
+    `closed_by` plus whether this attempt's own transcript ends in the kill
+    sentinel into the Attempt's final `outcome`: 'completed' and 'failed'
+    are final as soon as the state machine assigns them (even over a
+    trailing sentinel: the sentinel still becomes Attempt.interrupt, kept
+    as evidence, but the journal's own report of what happened wins); a
+    'superseded' occurrence becomes 'killed' instead when its transcript
+    carries the sentinel (the v0.1 silent retry, unchanged); an occurrence
+    that is still open falls back to the transcript alone, exactly as
+    v0.1 always did for every attempt."""
+
+    key: str
+    agent_id: str
+    ordinal: int
+    started_entry: dict
+    closed_by: str | None = None  # None | 'completed' | 'failed' | 'superseded'
+    closing_entry: dict | None = None
+    # The 1-based journal.jsonl line number closing_entry came from, or None
+    # when line numbers were not supplied to the state machine (callers that
+    # only care about 'finished', such as workflow_journal_finished, never
+    # pass them). _load_workflow uses this to set Attempt.reported_line.
+    closing_line: int | None = None
+
+
+def _run_journal_state_machine(
+    journal: list[dict],
+    line_numbers: list[int] | None = None,
+) -> tuple[list[_JournalAttempt], list[str]]:
+    """The per-key attempt state machine of docs/DESIGN.md 4.1: at most one
+    attempt is open per key at a time, events consumed in file order.
+
+    - 'started' with no attempt open for its key opens attempt n+1.
+    - 'started' while one is open closes it 'superseded' (reader.py may
+      reclassify this as 'killed' once it has the transcript; see
+      _JournalAttempt above), then opens n+1.
+    - 'result' / 'failed' whose agentId equals the open attempt's, or that
+      carries no agentId at all, closes it 'completed' / 'failed'.
+    - 'result' / 'failed' with a different agentId, or with no attempt open
+      for its key, closes nothing and adds a diagnostic.
+
+    An entry that is not a dict, or whose 'key' is not a string, is skipped
+    silently: _read_journal already turned a line that could not become a
+    JSON object into its own diagnostic, and a keyless entry names no
+    attempt this state machine could ever resolve. Returns (occurrences,
+    diagnostics); occurrences are in the same order as their 'started'
+    events.
+
+    line_numbers, when given, is parallel to `journal` (as _read_journal
+    returns it) and fills in each occurrence's `closing_line`. Omitted by
+    every caller that only needs 'finished' (workflow_journal_finished), so
+    it defaults to None for every occurrence rather than requiring every
+    caller to thread a matching list through."""
+    open_by_key: dict[str, _JournalAttempt] = {}
+    ordinal_counts: dict[str, int] = {}
+    occurrences: list[_JournalAttempt] = []
+    diagnostics: list[str] = []
+    if line_numbers is None:
+        line_numbers = [None] * len(journal)
+
+    for entry, line_no in zip(journal, line_numbers):
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("key")
+        if not isinstance(key, str):
+            continue
+        etype = entry.get("type")
+
+        if etype == "started":
+            raw_agent_id = entry.get("agentId")
+            agent_id = raw_agent_id if isinstance(raw_agent_id, str) else ""
+            current = open_by_key.get(key)
+            if current is not None:
+                current.closed_by = "superseded"
+                current.closing_entry = entry
+                current.closing_line = line_no
+            ordinal_counts[key] = ordinal_counts.get(key, 0) + 1
+            occurrence = _JournalAttempt(
+                key=key, agent_id=agent_id, ordinal=ordinal_counts[key], started_entry=entry,
+            )
+            occurrences.append(occurrence)
+            open_by_key[key] = occurrence
+        elif etype in ("result", "failed"):
+            current = open_by_key.get(key)
+            event_agent_id = entry.get("agentId")
+            if current is None:
+                diagnostics.append(
+                    f"journal.jsonl: {etype!r} event for key {key!r} has no open attempt"
+                )
+                continue
+            if event_agent_id is not None and event_agent_id != current.agent_id:
+                diagnostics.append(
+                    f"journal.jsonl: {etype!r} event for key {key!r} does not match "
+                    "the open attempt's agent id"
+                )
+                continue
+            current.closed_by = "completed" if etype == "result" else "failed"
+            current.closing_entry = entry
+            current.closing_line = line_no
+            del open_by_key[key]
+        # every other type (launched, unknown types) is ignored here, same
+        # as everywhere else in the reader (docs/DESIGN.md 3).
+
+    return occurrences, diagnostics
+
+
+# --- Attempt.reported: the agent's own self-reported result (docs/ -----
+# --- DESIGN.md section 3, 4.1; .reviews/proposals/2026-09-v0.2-guided- ---
+# --- rescue.md section 4.3) ----------------------------------------------
+#
+# A real journal 'result' event's own value is a dict in most cases and a
+# string in the rest (measured: 483/705 dict, 222/705 string on real data).
+# A dict's values are the agent's self-reported claims about its own work
+# (tests_passed, ok, report_path, ...); many of those observed keys (note,
+# summary, bytes, ...) are free text or otherwise unbounded and are never
+# carried past the key name itself. A string result can run to 25k chars
+# and is private end to end: only its length ever leaves this function.
+
+_REPORTED_MAX_KEYS = 40
+_REPORTED_KEY_NAME_LIMIT = 64
+_REPORTED_STATUS_LIMIT = 32
+_REPORTED_REPORT_PATH_LIMIT = 1024
+_REPORTED_MAX_COMMITS = 20
+_COMMIT_HEX_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
+
+def _reported_claims(value: dict) -> dict:
+    """The allowlisted subset of a dict result's own claims (docs/DESIGN.md
+    section 3): only these exact keys, only when present with the one
+    shape each is allowed to have; every other key or shape is dropped
+    silently (it still shows up in the sibling 'keys' list, never here).
+    `bool` is checked with `type(v) is int` for the integer claims (not
+    `isinstance`), since Python's bool is a subclass of int and 'ok'/
+    'ready' already have their own, separate bool-only claims."""
+    claims: dict = {}
+
+    for key in ("ok", "ready"):
+        if key in value and isinstance(value[key], bool):
+            claims[key] = value[key]
+
+    if "status" in value:
+        status = value["status"]
+        if isinstance(status, str) and len(status) <= _REPORTED_STATUS_LIMIT:
+            claims["status"] = status
+
+    for key in ("tests_passed", "tests_failed", "suite_passed", "suite_failed"):
+        if key in value and type(value[key]) is int:
+            claims[key] = value[key]
+
+    if "blockers" in value and isinstance(value["blockers"], list):
+        claims["blockers_count"] = len(value["blockers"])
+
+    if "commits" in value and isinstance(value["commits"], list):
+        commits = value["commits"]
+        claims["commits_count"] = len(commits)
+        claims["commits"] = [
+            item for item in commits if isinstance(item, str) and _COMMIT_HEX_RE.match(item)
+        ][:_REPORTED_MAX_COMMITS]
+
+    if "report_path" in value:
+        report_path = value["report_path"]
+        if isinstance(report_path, str) and len(report_path) <= _REPORTED_REPORT_PATH_LIMIT:
+            claims["report_path"] = report_path
+
+    return claims
+
+
+def _build_reported(closing_entry: dict) -> dict | None:
+    """Attempt.reported for an attempt the journal state machine closed with
+    a 'result' event (docs/DESIGN.md section 3): None for a 'failed' event,
+    for one that never closed, or for a malformed/absent `result` value.
+    Never reads anything the journal did not itself carry on this one
+    entry."""
+    value = closing_entry.get("result") if isinstance(closing_entry, dict) else None
+    if isinstance(value, str):
+        return {"type": "text", "text_length": len(value)}
+    if isinstance(value, dict):
+        keys = [key[:_REPORTED_KEY_NAME_LIMIT] for key in sorted(value.keys())]
+        return {
+            "type": "dict",
+            "keys": keys[:_REPORTED_MAX_KEYS],
+            "claims": _reported_claims(value),
+        }
+    return None
+
+
+def _workflow_finished_from_occurrences(occurrences: list[_JournalAttempt]) -> bool:
+    """docs/DESIGN.md 4.1: a key is resolved once it has no open attempt.
+    True when there is at least one (started) key and every key is
+    resolved -- the last occurrence recorded for each key is the one that
+    matters, since an earlier occurrence of the same key is always closed
+    (superseded) the moment a later one starts."""
+    last_by_key: dict[str, _JournalAttempt] = {}
+    for occurrence in occurrences:
+        last_by_key[occurrence.key] = occurrence
+    if not last_by_key:
+        return False
+    return all(occurrence.closed_by is not None for occurrence in last_by_key.values())
+
+
+def workflow_journal_finished(journal: list[dict]) -> bool:
+    """docs/DESIGN.md 4.1 (unit M1a): whether every key the journal started
+    has been resolved by the per-key state machine above. The one function
+    `_load_workflow`'s own Run.finished and hooks_cli._workflow_finished
+    both use, so the two callers can never disagree about what 'finished'
+    means (v0.1's hook reimplemented an older, `failed`-blind version of
+    this rule on its own)."""
+    occurrences, _ = _run_journal_state_machine(journal)
+    return _workflow_finished_from_occurrences(occurrences)
 
 
 def _load_meta_file(meta_path: Path, diagnostics: list[str]) -> dict:
@@ -577,13 +971,15 @@ def _parse_main_attempt(
     load_session_view (docs/DESIGN.md 7.2, D6: optionally cached across
     several calls within one hook invocation) share."""
     diagnostics: list[str] = []
-    main_events, claude_version, session_id, unreadable, over_threshold = _read_transcript_tracked(
-        main_path, diagnostics
-    )
+    (
+        main_events, claude_version, session_id, unreadable, over_threshold, main_tool_calls,
+    ) = _read_transcript_tracked(main_path, diagnostics)
     incomplete = unreadable or over_threshold
+    incomplete = incomplete or any(call.ambiguous for call in main_tool_calls)
     main_ts = [event.ts for event in main_events if event.ts is not None]
     incomplete = incomplete or _edge_event_has_timestamp_diagnostic(main_events, diagnostics)
     main_outcome = _compute_outcome(main_path, main_events)
+    main_last_ts = max(main_ts) if main_ts else None
     main_attempt = Attempt(
         agent_id=main_path.stem,
         key=None,
@@ -594,10 +990,14 @@ def _parse_main_attempt(
         transcript_path=main_path,
         events=main_events,
         first_ts=min(main_ts) if main_ts else None,
-        last_ts=max(main_ts) if main_ts else None,
+        last_ts=main_last_ts,
         ordinal=1,
         outcome=main_outcome,
         usage=_sum_usage(main_events),
+        tool_calls=main_tool_calls,
+    )
+    main_attempt.facts = _build_attempt_facts(
+        main_tool_calls, main_outcome, main_last_ts, main_path, unreadable
     )
     if main_outcome == "killed":
         main_attempt.interrupt = _build_interrupt(main_attempt)
@@ -658,16 +1058,18 @@ def _load_session_from_paths(
         if not isinstance(phase, str):
             phase = ""
 
-        events, sub_version, _, sub_unreadable, sub_over_threshold = _read_transcript_tracked(
-            agent_path, diagnostics
+        events, sub_version, _, sub_unreadable, sub_over_threshold, sub_tool_calls = (
+            _read_transcript_tracked(agent_path, diagnostics)
         )
         incomplete = incomplete or sub_unreadable or sub_over_threshold
+        incomplete = incomplete or any(call.ambiguous for call in sub_tool_calls)
         if claude_version is None and sub_version:
             claude_version = sub_version
         event_ts = [event.ts for event in events if event.ts is not None]
         all_ts.extend(event_ts)
         incomplete = incomplete or _edge_event_has_timestamp_diagnostic(events, diagnostics)
         outcome = _compute_outcome(agent_path, events)
+        sub_last_ts = max(event_ts) if event_ts else None
 
         attempt = Attempt(
             agent_id=agent_id,
@@ -679,10 +1081,14 @@ def _load_session_from_paths(
             transcript_path=agent_path,
             events=events,
             first_ts=min(event_ts) if event_ts else None,
-            last_ts=max(event_ts) if event_ts else None,
+            last_ts=sub_last_ts,
             ordinal=1,
             outcome=outcome,
             usage=_sum_usage(events),
+            tool_calls=sub_tool_calls,
+        )
+        attempt.facts = _build_attempt_facts(
+            sub_tool_calls, outcome, sub_last_ts, agent_path, sub_unreadable
         )
         if outcome == "killed":
             attempt.interrupt = _build_interrupt(attempt)
@@ -794,6 +1200,106 @@ def _build_interrupt(attempt: Attempt) -> Interrupt | None:
     )
 
 
+# docs/DESIGN.md 4.1's v0.2 reader changes: the tool names ToolCall.path is
+# ever set for; used by _build_attempt_facts as a defensive filter (path is
+# already None for every other tool -- see _make_tool_call -- so this only
+# guards against a future tool being added to _PATH_TOOL_INPUT_FIELD without
+# also being a "wrote a file" tool).
+_PATH_WRITING_TOOL_NAMES = frozenset(_PATH_TOOL_INPUT_FIELD)
+
+# outcomes for which a not-yet-resolved tool call is genuinely "in flight"
+# (docs/DESIGN.md 4.1's v0.2 reader changes): a 'completed' attempt reports
+# [] unconditionally, since the journal's own verdict wins and a stray
+# no_result call in its transcript proves nothing was actually abandoned.
+_IN_FLIGHT_OUTCOMES = frozenset({"killed", "failed", "superseded"})
+
+
+def _build_attempt_facts(
+    tool_calls: list[ToolCall],
+    outcome: str,
+    last_ts: datetime | None,
+    transcript_path: Path | None,
+    unreadable: bool,
+) -> AttemptFacts | None:
+    """AttemptFacts derived from one attempt's tool_calls, computed once the
+    transcript is fully read (docs/DESIGN.md 4.1/4.2's v0.2 reader changes).
+
+    None only when transcript_path is None -- no transcript exists at all.
+    A transcript that exists but could not even be opened (`unreadable`,
+    docs/DESIGN.md 4.6) still produces an AttemptFacts, with every field set
+    to FACTS_UNKNOWN rather than a misleadingly empty list or zero count."""
+    if transcript_path is None:
+        return None
+    if unreadable:
+        return AttemptFacts(
+            paths_written=FACTS_UNKNOWN,
+            in_flight=FACTS_UNKNOWN,
+            commits=FACTS_UNKNOWN,
+            cwds=FACTS_UNKNOWN,
+            background_unfinished=FACTS_UNKNOWN,
+            last_tool=FACTS_UNKNOWN,
+            seconds_since_last_tool_at_end=FACTS_UNKNOWN,
+        )
+
+    paths_written: list[str] = []
+    seen_paths: set[str] = set()
+    in_flight: list[dict] = []
+    commits: list[str] = []
+    seen_commits: set[str] = set()
+    cwds: list[str] = []
+    seen_cwds: set[str] = set()
+    background_unfinished = 0
+
+    for call in tool_calls:
+        completion = call.completion
+
+        if (
+            call.tool_name in _PATH_WRITING_TOOL_NAMES
+            and call.path is not None
+            and completion == "completed_ok"
+            and call.path not in seen_paths
+        ):
+            seen_paths.add(call.path)
+            paths_written.append(call.path)
+
+        if completion == "no_result" and outcome in _IN_FLIGHT_OUTCOMES:
+            in_flight.append(
+                {"tool": call.tool_name, "path": call.path, "line_no": call.line_no}
+            )
+
+        for commit_id in call.commit_ids:
+            if commit_id not in seen_commits:
+                seen_commits.add(commit_id)
+                commits.append(commit_id)
+
+        if call.cwd is not None and call.cwd not in seen_cwds:
+            seen_cwds.add(call.cwd)
+            cwds.append(call.cwd)
+
+        if completion == "backgrounded":
+            background_unfinished += 1
+
+    last_tool = tool_calls[-1].tool_name if tool_calls else None
+
+    seconds_since_last_tool_at_end: float | None = None
+    if tool_calls and last_ts is not None:
+        last_call_ts = tool_calls[-1].ts
+        if last_call_ts is not None:
+            delta = (last_ts - last_call_ts).total_seconds()
+            if delta >= 0:
+                seconds_since_last_tool_at_end = delta
+
+    return AttemptFacts(
+        paths_written=paths_written,
+        in_flight=in_flight,
+        commits=commits,
+        cwds=cwds,
+        background_unfinished=background_unfinished,
+        last_tool=last_tool,
+        seconds_since_last_tool_at_end=seconds_since_last_tool_at_end,
+    )
+
+
 def _sum_usage(events: list[Event]) -> dict:
     totals: dict[str, int | float] = {}
     for event in events:
@@ -880,14 +1386,60 @@ def _flatten_block_text(content: object) -> str:
     return str(content)
 
 
+def _make_tool_call(
+    tool_id: str,
+    tool_name: str | None,
+    input_obj: dict,
+    line_no: int,
+    ts: datetime | None,
+    cwd_raw: object,
+) -> ToolCall:
+    """One ToolCall, filled from the tool_use block's own FULL parsed input
+    (never Event's 400-char excerpt) -- docs/DESIGN.md 4.1/4.2's v0.2 reader
+    changes."""
+    path = None
+    field_name = _PATH_TOOL_INPUT_FIELD.get(tool_name or "")
+    if field_name is not None:
+        raw_path = input_obj.get(field_name)
+        if isinstance(raw_path, str) and len(raw_path) <= _TOOL_CALL_PATH_LIMIT:
+            path = raw_path
+
+    command = None
+    command_sha256 = None
+    if tool_name == "Bash":
+        raw_command = input_obj.get("command")
+        if isinstance(raw_command, str):
+            if len(raw_command) <= _TOOL_CALL_COMMAND_LIMIT:
+                command = raw_command
+            else:
+                command_sha256 = hashlib.sha256(raw_command.encode("utf-8")).hexdigest()
+
+    cwd = os.path.normpath(cwd_raw) if isinstance(cwd_raw, str) and cwd_raw else None
+
+    return ToolCall(
+        tool_use_id=tool_id,
+        tool_name=tool_name,
+        line_no=line_no,
+        ts=ts,
+        path=path,
+        command=command,
+        command_sha256=command_sha256,
+        cwd=cwd,
+    )
+
+
 def _read_transcript(
     transcript_path: Path, diagnostics: list[str]
-) -> tuple[list[Event], str | None, str | None, int, int]:
-    """events, version, session_id, and (total_lines, bad_lines): the
-    non-blank physical line count and how many of them failed to decode as
-    JSON at all (docs/DESIGN.md 4.6's "5 percent of a transcript's lines
-    were undecodable"; a line that decodes but is not a JSON object is a
-    different, already-diagnosed problem, not an undecodable one)."""
+) -> tuple[list[Event], str | None, str | None, int, int, list[ToolCall]]:
+    """events, version, session_id, (total_lines, bad_lines), and tool_calls:
+    total_lines/bad_lines are the non-blank physical line count and how many
+    of them failed to decode as JSON at all (docs/DESIGN.md 4.6's "5 percent
+    of a transcript's lines were undecodable"; a line that decodes but is
+    not a JSON object is a different, already-diagnosed problem, not an
+    undecodable one). tool_calls is every ToolCall in transcript order
+    (docs/DESIGN.md 4.1/4.2's v0.2 reader changes), filled from each
+    tool_use block's own full parsed input and updated in place when its
+    matching tool_result is seen."""
     events: list[Event] = []
     version: str | None = None
     session_id: str | None = None
@@ -896,6 +1448,18 @@ def _read_transcript(
     # each tool_use_id, so a later tool_result can be judged read-only
     # without re-reading the tool_use event.
     tool_commands: dict[str, str | None] = {}
+    # docs/DESIGN.md 4.1/4.2's v0.2 reader changes: every ToolCall built so
+    # far, in transcript order, plus an index by tool_use_id so the matching
+    # tool_result (which can arrive in any order relative to a sibling call
+    # started in the same assistant message) updates the right one.
+    tool_calls: list[ToolCall] = []
+    tool_call_index: dict[str, ToolCall] = {}
+    # docs/DESIGN.md 4.2's v0.2 reader changes (F5 hardening): every
+    # ToolCall built so far for a given tool_use_id, in the order seen --
+    # unlike tool_call_index (which only ever points at the latest one),
+    # this is how a second tool_use block with the same id is recognized as
+    # a duplicate at all.
+    tool_calls_by_id: dict[str, list[ToolCall]] = {}
     total_lines = 0
     bad_lines = 0
     # Usage dedup is scoped to one transcript (docs/DESIGN.md 4.2): the
@@ -931,14 +1495,17 @@ def _read_transcript(
                 events.extend(
                     _user_events(
                         entry, transcript_path, line_no, ts, raw_type,
-                        tool_names, tool_commands, diagnostics
+                        tool_names, tool_commands, diagnostics,
+                        tool_call_index=tool_call_index,
                     )
                 )
             elif raw_type == "assistant":
                 events.extend(
                     _assistant_events(
                         entry, transcript_path, line_no, ts, raw_type,
-                        tool_names, tool_commands, dedup, diagnostics
+                        tool_names, tool_commands, dedup, diagnostics,
+                        tool_calls=tool_calls, tool_call_index=tool_call_index,
+                        tool_calls_by_id=tool_calls_by_id,
                     )
                 )
             elif raw_type == "attachment":
@@ -950,7 +1517,7 @@ def _read_transcript(
             else:
                 events.append(_unknown_event(entry, transcript_path, line_no, ts, raw_type))
 
-    return events, version, session_id, total_lines, bad_lines
+    return events, version, session_id, total_lines, bad_lines, tool_calls
 
 
 # docs/DESIGN.md 4.6: a transcript whose undecodable-line rate exceeds this
@@ -962,25 +1529,28 @@ _UNDECODABLE_LINE_THRESHOLD = 0.05
 
 def _read_transcript_tracked(
     transcript_path: Path, diagnostics: list[str]
-) -> tuple[list[Event], str | None, str | None, bool, bool]:
+) -> tuple[list[Event], str | None, str | None, bool, bool, list[ToolCall]]:
     """_read_transcript, plus the two docs/DESIGN.md 4.6 conditions it alone
     can observe: `unreadable` when the file could not even be opened (a
     permission or IO error, never mere absence -- a caller only reaches this
     for a transcript path it already confirmed exists), and
     `over_threshold` when more than _UNDECODABLE_LINE_THRESHOLD of its lines
-    failed to decode."""
+    failed to decode. tool_calls is [] when unreadable (docs/DESIGN.md 4.1's
+    v0.2 reader changes: a caller that gets unreadable=True builds an
+    AttemptFacts with every field set to FACTS_UNKNOWN instead of trusting
+    this empty list)."""
     try:
         handle = transcript_path.open("r", encoding="utf-8")
         handle.close()
     except OSError as exc:
         diagnostics.append(f"{transcript_path.name}: unreadable: {exc}")
-        return [], None, None, True, False
+        return [], None, None, True, False, []
 
-    events, version, session_id, total_lines, bad_lines = _read_transcript(
+    events, version, session_id, total_lines, bad_lines, tool_calls = _read_transcript(
         transcript_path, diagnostics
     )
     over_threshold = total_lines > 0 and (bad_lines / total_lines) > _UNDECODABLE_LINE_THRESHOLD
-    return events, version, session_id, False, over_threshold
+    return events, version, session_id, False, over_threshold, tool_calls
 
 
 def _edge_event_has_timestamp_diagnostic(events: list[Event], diagnostics: list[str]) -> bool:
@@ -1030,7 +1600,8 @@ def _as_text(
 
 
 def _user_events(
-    entry, path, line_no, ts, raw_type, tool_names, tool_commands=None, diagnostics=None
+    entry, path, line_no, ts, raw_type, tool_names, tool_commands=None, diagnostics=None,
+    tool_call_index=None,
 ) -> list[Event]:
     message = _as_object(entry.get("message"), path, line_no, diagnostics, "message")
     content = message.get("content")
@@ -1067,16 +1638,38 @@ def _user_events(
             tool_name = tool_names.get(tool_use_id) if isinstance(tool_use_id, str) else None
             full_text = _flatten_block_text(block.get("content"))
             is_envelope = tool_name in _ENVELOPE_TOOL_NAMES
+            is_error = bool(block.get("is_error", False))
             events.append(Event(
                 path=path, line_no=line_no, ts=ts, kind="tool_result", raw_type=raw_type,
                 tool_name=tool_name, text=_excerpt(full_text),
                 exit_code=_parse_exit_code(full_text),
-                duration_ms=None, is_error=bool(block.get("is_error", False)),
+                duration_ms=None, is_error=is_error,
                 usage={},
                 markers=frozenset() if is_envelope else _scan_markers(full_text),
                 envelope=is_envelope,
                 read_only_output=_tool_result_read_only(tool_name, tool_use_id, tool_commands),
             ))
+            # docs/DESIGN.md 4.1/4.2's v0.2 reader changes: fill in the
+            # matching ToolCall (by tool_use_id, never by position -- two
+            # tool_use blocks in one assistant message can have their
+            # results arrive in either order) from this tool_result's own
+            # FULL text, before _excerpt bounds it.
+            if tool_call_index is not None and isinstance(tool_use_id, str):
+                call = tool_call_index.get(tool_use_id)
+                if call is not None:
+                    call.result_line = line_no
+                    call.is_error = is_error
+                    call.backgrounded = all(
+                        fragment in full_text for fragment in BASH_BACKGROUNDED
+                    )
+                    call.exit_code = _parse_exit_code(full_text)
+                    command_text = (
+                        tool_commands.get(tool_use_id) if tool_commands is not None else None
+                    )
+                    if isinstance(command_text, str) and "git commit" in command_text:
+                        call.commit_ids = tuple(
+                            _COMMIT_ID_RE.findall(full_text)[:_MAX_COMMIT_IDS_PER_CALL]
+                        )
         elif block_type == "text":
             block_text = _as_text(block.get("text", ""), path, line_no, diagnostics, "block text")
             events.append(Event(
@@ -1090,7 +1683,8 @@ def _user_events(
 
 
 def _assistant_events(
-    entry, path, line_no, ts, raw_type, tool_names, tool_commands=None, dedup=None, diagnostics=None
+    entry, path, line_no, ts, raw_type, tool_names, tool_commands=None, dedup=None,
+    diagnostics=None, tool_calls=None, tool_call_index=None, tool_calls_by_id=None,
 ) -> list[Event]:
     """Every block in one assistant transcript entry, with usage attached to
     exactly one of them (the first), regardless of how many blocks the
@@ -1175,6 +1769,30 @@ def _assistant_events(
             if isinstance(tool_id, str) and tool_commands is not None and tool_name == "Bash":
                 command = input_obj.get("command")
                 tool_commands[tool_id] = command if isinstance(command, str) else None
+            if isinstance(tool_id, str) and tool_calls is not None and tool_call_index is not None:
+                call = _make_tool_call(tool_id, tool_name, input_obj, line_no, ts, entry.get("cwd"))
+                tool_calls.append(call)
+                tool_call_index[tool_id] = call
+                # docs/DESIGN.md 4.2's v0.2 reader changes (F5 hardening): a
+                # tool_use_id seen before in this same transcript means the
+                # pairing below can no longer tell which tool_result belongs
+                # to which call. Diagnose it (so Run.status becomes
+                # INCOMPLETE) and mark EVERY ToolCall sharing this id --
+                # including ones already built -- ambiguous, never only the
+                # newest one.
+                if tool_calls_by_id is not None:
+                    siblings = tool_calls_by_id.setdefault(tool_id, [])
+                    if siblings:
+                        first_line = siblings[0].line_no
+                        if diagnostics is not None:
+                            diagnostics.append(
+                                f"{path.name}:{line_no}: duplicate tool_use_id {tool_id} "
+                                f"at lines {first_line} and {line_no}"
+                            )
+                        for sibling in siblings:
+                            sibling.ambiguous = True
+                        call.ambiguous = True
+                    siblings.append(call)
             events.append(Event(
                 path=path, line_no=line_no, ts=ts, kind="tool_use", raw_type=raw_type,
                 tool_name=tool_name, text=_excerpt(input_text),

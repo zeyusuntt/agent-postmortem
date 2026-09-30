@@ -321,6 +321,66 @@ def test_redactor_no_redact_disables_pseudonyms_too():
     assert redactor.title("impl:silent-alpha restarted 2 times") == "impl:silent-alpha restarted 2 times"
 
 
+# --- F1: report_path gets its own "path-N" pseudonym namespace -------------
+#
+# Unlike every other Pseudonyms category (agent/desc/phase/type/target,
+# confined to Finding.title via Redactor.title()), a registered path is also
+# substituted by the plain Redactor call itself: report_path is checked by
+# structural redact() alone before this fix, and a relative path or an
+# absolute path outside home and /tmp passed through unchanged (docs/
+# DESIGN.md 5.1, M1 review finding 1).
+
+
+def test_pseudonyms_path_gets_its_own_namespace_numbered_in_order():
+    names = Pseudonyms(enabled=True)
+    assert names.path("clients/acme-secret/reports/internal.md") == "path-1"
+    assert names.path("/var/reports/internal.md") == "path-2"
+    # the same value seen again reuses its own pseudonym
+    assert names.path("clients/acme-secret/reports/internal.md") == "path-1"
+
+
+def test_pseudonyms_path_disabled_is_a_pass_through():
+    names = Pseudonyms(enabled=False)
+    assert names.path("clients/acme-secret/reports/internal.md") == (
+        "clients/acme-secret/reports/internal.md"
+    )
+
+
+def test_redactor_call_substitutes_a_registered_path_unlike_a_name():
+    """Unlike agent/phase/desc/type/target, a registered path is substituted
+    by the plain Redactor call itself (evidence, diagnostics, metrics), not
+    only by title() -- report_path is not a faithful transcript quote the
+    way evidence text is; it is a self-reported claim value that must never
+    appear raw by default wherever it is rendered."""
+    redactor = Redactor(enabled=True, home=Path("/no/such/home"))
+    redactor.names.path("clients/acme-secret/reports/internal.md")
+    text = "report at clients/acme-secret/reports/internal.md was missing"
+    assert redactor(text) == "report at path-1 was missing"
+    assert "clients/acme-secret/reports/internal.md" not in redactor(text)
+
+
+def test_redactor_call_path_substitution_runs_before_structural_redact():
+    """A report_path under the home directory must become path-N, not the
+    general "~/.../basename" collapse -- the path pseudonym is registered
+    (and substituted) against the raw value before redact()'s own home/tmp
+    rules ever see it."""
+    home = Path("/Users/tester")
+    redactor = Redactor(enabled=True, home=home)
+    raw = "/Users/tester/Documents/secret-client/report.md"
+    redactor.names.path(raw)
+    result = redactor(f"wrote to {raw}")
+    assert result == "wrote to path-1"
+    assert "secret-client" not in result
+    assert "~" not in result
+
+
+def test_redactor_no_redact_shows_the_raw_path():
+    redactor = Redactor(enabled=False)
+    redactor.names.path("clients/acme-secret/reports/internal.md")
+    text = "report at clients/acme-secret/reports/internal.md was missing"
+    assert redactor(text) == text
+
+
 def test_pseudonyms_apply_is_word_boundary_anchored():
     """docs/DESIGN.md 5.1: a short registered name must not match as a
     fragment of an unrelated, longer word ('cli' inside 'client')."""
@@ -393,7 +453,10 @@ def test_evidence_is_never_corrupted_by_a_registered_phase_or_label():
     run, finding = _make_named_run()
     redactor = Redactor(enabled=True, home=_FAKE_HOME)
 
-    text = report.render_run_text(run, [finding], redactor)
+    # unit M3a: an evidence excerpt only prints with --evidence now (docs/
+    # DESIGN.md 4.7 rule 7); this exercises the exact same corruption check
+    # against the --evidence text.
+    text = report.render_run_text(run, [finding], redactor, evidence=True)
     assert "Implement the silent-alpha module and add a test." in text
 
     bug = report.render_bug_report(run, [finding], Redactor(enabled=True, home=_FAKE_HOME))
@@ -410,7 +473,9 @@ def test_finding_title_is_still_pseudonymized_in_every_renderer():
 
     text = report.render_run_text(run, [finding], Redactor(enabled=True, home=_FAKE_HOME))
     assert "impl:demo restarted" not in text
-    assert "agent-1 restarted" in text
+    # unit M3a: STORIES prints "  <label>  <story text>" (two spaces both
+    # sides of the label), not the old "<label> <verb>..." finding line.
+    assert "agent-1  Restarted" in text
 
     bug = report.render_bug_report(run, [finding], Redactor(enabled=True, home=_FAKE_HOME))
     assert "impl:demo restarted" not in bug

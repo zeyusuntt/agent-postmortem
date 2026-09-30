@@ -66,17 +66,17 @@ def test_plugin_version_equals_package_version():
     assert plugin["version"] == package_version
 
 
-def test_pyproject_plugin_and_package_versions_are_all_0_1_0():
+def test_pyproject_plugin_and_package_versions_are_all_0_2_0():
     """docs/DESIGN.md 7.1's D1: the literal, not just mutual equality --
     a version bump that only kept two of the three in sync would still
     pass a pure-equality check."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert pyproject["project"]["version"] == "0.1.0"
+    assert pyproject["project"]["version"] == "0.2.0"
     plugin = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
-    assert plugin["version"] == "0.1.0"
+    assert plugin["version"] == "0.2.0"
     import agent_postmortem
 
-    assert agent_postmortem.__version__ == "0.1.0"
+    assert agent_postmortem.__version__ == "0.2.0"
 
 
 def test_pyproject_declares_agent_postmortem_as_primary_and_postmortem_as_alias():
@@ -144,12 +144,70 @@ def test_skill_md_has_the_expected_frontmatter():
     _, frontmatter, body = text.split("---", 2)
     assert "name: postmortem" in frontmatter
     assert "description:" in frontmatter
-    # docs/DESIGN.md 7.4: no argument / latest / a run id, paste the
-    # verdict, ask before --write.
+    # docs/DESIGN.md 7.4/9 (unit M6): no argument / latest / a run id, paste
+    # the verdict, point at `rules propose` instead of writing anything, and
+    # ask before pasting a rule's printed block into the user's own file.
     assert "scan" in body
     assert "latest" in body
-    assert "--write" in body
+    assert "propose" in body
+    assert "--write" not in body
     assert "ask" in body.lower()
+
+
+def test_postmortem_skill_points_at_rescue_for_work_at_risk():
+    """docs/DESIGN.md 7.4/4.11: the /postmortem skill gets one line pointing
+    at /rescue for when WORK AT RISK is non-empty, rather than leaving the
+    reader to discover the rescue skill on their own."""
+    text = (PLUGIN_ROOT / "skills" / "postmortem" / "SKILL.md").read_text(encoding="utf-8")
+    assert "WORK AT RISK" in text
+    assert "/rescue" in text
+
+
+# --- skills/rescue/SKILL.md: frontmatter and the 7-step protocol ------------
+
+
+def test_rescue_skill_md_has_the_expected_frontmatter():
+    text = (PLUGIN_ROOT / "skills" / "rescue" / "SKILL.md").read_text(encoding="utf-8")
+    assert text.startswith("---\n")
+    _, frontmatter, body = text.split("---", 2)
+    assert "name: rescue" in frontmatter
+    assert "description:" in frontmatter
+    # docs/DESIGN.md 4.11/7.4: what the tool can and cannot do, stated
+    # plainly, before the protocol itself.
+    assert "read" in body.lower()
+    assert "never edits" in body.lower() or "never edit" in body.lower()
+    assert "never runs a check" in body.lower() or "never run a check" in body.lower()
+    assert "evidence" in body.lower()
+
+
+# `.reviews/proposals/2026-09-v0.2-guided-rescue.md` section 8.4's 7-step
+# protocol, one required phrase per step so a rewrite of the skill's wording
+# cannot silently drop a step's own substance.
+_RESCUE_SKILL_STEP_PHRASES = (
+    ("1", ("rescue plan", "--no-redact", "POSSIBLY LIVE")),
+    ("2", ("diff",)),
+    ("3", ("declared check", "Bash", "ask")),
+    ("4", ("2 cycles",)),
+    ("5", ("checkout", "restore", "reset", "stash", "clean", "cp")),
+    ("6", ("rescue status", "commit", "relaunch")),
+    ("7", ("instruction file", "CLAUDE.md")),
+)
+
+
+def test_rescue_skill_md_contains_every_protocol_steps_key_phrases():
+    text = (PLUGIN_ROOT / "skills" / "rescue" / "SKILL.md").read_text(encoding="utf-8")
+    for step, phrases in _RESCUE_SKILL_STEP_PHRASES:
+        for phrase in phrases:
+            assert phrase in text, f"step {step}: missing phrase {phrase!r} in rescue SKILL.md"
+
+
+def test_rescue_skill_md_never_names_write_flag_or_writes_instructions():
+    """docs/DESIGN.md 4.11 R3/R7: the skill must never tell the model to run
+    `apply --write` (apply is proposals-only) and must explicitly forbid
+    editing an instruction file as part of a rescue."""
+    text = (PLUGIN_ROOT / "skills" / "rescue" / "SKILL.md").read_text(encoding="utf-8")
+    assert "--write" not in text
+    assert "Never touch an instruction file" in text or "never edit" in text.lower()
 
 
 def test_plugin_readme_documents_install_hooks_network_and_uninstall():

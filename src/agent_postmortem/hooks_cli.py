@@ -50,7 +50,7 @@ from dataclasses import dataclass, replace
 from importlib import metadata
 from pathlib import Path
 
-from . import detectors, reader, report, state
+from . import config, detectors, reader, report, state
 from .markers import KILL_SENTINEL_PREFIX
 from .redact import Redactor
 
@@ -277,23 +277,18 @@ def _iter_json_lines(path: Path):
 
 
 def _workflow_finished(journal_path: Path) -> bool:
-    """docs/DESIGN.md 7.2: finished when the journal has a result for every
-    started key. False (not merely unknown) when the journal is missing or
-    empty -- a workflow directory can exist before its journal.jsonl does."""
-    started_keys: set[str] = set()
-    result_keys: set[str] = set()
+    """docs/DESIGN.md 7.2 and 4.1 (unit M1a): delegates to
+    reader.workflow_journal_finished, the per-key state machine's own
+    'finished' rule, so this hook and reader.py's own Run.finished can
+    never disagree about what 'finished' means (v0.1 reimplemented an
+    older, `failed`-blind version of this rule here on its own). False
+    (not merely unknown) when the journal is missing or empty -- a
+    workflow directory can exist before its journal.jsonl does."""
     try:
-        for entry in _iter_json_lines(journal_path):
-            key = entry.get("key")
-            if not isinstance(key, str):
-                continue
-            if entry.get("type") == "started":
-                started_keys.add(key)
-            elif entry.get("type") == "result":
-                result_keys.add(key)
+        journal = list(_iter_json_lines(journal_path))
     except OSError:
         return False
-    return bool(started_keys) and started_keys <= result_keys
+    return reader.workflow_journal_finished(journal)
 
 
 def _entry_user_text(entry: dict) -> str:
@@ -497,7 +492,7 @@ def _entry_skeleton(
 
 def _check_one_unit(
     kind: str, path: Path, prev: dict | None, payload: dict,
-    main_transcript: Path, main_cache: dict,
+    main_transcript: Path, main_cache: dict, cfg: config.Config,
 ) -> _UnitOutcome:
     prev_state = prev.get("state") if prev else None
     prev_fp = prev.get("fingerprint") if prev else None
@@ -620,7 +615,15 @@ def _check_one_unit(
     reader_incomplete = status == "INCOMPLETE"
     is_incomplete = state_word == "unknown" or reader_incomplete
     effective_status = "INCOMPLETE" if is_incomplete else status
-    verdict = report.verdict_word(findings, effective_status)
+    # docs/DESIGN.md 4.10/7.2: a detector silenced by the user's config still
+    # ran and its findings are kept nowhere the hook ever exports them
+    # (there is no `hook check --json`), but the hook verdict word and the
+    # notify-worthy finding set must never be swayed by one -- the same rule
+    # `run`'s own verdict/stories/next follow. wasted_seconds is left over
+    # the full finding set, an informational number cached for
+    # session-start's digest, not a notify decision.
+    shown, _silenced = config.partition_silenced(findings, cfg)
+    verdict = report.verdict_word(shown, effective_status)
     wasted_seconds = sum(
         f.metrics.get("wasted_seconds", 0.0) for f in findings if f.detector == "wasted_time"
     )
@@ -628,7 +631,7 @@ def _check_one_unit(
     threshold_rank = _SEVERITY_RANK[_notify_threshold()]
     new_finding_ids = [
         f.finding_id
-        for f in findings
+        for f in shown
         if _SEVERITY_RANK.get(f.severity, 0) >= threshold_rank and f.finding_id not in reported_prev
     ]
 
@@ -661,7 +664,8 @@ def _check_one_unit(
 
 
 def _process_units_for_session(
-    data: dict, session_key: str, session_dir: Path, payload: dict, cap: int | None = None
+    data: dict, session_key: str, session_dir: Path, payload: dict, cap: int | None = None,
+    cfg: config.Config | None = None,
 ) -> list[_UnitOutcome]:
     """Classify (and, when newly finished/unknown, analyze) every unit of
     one session, mutating `data` in place: unit states, and digest.pending
@@ -698,6 +702,9 @@ def _process_units_for_session(
     # docs/DESIGN.md 7.2's D6: one main-transcript parse shared by every
     # subagent unit analyzed within this one call.
     main_cache: dict = {}
+    # docs/DESIGN.md 4.10: loaded once per call, never per unit -- every unit
+    # of this session checked in this one call sees the same config.
+    active_cfg = cfg if cfg is not None else config.load_config()
 
     outcomes: list[_UnitOutcome] = []
     analyzed_count = 0
@@ -706,7 +713,9 @@ def _process_units_for_session(
             break
         prev = unit_states.get(unit_id)
         was_analyzed = prev is not None and prev.get("state") == "analyzed"
-        outcome = _check_one_unit(kind, path, prev, payload, main_transcript, main_cache)
+        outcome = _check_one_unit(
+            kind, path, prev, payload, main_transcript, main_cache, active_cfg,
+        )
         unit_states[unit_id] = outcome.entry
         outcome.newly_analyzed = outcome.entry.get("state") == "analyzed" and not was_analyzed
         if outcome.newly_analyzed:
@@ -903,7 +912,12 @@ def _cmd_session_end(payload: dict) -> None:
     except reader.NotARun:
         return
     findings = detectors.run_tooling_detectors(run)
-    verdict = report.verdict_word(findings, run.status)
+    # docs/DESIGN.md 4.10/7.2: the same shown/silenced split _check_one_unit
+    # applies -- this unit's cached verdict feeds session-start's own
+    # "worst verdict" digest ranking, so it must never be swayed by a
+    # detector the user silenced either.
+    shown, _silenced = config.partition_silenced(findings, config.load_config())
+    verdict = report.verdict_word(shown, run.status)
     wasted_seconds = sum(
         f.metrics.get("wasted_seconds", 0.0) for f in findings if f.detector == "wasted_time"
     )
@@ -922,7 +936,7 @@ def _cmd_session_end(payload: dict) -> None:
         for unit in unit_states.values():
             already_reported.update(unit.get("reported", []))
         prior_main_reported = set(unit_states.get("main", {}).get("reported", []))
-        new_ids = {f.finding_id for f in findings} - already_reported
+        new_ids = {f.finding_id for f in shown} - already_reported
 
         unit_states["main"] = {
             "fingerprint": _fingerprint(_unit_files("session_main", main_transcript)),
@@ -944,29 +958,59 @@ def _cmd_session_end(payload: dict) -> None:
 
 
 def _extract_run_id(tool_response: object) -> str | None:
+    """docs/DESIGN.md 7.2 (release finding F12): whichever way a candidate
+    run id was found -- the structured `runId` field, or the regex fallback
+    over free text -- it is accepted only when it full-matches the same
+    canonical run id grammar reader.py's own ingestion enforces
+    (reader._WORKFLOW_RUN_ID_RE: 'wf_' + 8 hex + '-' + 3 hex). A structured
+    `runId` previously accepted any nonempty string verbatim, including one
+    carrying a newline or trailing text that could inject content into the
+    additionalContext hint; requiring a full match closes that off for
+    both extraction paths at once."""
+    candidate: str | None = None
     if isinstance(tool_response, dict):
-        candidate = tool_response.get("runId")
-        if isinstance(candidate, str) and candidate:
-            return candidate
-    text = tool_response if isinstance(tool_response, str) else ""
-    if not text and tool_response is not None:
-        try:
-            text = json.dumps(tool_response, ensure_ascii=False)
-        except (TypeError, ValueError):
-            text = ""
-    match = _RUN_ID_RE.search(text)
-    return match.group(1) if match else None
+        raw = tool_response.get("runId")
+        if isinstance(raw, str) and raw:
+            candidate = raw
+    if candidate is None:
+        text = tool_response if isinstance(tool_response, str) else ""
+        if not text and tool_response is not None:
+            try:
+                text = json.dumps(tool_response, ensure_ascii=False)
+            except (TypeError, ValueError):
+                text = ""
+        match = _RUN_ID_RE.search(text)
+        candidate = match.group(1) if match else None
+    if candidate is None or not reader._WORKFLOW_RUN_ID_RE.match(candidate):
+        return None
+    return candidate
 
 
-def _extract_transcript_dir(tool_response: object) -> str | None:
+def _extract_transcript_dir(tool_response: object, session_dir: Path) -> str | None:
     """docs/DESIGN.md 7.2's D8: the transcriptDir the Workflow tool's own
     response names, if any -- the locator `check` falls back to when the
-    conventional subagents/workflows/<run id> path does not exist yet."""
-    if isinstance(tool_response, dict):
-        candidate = tool_response.get("transcriptDir")
-        if isinstance(candidate, str) and candidate:
-            return candidate
-    return None
+    conventional subagents/workflows/<run id> path does not exist yet.
+
+    Release finding F12: an untrusted transcriptDir is honored only when,
+    after normalization, it names a location inside this session's own
+    subagents/workflows/ directory (the same session_dir `check` derives
+    from transcript_path, docs/DESIGN.md 7.2's D4) -- it need not exist on
+    disk yet (D8's whole point). Anything else (a relative path, or one
+    that normalizes outside that directory) is dropped exactly as if
+    transcriptDir had never been given at all: only the untrusted locator
+    is refused, never the registration itself."""
+    if not isinstance(tool_response, dict):
+        return None
+    candidate = tool_response.get("transcriptDir")
+    if not isinstance(candidate, str) or not candidate:
+        return None
+    if not os.path.isabs(candidate):
+        return None
+    normalized = os.path.normpath(candidate)
+    boundary = os.path.normpath(str(session_dir / "subagents" / "workflows"))
+    if not normalized.startswith(boundary + os.sep):
+        return None
+    return normalized
 
 
 def _cmd_workflow_launched(payload: dict) -> None:
@@ -980,7 +1024,7 @@ def _cmd_workflow_launched(payload: dict) -> None:
     if not run_id:
         return
     unit_id = f"subagents/workflows/{run_id}"
-    transcript_dir = _extract_transcript_dir(payload.get("tool_response"))
+    transcript_dir = _extract_transcript_dir(payload.get("tool_response"), session_dir)
     root = session_dir.parent.parent
     session_key = _session_state_key(root, session_id)
 
@@ -1001,7 +1045,29 @@ def _cmd_workflow_launched(payload: dict) -> None:
             entry["priority"] = True
             if transcript_dir:
                 entry["transcript_dir"] = transcript_dir
-    # docs/DESIGN.md 7.2: workflow-launched prints nothing.
+
+    # .reviews/proposals/2026-09-v0.2-guided-rescue.md section 7 (docs/
+    # DESIGN.md 7.2): the registration side effect above happens either way;
+    # this is the one added sentence, emitted only when a run id could be
+    # read (already established above) and not opted out of. It arms
+    # nothing itself (R2) -- the session decides whether to actually run the
+    # command.
+    if os.environ.get("AGENT_POSTMORTEM_WATCH_HINT", "").strip() != "0":
+        message = (
+            f"Workflow {run_id} launched. To notice a killed or failed agent within "
+            f"seconds instead of hours, arm a Monitor now with this command: "
+            f"agent-postmortem watch {run_id}"
+        )
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PostToolUse",
+                        "additionalContext": message,
+                    }
+                }
+            )
+        )
 
 
 # --- hook capabilities ---------------------------------------------------

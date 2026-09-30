@@ -1,5 +1,4 @@
 {"type":"launched"}
 {"type":"started","key":"v2:demo0001","agentId":"a1111111111111111","label":"impl:demo","phase":"Implement"}
-{"type":"result","key":"v2:demo0001","agentId":"a1111111111111111","result":"killed"}
 {"type":"started","key":"v2:demo0001","agentId":"a2222222222222222","label":"impl:demo","phase":"Implement"}
 {"type":"result","key":"v2:demo0001","agentId":"a2222222222222222","result":"completed"}

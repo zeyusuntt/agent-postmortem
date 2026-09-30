@@ -11,12 +11,13 @@ is the only case here loaded from there instead of FIXTURES_ROOT.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import agent_postmortem
 from agent_postmortem import reader, report
 from agent_postmortem.detectors import mislabeled_kill, silent_retry, wasted_time
-from agent_postmortem.models import Attempt, LogicalAgent, Run
+from agent_postmortem.models import Attempt, Event, LogicalAgent, Run
 from agent_postmortem.redact import Redactor
 
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs"
@@ -76,7 +77,9 @@ def test_silent_retry_fires_once_per_retried_key():
         assert finding.metrics["burst"] is False
         # Each killed attempt's own span is exactly 600s (10 minutes).
         assert finding.metrics["wasted_seconds"] == 600.0
-        assert "restarted 2 times" in finding.title
+        # F5: 2 attempts is 1 restart, not 2 -- the title counts restarts,
+        # not attempts.
+        assert "restarted 1 time" in finding.title
         assert "10m wasted" in finding.title
 
 
@@ -104,6 +107,100 @@ def test_silent_retry_no_burst_when_keys_start_far_apart():
 def test_silent_retry_does_not_fire_on_clean_run():
     run = _load(CLEAN_RUN)
     assert silent_retry.DETECTOR.run(run) == []
+
+
+def test_silent_retry_rule_ids_carries_only_retry_safe_without_burst():
+    """unit M1d: with no burst, rule_ids is the single-element tuple and
+    rule_id (kept in sync) is its first element."""
+    run = _load(SILENT_RETRY_KILL)
+    findings = silent_retry.DETECTOR.run(run)
+    assert findings
+    for finding in findings:
+        assert finding.rule_ids == ("R-RETRY-SAFE",)
+        assert finding.rule_id == finding.rule_ids[0]
+
+
+def test_silent_retry_evidence_never_quotes_a_prompt_and_carries_the_kill_sentinel():
+    """unit M1d: evidence must never repeat the workflow preamble/prompt
+    text (the privacy residual this unit removes) but must still point at
+    the runtime's own kill-sentinel line for every non-final attempt."""
+    run = _load(SILENT_RETRY_KILL)
+    findings = silent_retry.DETECTOR.run(run)
+    assert findings
+    for finding in findings:
+        joined = " ".join(finding.evidence)
+        assert "Implement the silent-alpha module" not in joined
+        assert "Implement the silent-beta module" not in joined
+        assert "You may be a retry after a killed attempt" not in joined
+        assert any("[Request interrupted by user]" in line for line in finding.evidence)
+
+
+def test_silent_retry_final_attempt_evidence_is_a_plain_pointer_with_no_excerpt():
+    """unit M1d: '<transcript>:<line>: attempt <ordinal> started', no quoted
+    prompt text at all."""
+    run = _load(SILENT_RETRY_KILL)
+    findings = silent_retry.DETECTOR.run(run)
+    alpha = next(f for f in findings if "silent-alpha" in f.title or "agent-1" in f.title)
+    assert "agent-ac200000000000002.jsonl:1: attempt 2 started" in alpha.evidence
+    beta = next(f for f in findings if f is not alpha)
+    assert "agent-ac200000000000004.jsonl:1: attempt 2 started" in beta.evidence
+
+
+def test_silent_retry_burst_carries_both_rule_ids_on_one_finding_per_agent():
+    """unit M1d: the old code emitted a second, duplicate Finding (same
+    finding_id, title, evidence) for R-CAP-CONCURRENCY on a burst. Now one
+    Finding per retried agent carries every rule it backs."""
+
+    def _event(path: Path, line_no: int, text: str, ts: datetime) -> Event:
+        return Event(
+            path=path, line_no=line_no, ts=ts, kind="user", raw_type="user",
+            tool_name=None, text=text, exit_code=None, duration_ms=None,
+            is_error=False, usage={},
+        )
+
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    root = Path("/home/user/project/subagents/workflows/wf_00000000-950")
+
+    def _agent(name: str, key: str, start: datetime) -> LogicalAgent:
+        killed_path = root / f"agent-{name}1111111111111111.jsonl"
+        killed_events = [
+            _event(killed_path, 1, "Implement the thing.", start),
+            _event(killed_path, 2, "[Request interrupted by user]", start + timedelta(seconds=600)),
+        ]
+        killed = Attempt(
+            agent_id=f"{name}1111111111111111", key=key, label=f"impl:{name}", phase="Implement",
+            agent_type=None, meta={}, transcript_path=killed_path, events=killed_events,
+            first_ts=killed_events[0].ts, last_ts=killed_events[-1].ts, ordinal=1,
+            outcome="killed", usage={},
+        )
+        completed_path = root / f"agent-{name}2222222222222222.jsonl"
+        completed_start = start + timedelta(seconds=605)
+        completed_events = [_event(completed_path, 1, "Retry: implement the thing.", completed_start)]
+        completed = Attempt(
+            agent_id=f"{name}2222222222222222", key=key, label=f"impl:{name}", phase="Implement",
+            agent_type=None, meta={}, transcript_path=completed_path, events=completed_events,
+            first_ts=completed_events[0].ts, last_ts=completed_events[0].ts, ordinal=2,
+            outcome="completed", usage={},
+        )
+        return LogicalAgent(key=key, label=f"impl:{name}", phase="Implement", attempts=[killed, completed])
+
+    agent_a = _agent("a", "v2:a", base)
+    agent_b = _agent("b", "v2:b", base + timedelta(seconds=2))  # within the 5s burst window
+    run = Run(
+        run_id="wf_00000000-950", path=root, project_slug="-home-user-project",
+        session_id=None, claude_version=None, journal=[], agents=[agent_a, agent_b],
+        attempts=[a for agent in (agent_a, agent_b) for a in agent.attempts],
+        started_at=base, ended_at=base + timedelta(seconds=610), diagnostics=[],
+    )
+
+    findings = silent_retry.DETECTOR.run(run)
+    assert len(findings) == 2  # one per retried agent, never a duplicate per rule
+    finding_ids = {finding.finding_id for finding in findings}
+    assert len(finding_ids) == 2  # each agent's finding is distinct from the other's
+    for finding in findings:
+        assert finding.metrics["burst"] is True
+        assert finding.rule_ids == ("R-RETRY-SAFE", "R-CAP-CONCURRENCY")
+        assert finding.rule_id == "R-RETRY-SAFE"
 
 
 # --- mislabeled_kill ----------------------------------------------------
@@ -175,6 +272,10 @@ def test_wasted_time_is_zero_on_clean_run():
 
 
 def test_render_run_text_line_one_has_verdict_line_two_has_retry_count():
+    # unit M3a: the text report's line 2 is now the account's first sentence
+    # ("N agents took M attempts."), not the old "N silent retries burned..."
+    # summary line -- that wording moved into the account's own "killed by
+    # the runtime and restarted" sentence instead.
     run = _load(SILENT_RETRY_KILL)
     findings = _all_core_findings(run)
     text = report.render_run_text(run, findings, Redactor(enabled=False))
@@ -183,10 +284,14 @@ def test_render_run_text_line_one_has_verdict_line_two_has_retry_count():
     assert lines[0].startswith(f"RUN {run.run_id}")
     assert "DEGRADED" in lines[0]  # major findings, no critical
 
-    assert "2 silent retries" in lines[1]
+    assert lines[1] == "2 agents took 4 attempts."
+    assert "killed by the runtime and restarted" in lines[2]
 
 
 def test_render_run_text_clean_run_is_clean_verdict():
+    # unit M3a: a clean run's account is just the base sentence -- every
+    # other clause (killed/stopped/interrupted/failed/wasted) is omitted
+    # outright when its own count is 0, so "0 silent retries" never renders.
     run = _load(CLEAN_RUN)
     findings = _all_core_findings(run)
     text = report.render_run_text(run, findings, Redactor(enabled=False))
@@ -194,22 +299,40 @@ def test_render_run_text_clean_run_is_clean_verdict():
 
     assert lines[0].startswith(f"RUN {run.run_id}")
     assert "CLEAN" in lines[0]
-    assert "0 silent retries" in lines[1]
+    assert lines[1] == "2 agents took 2 attempts."
 
 
-def test_render_run_text_suggested_rules_and_next_action_present():
+def test_render_run_text_has_no_suggested_rules_or_next_action_sections():
+    # unit M3a/M6: NEXT ACTION and SUGGESTED RULES are removed from the text
+    # report entirely (docs/DESIGN.md 4.7 rule 4); "rules propose" is the
+    # way to see rules now (unit M6, section 9), surfaced through WHAT TO
+    # DO's own "rules that would have prevented this" item instead of a
+    # printed rule table.
     run = _load(SILENT_RETRY_KILL)
     findings = _all_core_findings(run)
     text = report.render_run_text(run, findings, Redactor(enabled=False))
 
-    assert "SUGGESTED RULES" in text
-    # M8 review D-E: a report hint prints the primary command name, never
-    # the "postmortem" alias.
-    assert "R-RETRY-SAFE  (backed by 2 findings in this run)  agent-postmortem rules --show R-RETRY-SAFE" in text
-    assert "R-MONITOR-RETRIES  (backed by 2 findings in this run)  agent-postmortem rules --show R-MONITOR-RETRIES" in text
-    assert "NEXT ACTION" in text
-    # Both rules are backed by 2 findings; ties break alphabetically first.
-    assert "agent-postmortem apply R-MONITOR-RETRIES --target ~/.claude/CLAUDE.md" in text
+    assert "SUGGESTED RULES" not in text
+    assert "NEXT ACTION" not in text
+    assert "CLAUDE.md" not in text
+    assert "apply" not in text
+    assert "agent-postmortem rules propose" in text
+
+
+def test_render_run_text_what_to_do_replaces_suggested_rules_and_next_action():
+    # unit M3a/M6: WHAT TO DO's rule item is the direct replacement for the
+    # old SUGGESTED RULES/NEXT ACTION sections -- both rules this fixture
+    # backs (R-RETRY-SAFE, R-MONITOR-RETRIES) still show up somewhere
+    # findable (rules propose), even though `run` itself never scans another
+    # run to print a rate or a rule table.
+    run = _load(SILENT_RETRY_KILL)
+    findings = _all_core_findings(run)
+    text = report.render_run_text(run, findings, Redactor(enabled=False))
+
+    assert "WHAT TO DO" in text
+    what_to_do = text[text.index("WHAT TO DO"):text.index("AGENT")]
+    assert "[decide]" in what_to_do
+    assert "rules that would have prevented this" in what_to_do
 
 
 def test_format_duration_hours_minutes_and_seconds():

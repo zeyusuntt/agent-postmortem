@@ -1,0 +1,9 @@
+{"type":"launched","timestamp":"2026-09-29T09:00:00.000Z"}
+{"type":"started","timestamp":"2026-09-29T09:00:01.000Z","key":"v2:jmf-good","agentId":"aee00000000000001","label":"impl:good","phase":"Implement"}
+{"type":"result","timestamp":"2026-09-29T09:00:10.000Z","key":"v2:jmf-good","agentId":"aee00000000000001","result":{"ok":true}}
+{"type":"started","timestamp":"2026-09-29T09:01:00.000Z","key":"v2:jmf-bad-agent-id","agentId":123,"label":"impl:bad-agent-id","phase":"Implement"}
+{"type":"started","timestamp":"2026-09-29T09:02:00.000Z","key":456,"agentId":"aee00000000000002","label":"impl:bad-key","phase":"Implement"}
+{"type":"started","timestamp":"2026-09-29T09:03:00.000Z","key":"v2:jmf-bad-label","agentId":"aee00000000000003","label":true,"phase":"Implement"}
+{"type":"result","timestamp":"2026-09-29T09:03:10.000Z","key":"v2:jmf-bad-label","agentId":"aee00000000000003","result":{"ok":true}}
+{"type":"started","timestamp":"2026-09-29T09:04:00.000Z","key":"v2:jmf-bad-phase","agentId":"aee00000000000004","label":"impl:bad-phase","phase":["x"]}
+{"type":"result","timestamp":"2026-09-29T09:04:10.000Z","key":"v2:jmf-bad-phase","agentId":"aee00000000000004","result":{"ok":true}}

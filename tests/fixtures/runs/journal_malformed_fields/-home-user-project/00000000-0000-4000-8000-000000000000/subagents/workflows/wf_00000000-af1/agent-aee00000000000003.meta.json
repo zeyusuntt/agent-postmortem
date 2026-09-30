@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Implement the jmf-bad-label module.",
+  "workflowPhase": "Implement",
+  "spawnDepth": "1",
+  "requestShape": "single",
+  "requestNonInteractive": "true"
+}

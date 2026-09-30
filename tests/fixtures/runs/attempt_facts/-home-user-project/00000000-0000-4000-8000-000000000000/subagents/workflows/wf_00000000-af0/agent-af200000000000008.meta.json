@@ -1,0 +1,1 @@
+{"agentType": "workflow-subagent", "description": "impl:long-path", "workflowPhase": "Implement", "spawnDepth": "1", "requestShape": "text", "requestNonInteractive": "true"}

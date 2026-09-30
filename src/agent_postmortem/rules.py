@@ -1,26 +1,27 @@
 """The rules library: what a finding suggests doing about it.
 
 RULES maps a stable id (R-RETRY-SAFE, ...) to the exact directive text a
-maintainer can paste into a CLAUDE.md or similar prompt file. rules_for()
-turns a list of Findings into the rules they back, ordered by how many
-findings back each one. apply_rule() maintains a small managed block inside
-a target file so the same rule can be applied more than once without
-duplicating it. See docs/DESIGN.md section 4.5 for the contract this module
-implements, including the exact rule texts.
+maintainer can paste into a prompt, a hook, or their project's own
+instructions. rules_for() turns a list of Findings into the rules they
+back, ordered by how many findings back each one. propose_rules() turns a
+whole fleet's worth of (Run, [Finding]) pairs into the rules that are
+backed by enough evidence to suggest adopting (docs/DESIGN.md section 9).
+apply_rule() computes the unified diff of a rule's managed block against a
+target file -- it never writes the target itself (R3: the tool has no code
+path that writes an instruction file; a human applies the diff by hand).
+See docs/DESIGN.md section 4.3/9 for the contract this module implements,
+including the exact rule texts.
 """
 
 from __future__ import annotations
 
 import difflib
 import json
-import os
-import tempfile
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import state
-from .models import Finding
-from .state import now_iso
+from .models import Finding, Run
 
 BEGIN_MARKER = (
     "<!-- agent-postmortem:rules:begin (do not edit inside; managed by postmortem apply) -->"
@@ -38,6 +39,13 @@ class Rule:
     enforcement: str  # 'prompt' or 'hook'
     detectors: tuple[str, ...]  # detector ids that back this rule; () if none in v0
     hook_template: str | None  # filename under hooks/, or None
+    # docs/DESIGN.md 9: where a human should put this rule -- "workflow
+    # prompt" (the agent prompt preamble in a workflow script, where most
+    # rules belong), "hook" (a Claude Code hook, like R-MODEL-ALLOCATION),
+    # or "project instructions" (a repo-wide file like R-GIT-CWD, since it
+    # is about how every agent in every workflow is launched, not one
+    # workflow's own prompt).
+    target_kind: str
 
 
 RULES: dict[str, Rule] = {
@@ -53,6 +61,7 @@ RULES: dict[str, Rule] = {
         enforcement="prompt",
         detectors=("silent_retry",),
         hook_template=None,
+        target_kind="workflow prompt",
     ),
     "R-CAP-CONCURRENCY": Rule(
         id="R-CAP-CONCURRENCY",
@@ -65,6 +74,7 @@ RULES: dict[str, Rule] = {
         enforcement="prompt",
         detectors=("silent_retry",),
         hook_template=None,
+        target_kind="workflow prompt",
     ),
     "R-NO-LONG-BASH": Rule(
         id="R-NO-LONG-BASH",
@@ -77,6 +87,7 @@ RULES: dict[str, Rule] = {
         enforcement="prompt",
         detectors=("bash_backgrounded", "bash_timeout"),
         hook_template=None,
+        target_kind="workflow prompt",
     ),
     "R-SMALL-QUANTUM": Rule(
         id="R-SMALL-QUANTUM",
@@ -85,6 +96,7 @@ RULES: dict[str, Rule] = {
         enforcement="prompt",
         detectors=(),
         hook_template=None,
+        target_kind="workflow prompt",
     ),
     "R-ASSERT-ARTIFACT": Rule(
         id="R-ASSERT-ARTIFACT",
@@ -98,6 +110,7 @@ RULES: dict[str, Rule] = {
         enforcement="prompt",
         detectors=("missing_artifact", "codex_write_denied"),
         hook_template=None,
+        target_kind="workflow prompt",
     ),
     "R-SCALAR-SCHEMA": Rule(
         id="R-SCALAR-SCHEMA",
@@ -109,6 +122,7 @@ RULES: dict[str, Rule] = {
         enforcement="prompt",
         detectors=("structured_output_failure",),
         hook_template=None,
+        target_kind="workflow prompt",
     ),
     "R-CODEX-CONTRACT": Rule(
         id="R-CODEX-CONTRACT",
@@ -122,6 +136,7 @@ RULES: dict[str, Rule] = {
         enforcement="prompt",
         detectors=("codex_write_denied",),
         hook_template=None,
+        target_kind="workflow prompt",
     ),
     "R-MONITOR-RETRIES": Rule(
         id="R-MONITOR-RETRIES",
@@ -135,6 +150,7 @@ RULES: dict[str, Rule] = {
         enforcement="prompt",
         detectors=("mislabeled_kill",),
         hook_template=None,
+        target_kind="workflow prompt",
     ),
     "R-GIT-CWD": Rule(
         id="R-GIT-CWD",
@@ -146,6 +162,19 @@ RULES: dict[str, Rule] = {
         enforcement="prompt",
         detectors=("git_cwd_mismatch",),
         hook_template=None,
+        target_kind="project instructions",
+    ),
+    "R-USAGE-LIMIT": Rule(
+        id="R-USAGE-LIMIT",
+        title="Do not relaunch before a usage limit resets",
+        text=(
+            "When a run reports a usage-limit failure, do not relaunch the same key "
+            "before the reset time the failure named."
+        ),
+        enforcement="prompt",
+        detectors=("attempt_failed",),
+        hook_template=None,
+        target_kind="workflow prompt",
     ),
     "R-MODEL-ALLOCATION": Rule(
         id="R-MODEL-ALLOCATION",
@@ -154,6 +183,7 @@ RULES: dict[str, Rule] = {
         enforcement="hook",
         detectors=(),
         hook_template="model_allocation_guard.mjs",
+        target_kind="hook",
     ),
 }
 
@@ -162,13 +192,18 @@ def rules_for(findings: list[Finding]) -> list[tuple[Rule, int]]:
     """Which rules a list of findings back, and by how many findings each.
 
     Ordered by backing count descending, then by rule id, so the most
-    impactful rule is first. Findings with no rule_id, or a rule_id this
-    library does not know, are ignored.
+    impactful rule is first. A finding counts once per rule in its
+    rule_ids (unit M1d) -- a finding backing two rules (silent_retry's
+    R-RETRY-SAFE plus R-CAP-CONCURRENCY on a burst) adds one to each,
+    exactly as if it had been two separate findings, without actually being
+    two. Findings with no rule_ids, or a rule id this library does not
+    know, are ignored.
     """
     counts: dict[str, int] = {}
     for finding in findings:
-        if finding.rule_id and finding.rule_id in RULES:
-            counts[finding.rule_id] = counts.get(finding.rule_id, 0) + 1
+        for rule_id in finding.rule_ids:
+            if rule_id in RULES:
+                counts[rule_id] = counts.get(rule_id, 0) + 1
     rows = [(RULES[rule_id], count) for rule_id, count in counts.items()]
     rows.sort(key=lambda row: (-row[1], row[0].id))
     return rows
@@ -186,12 +221,14 @@ def render_rules_text(rows: list[tuple[Rule, int]]) -> str:
 
 
 def render_rule_show(rule: Rule) -> str:
-    """The full text of one rule: id, title, enforcement, detectors, text."""
+    """The full text of one rule: id, title, enforcement, detectors,
+    target_kind, text."""
     detectors = ", ".join(rule.detectors) if rule.detectors else "(none in v0)"
     lines = [
         f"{rule.id}: {rule.title}",
         f"enforcement: {rule.enforcement}",
         f"detectors: {detectors}",
+        f"belongs in: {rule.target_kind}",
         "",
         rule.text,
     ]
@@ -209,6 +246,7 @@ def rule_to_json(rule: Rule) -> dict:
         "title": rule.title,
         "enforcement": rule.enforcement,
         "detectors": list(rule.detectors),
+        "target_kind": rule.target_kind,
         "text": rule.text,
     }
 
@@ -297,23 +335,6 @@ def _with_rule_applied(original: str, rule_id: str) -> str:
     return original[:begin_idx] + block_text + original[end_idx_full:]
 
 
-class ApplyDiff(str):
-    """The diff text apply_rule() returns (possibly empty), plus one extra
-    bit: `already_present_unrecorded`, true when the diff is empty because
-    the rule is already present in the target but the state store has no
-    applied entry for this (rule_id, target) pair yet -- drift, not a true
-    no-op. A plain str everywhere it is used as one (every existing caller
-    only ever looked at the diff text); the CLI reads the extra attribute
-    to choose between "nothing to do" and "already present, recorded"."""
-
-    already_present_unrecorded: bool
-
-    def __new__(cls, diff_text: str, *, already_present_unrecorded: bool = False) -> "ApplyDiff":
-        obj = str.__new__(cls, diff_text)
-        obj.already_present_unrecorded = already_present_unrecorded
-        return obj
-
-
 def _diff_text(original: str, new_text: str, target: Path) -> str:
     diff_lines = difflib.unified_diff(
         original.splitlines(keepends=True),
@@ -324,132 +345,119 @@ def _diff_text(original: str, new_text: str, target: Path) -> str:
     return "".join(diff_lines)
 
 
-def _has_matching_applied_entry(applied: list, rule_id: str, target: str) -> bool:
-    return any(
-        (
-            isinstance(entry, dict)
-            and entry.get("rule_id") == rule_id
-            and entry.get("target") == target
-        )
-        for entry in applied
-    )
+def apply_rule(rule_id: str, target: Path) -> str:
+    """The unified diff of adding rule_id to target's managed rules block
+    against target's current content ('' if target does not exist); '' when
+    the rule is already present (nothing to add).
 
-
-def _fsync_dir(dir_path: Path) -> None:
-    """Best-effort fsync of a directory's entry, so a rename into it is
-    durable and not just sitting in a page cache. Never blocks a write that
-    already landed: a directory that cannot be opened or fsynced (some
-    filesystems do not support it) is not a reason to raise."""
-    try:
-        fd = os.open(str(dir_path), os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(fd)
-    except OSError:
-        pass
-    finally:
-        os.close(fd)
-
-
-def _atomic_write(path: Path, content: str) -> None:
-    """Write content to path atomically: a temp file in the same directory,
-    fsynced before and after the rename, replacing path only once the write
-    is durable. Preserves path's existing mode: os.replace() otherwise
-    leaves the target with mkstemp's own 0600, silently loosening or
-    tightening permissions on every write. Refuses to write through a
-    symlink: os.replace() swaps the symlink itself for a regular file
-    instead of updating whatever it points to, which is not what "edit
-    this file" means when the file is a symlink.
-    """
-    if path.is_symlink():
-        raise ValueError(f"refusing to write through a symlink: {path}")
-
-    original_stat = path.stat() if path.exists() else None
-
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        if original_stat is not None:
-            try:
-                os.chmod(tmp_name, original_stat.st_mode)
-            except OSError:
-                pass  # best effort: preserve mode only where permitted
-            if hasattr(os, "chown"):
-                try:
-                    os.chown(tmp_name, original_stat.st_uid, original_stat.st_gid)
-                except OSError:
-                    pass  # best effort: preserve ownership only where permitted
-        os.replace(tmp_name, path)
-        _fsync_dir(path.parent)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
-
-
-def apply_rule(rule_id: str, target: Path, write: bool = False) -> ApplyDiff:
-    """Add rule_id to target's managed rules block; return a unified diff.
-
-    Without write, nothing on disk changes -- not the target, not the
-    state store. With write, target and state change together inside one
-    state.transaction() (docs/DESIGN.md 9): read target, compute the diff,
-    write target atomically if the diff is non-empty, append the applied
-    entry, commit. If the transaction fails for any reason (state locked,
-    too new, a filesystem error), nothing was written -- never a target
-    already rewritten with no matching state record. Because the target's
-    own read-modify-write now happens under the same lock, two concurrent
-    --write calls against the same target are fully serialized, not just
-    their state records.
-
-    Idempotent against drift: if the diff is empty because the rule is
-    already present but no applied entry names this (rule_id, target) pair
-    yet, --write records one anyway, and both --write and a dry run report
-    that through the returned ApplyDiff's `already_present_unrecorded`
-    flag rather than the plain "nothing to do" case. A second --write
-    after that, or once the rule was applied normally, is a true no-op:
-    nothing written, nothing recorded again.
+    docs/DESIGN.md 9/R3: this never writes target, and there is no `write`
+    argument to ask it to -- the tool has no code path that writes an
+    instruction file. A human reads the diff and applies it themselves,
+    with their own editor or `git apply`.
 
     Raises ValueError for an unknown rule id or a target whose rules block
-    has a begin marker but no end marker; propagates state.StateLocked,
-    state.StateTooNew, or any other state.StateError from the transaction.
+    has a begin marker but no end marker.
     """
     if rule_id not in RULES:
         raise ValueError(f"unknown rule id: {rule_id}")
 
     target = Path(target)
-    target_str = str(target)
+    original = target.read_text(encoding="utf-8") if target.exists() else ""
+    new_text = _with_rule_applied(original, rule_id)
+    return _diff_text(original, new_text, target)
 
-    if not write:
-        original = target.read_text(encoding="utf-8") if target.exists() else ""
-        new_text = _with_rule_applied(original, rule_id)
-        diff_text = _diff_text(original, new_text, target)
-        if diff_text:
-            return ApplyDiff(diff_text)
-        applied = state.load_state().get("applied", [])
-        already_recorded = _has_matching_applied_entry(applied, rule_id, target_str)
-        return ApplyDiff("", already_present_unrecorded=not already_recorded)
 
-    with state.transaction() as current:
-        original = target.read_text(encoding="utf-8") if target.exists() else ""
-        new_text = _with_rule_applied(original, rule_id)
-        diff_text = _diff_text(original, new_text, target)
+# --- rules propose (docs/DESIGN.md 9) ---------------------------------------
 
-        applied = current.setdefault("applied", [])
-        already_recorded = _has_matching_applied_entry(applied, rule_id, target_str)
+# A rule is proposed only once its backing detector(s) fired in at least
+# this many distinct runs, on at least this many distinct days (by run
+# start date): one bad week should not read as a pattern.
+PROPOSE_MIN_RUNS = 3
+PROPOSE_MIN_DAYS = 2
 
-        if diff_text:
-            _atomic_write(target, new_text)
-            applied.append({"rule_id": rule_id, "target": target_str, "applied_at": now_iso()})
-            return ApplyDiff(diff_text)
 
-        if not already_recorded:
-            applied.append({"rule_id": rule_id, "target": target_str, "applied_at": now_iso()})
-            return ApplyDiff("", already_present_unrecorded=True)
+def propose_rules(runs_with_findings: list[tuple[Run, list[Finding]]]) -> list[dict]:
+    """Which rules a fleet's worth of runs backs strongly enough to propose
+    adopting (docs/DESIGN.md 9), sorted by run count descending then rule id.
 
-        return ApplyDiff("")
+    A finding backs a rule the same way rules_for() counts it: once per rule
+    named in its own rule_ids. Each returned dict is {'rule': Rule,
+    'findings': int, 'runs': int, 'first': 'YYYY-MM-DD', 'last':
+    'YYYY-MM-DD'} -- 'findings' is the total finding count, 'runs' the
+    number of distinct runs that backed it at least once, 'first'/'last'
+    the earliest/latest start date among those runs. A run with no
+    started_at still counts toward 'findings'/'runs' (its own finding did
+    happen) but can never be one of the >= PROPOSE_MIN_DAYS distinct days a
+    rule needs to qualify, since it cannot be placed on a calendar day at
+    all.
+    """
+    by_rule: dict[str, dict] = {}
+    for run, findings in runs_with_findings:
+        run_date = run.started_at.date() if run.started_at is not None else None
+        for finding in findings:
+            for rule_id in finding.rule_ids:
+                if rule_id not in RULES:
+                    continue
+                entry = by_rule.setdefault(rule_id, {"findings": 0, "runs": set(), "dates": set()})
+                entry["findings"] += 1
+                entry["runs"].add(run.run_id)
+                if run_date is not None:
+                    entry["dates"].add(run_date)
+
+    rows: list[dict] = []
+    for rule_id, entry in by_rule.items():
+        if len(entry["runs"]) < PROPOSE_MIN_RUNS or len(entry["dates"]) < PROPOSE_MIN_DAYS:
+            continue
+        rows.append({
+            "rule": RULES[rule_id],
+            "findings": entry["findings"],
+            "runs": len(entry["runs"]),
+            "first": min(entry["dates"]).isoformat(),
+            "last": max(entry["dates"]).isoformat(),
+        })
+
+    rows.sort(key=lambda row: (-row["runs"], row["rule"].id))
+    return rows
+
+
+def render_propose_text(rows: list[dict]) -> str:
+    """docs/DESIGN.md 9: one block per proposed rule, blank-line separated,
+    sorted the same way propose_rules() already sorted `rows`."""
+    if not rows:
+        return "no rule is backed by 3 runs on 2 days yet\n"
+
+    blocks = []
+    for row in rows:
+        rule = row["rule"]
+        findings_plural = "" if row["findings"] == 1 else "s"
+        runs_plural = "" if row["runs"] == 1 else "s"
+        lines = [
+            f"{rule.id}   backed by {row['findings']} finding{findings_plural} in "
+            f"{row['runs']} run{runs_plural}, first {row['first']}, last {row['last']}",
+            f"  belongs in: {rule.target_kind}",
+        ]
+        lines.extend(
+            textwrap.fill(
+                rule.text, width=76, initial_indent="  ", subsequent_indent="  "
+            ).splitlines()
+        )
+        lines.append(
+            f"  show the diff for a file: agent-postmortem apply {rule.id} --target <file>"
+        )
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) + "\n"
+
+
+def propose_row_to_json(row: dict) -> dict:
+    """The JSON shape for one `rules propose --json` entry (docs/DESIGN.md
+    5.3a schema 2)."""
+    rule = row["rule"]
+    return {
+        "rule_id": rule.id,
+        "target_kind": rule.target_kind,
+        "findings": row["findings"],
+        "runs": row["runs"],
+        "first": row["first"],
+        "last": row["last"],
+        "text": rule.text,
+    }

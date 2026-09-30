@@ -1,6 +1,6 @@
 [project]
 name = "agent-postmortem"
-version = "0.1.0"
+version = "0.2.0"
 description = "Post-mortem for multi-agent coding runs: prove what silently went wrong, then draft the rule that prevents it."
 readme = "README.md"
 license = { text = "MIT" }

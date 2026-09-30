@@ -1,8 +1,8 @@
 """Tests for detector kinds and detectors.run_detectors(): docs/DESIGN.md
-4.3 says every detector declares which run kinds it applies to
-(silent_retry is workflow-only; every other detector applies to both), and
-that the runner calls a detector only on a run whose kind is in
-detector.kinds.
+4.3 says every detector declares which run kinds it applies to (silent_retry
+and attempt_failed are workflow-only -- both read the journal, which only
+exists for a workflow run; every other detector applies to both), and that
+the runner calls a detector only on a run whose kind is in detector.kinds.
 """
 
 from __future__ import annotations
@@ -67,9 +67,26 @@ def test_silent_retry_is_workflow_only():
     assert silent_retry.kinds == frozenset({"workflow"})
 
 
+def test_attempt_failed_is_workflow_only():
+    attempt_failed = next(d for d in all_detectors() if d.id == "attempt_failed")
+    assert attempt_failed.kinds == frozenset({"workflow"})
+
+
+def test_claim_contradiction_is_workflow_only():
+    """claim_contradiction reads Attempt.reported, which only a workflow's
+    journal 'result' event ever populates (docs/DESIGN.md section 3): a
+    session has no journal at all, so this detector never applies to one."""
+    claim_contradiction = next(d for d in all_detectors() if d.id == "claim_contradiction")
+    assert claim_contradiction.kinds == frozenset({"workflow"})
+
+
 def test_every_other_detector_applies_to_both_kinds():
+    # claim_contradiction joins silent_retry and attempt_failed here (unit
+    # M1c): it reads Attempt.reported, which only a workflow journal's
+    # 'result' event ever populates.
+    workflow_only = {"silent_retry", "attempt_failed", "claim_contradiction"}
     for detector in all_detectors():
-        if detector.id == "silent_retry":
+        if detector.id in workflow_only:
             continue
         assert detector.kinds == frozenset({"workflow", "session"}), detector.id
 

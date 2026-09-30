@@ -190,7 +190,28 @@ class Pseudonyms:
     method a pass-through.
     """
 
-    _CATEGORIES = ("agent", "desc", "phase", "type", "target")
+    # docs/DESIGN.md 5.1: "path" is a different kind of category from the
+    # other five (agent/desc/phase/type/target). Those five name something a
+    # detector wrote a sentence about (a label, a phase) and are confined to
+    # Finding.title (5.1/5.2: never evidence, a diagnostic, or a metrics
+    # value, which are meant to stay a faithful quote). A report_path is
+    # itself a metrics/reported value, not a title ingredient, and the whole
+    # point of pseudonymizing it (M1 review finding 1) is that it must never
+    # appear raw in ANY of those places by default -- so it is substituted by
+    # the plain Redactor call too (see Redactor.__call__ and apply_paths
+    # below), not only by title(). _NAME_CATEGORIES keeps the original five
+    # separate from "path" so apply() (title-only) never touches a path and
+    # apply_paths() (used everywhere) never touches a name.
+    _NAME_CATEGORIES = ("agent", "desc", "phase", "type", "target")
+    # docs/DESIGN.md 4.11/5.1 (F7 hardening): "check" is a third kind of
+    # category, alongside the five names and "path" -- a declared check
+    # command is neither a label a detector wrote a sentence about, nor a
+    # path this tool ever needs to substring-match inside other prose. It is
+    # only ever substituted at the single point rescue.py renders it (a
+    # direct `names.check(value)` call, the same pattern `path` already uses
+    # for a report_path claim or an observation path), so it needs no
+    # apply()/apply_paths()-style substring pass of its own.
+    _CATEGORIES = _NAME_CATEGORIES + ("path", "check")
 
     def __init__(self, enabled: bool = True) -> None:
         self.enabled = enabled
@@ -228,15 +249,38 @@ class Pseudonyms:
         return self._pseudonym("type", value)
 
     def target(self, value: str | None) -> str | None:
-        """A trend rule target (docs/DESIGN.md 4.7/5.1): the file a rule was
-        applied to, for example a CLAUDE.md path that can embed a client or
-        project name. Rendered by the caller as 'target-N (basename)', never
-        the raw path, unless --no-redact."""
+        """A trend rule target (docs/DESIGN.md 4.7/5.1): the file a rule is
+        proposed for, for example an instruction-file path that can embed a
+        client or project name. Rendered by the caller as 'target-N
+        (basename)', never the raw path, unless --no-redact."""
         return self._pseudonym("target", value)
 
+    def path(self, value: str | None) -> str | None:
+        """A report_path claim value (docs/DESIGN.md 5.1, M1 review finding
+        1): its own "path" namespace, numbered in order of first appearance
+        like every other category. Unlike agent/desc/phase/type/target, a
+        registered path is substituted everywhere the plain Redactor renders
+        text (see apply_paths, used by Redactor.__call__), not only inside
+        Finding.title -- a relative path or an absolute path outside home
+        and /tmp must never survive structural redact() unchanged the way it
+        used to."""
+        return self._pseudonym("path", value)
+
+    def check(self, value: str | None) -> str | None:
+        """A declared check command (docs/DESIGN.md 4.11/5.1, F7 hardening):
+        its own "check" namespace, numbered in order of first appearance.
+        rescue.py calls this directly at every point it would otherwise
+        print a declared check's own text (the CHECKS/STEPS lines of
+        `rescue plan`, the 'last counted run' line of `rescue status`) so
+        the full command -- which can carry arbitrary flags, arguments, or
+        an embedded path -- is replaced wholesale by default, not merely
+        redacted in place."""
+        return self._pseudonym("check", value)
+
     def apply(self, text: str) -> str:
-        """Replace every name registered so far with its pseudonym wherever
-        it occurs as a whole word inside `text`. A name never registered
+        """Replace every name (agent/desc/phase/type/target -- never path,
+        see apply_paths) registered so far with its pseudonym wherever it
+        occurs as a whole word inside `text`. A name never registered
         (nothing has called agent()/phase()/type()/target() with it yet) is
         left untouched: apply() only substitutes, it never registers."""
         if not self.enabled or not text:
@@ -244,14 +288,34 @@ class Pseudonyms:
         result = text
         pairs = [
             (original, pseudonym)
-            for mapping in self._maps.values()
-            for original, pseudonym in mapping.items()
+            for category in self._NAME_CATEGORIES
+            for original, pseudonym in self._maps[category].items()
         ]
         for original, pseudonym in sorted(pairs, key=lambda pair: len(pair[0]), reverse=True):
             if not original:
                 continue
             pattern = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(original) + r"(?![A-Za-z0-9_])")
             result = pattern.sub(pseudonym, result)
+        return result
+
+    def apply_paths(self, text: str) -> str:
+        """Replace every report_path value registered so far (the "path"
+        namespace) wherever it occurs verbatim in `text` -- a plain substring
+        replace, not apply()'s word-boundary anchored one, since a path's own
+        characters (/, ., -) are not all "word" characters and a path is
+        never partially a whole word to begin with. Longest path first, so
+        one path that is a prefix of another is never partially clobbered.
+        Called by Redactor.__call__ itself (docs/DESIGN.md 5.1), unlike
+        apply(), which only title() calls."""
+        if not self.enabled or not text:
+            return text
+        result = text
+        for original, pseudonym in sorted(
+            self._maps["path"].items(), key=lambda pair: len(pair[0]), reverse=True
+        ):
+            if not original:
+                continue
+            result = result.replace(original, pseudonym)
         return result
 
 
@@ -281,15 +345,26 @@ class Redactor:
         self.names = Pseudonyms(enabled=enabled)
 
     def __call__(self, text: str) -> str:
+        """Structural redact(), plus (docs/DESIGN.md 5.1, M1 review finding
+        1) substituting any report_path value already registered on `names`
+        -- run BEFORE redact() itself, not after, so a report_path under the
+        home directory is replaced by its own path-N pseudonym wholesale
+        rather than first being collapsed by redact()'s home/tmp rules into
+        a "~/.../basename" shape that no longer contains the raw substring
+        apply_paths needs to match. This is the one exception to "evidence/
+        diagnostics/metrics never see a pseudonym" (5.2): report_path is a
+        self-reported claim value, not a faithful transcript quote, and must
+        never appear raw by default wherever it is rendered."""
         if not self.enabled or not text:
             return text
-        return redact(text, home=self.home)
+        return redact(self.names.apply_paths(text), home=self.home)
 
     def title(self, text: str) -> str:
-        """Finding.title only (docs/DESIGN.md 5.1/5.2): structural redact()
-        followed by pseudonym substitution over every name `names` has
-        registered so far. Never call this on evidence, a diagnostic, or a
-        metrics value -- see the class docstring."""
+        """Finding.title only (docs/DESIGN.md 5.1/5.2): everything __call__
+        already does (structural redact() plus path substitution), followed
+        by pseudonym substitution over every name `names` has registered so
+        far. Never call this on evidence, a diagnostic, or a metrics value --
+        see the class docstring."""
         if not self.enabled or not text:
             return text
         return self.names.apply(self(text))

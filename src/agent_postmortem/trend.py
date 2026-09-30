@@ -13,6 +13,7 @@ from pathlib import PurePosixPath
 from .detectors import all_detectors
 from .models import Finding, Run
 from .redact import Pseudonyms, Redactor
+from .report import SCHEMA_VERSION
 from .rules import RULES
 
 WeeklyCounts = dict[str, dict[str, int]]
@@ -114,6 +115,8 @@ def _parse_applied_at(value: str | None) -> datetime | None:
 def before_after(
     applied: list[dict],
     runs_with_findings: list[tuple[Run, list[Finding]]],
+    *,
+    window_weeks: int | None = None,
 ) -> list[dict]:
     """For each applied-rule record, the fire rate before and after applied_at.
 
@@ -127,8 +130,15 @@ def before_after(
     on both sides: there is nothing to count. Each row also carries "kinds":
     the sorted run kinds the rule's detectors apply to, empty when nothing
     backs it -- the denominator's own label (docs/DESIGN.md 4.7).
+
+    `window_weeks` (docs/DESIGN.md 9, `rules review`): when given, a run
+    only counts toward "before" if it started within that many weeks before
+    applied_at, and toward "after" only within that many weeks after --
+    unbounded (the default, what plain `trend` uses) when None, so every
+    existing caller is unaffected.
     """
     kinds_by_detector = _detector_kinds()
+    window = timedelta(weeks=window_weeks) if window_weeks is not None else None
     rows: list[dict] = []
     for entry in applied:
         rule_id = entry.get("rule_id")
@@ -144,9 +154,13 @@ def before_after(
                     continue
                 fired = any(finding.detector in detector_ids for finding in findings)
                 if run.started_at < applied_at:
+                    if window is not None and run.started_at < applied_at - window:
+                        continue
                     before_runs += 1
                     before_fired += int(fired)
                 else:
+                    if window is not None and run.started_at >= applied_at + window:
+                        continue
                     after_runs += 1
                     after_fired += int(fired)
 
@@ -171,6 +185,102 @@ def before_after(
     return rows
 
 
+# --- rules review (docs/DESIGN.md 9) ----------------------------------------
+
+
+def review_rows(
+    adopted: list[dict], runs_with_findings: list[tuple[Run, list[Finding]]], weeks: int
+) -> list[dict]:
+    """before_after()'s own rows, windowed to `weeks` on each side of
+    applied_at, plus each rule's own target_kind and backing detectors --
+    everything `rules review`'s renderer needs, without it re-deriving any
+    of before_after()'s own counting."""
+    rows = before_after(adopted, runs_with_findings, window_weeks=weeks)
+    for row in rows:
+        rule = RULES.get(row["rule_id"])
+        row["detectors"] = list(rule.detectors) if rule else []
+        row["target_kind"] = rule.target_kind if rule else None
+    return rows
+
+
+def _rule_not_improved(before: dict, after: dict) -> bool:
+    """docs/DESIGN.md 9: a rule is worth "consider removing" when both
+    windows actually have data and the after-rate is not lower than the
+    before-rate -- adopting it did not measurably help. Insufficient data on
+    either side (0 runs, or a rate that could not be computed) is never
+    flagged: there is nothing yet to conclude either way."""
+    if before["runs"] == 0 or after["runs"] == 0:
+        return False
+    if before["rate"] is None or after["rate"] is None:
+        return False
+    return after["rate"] >= before["rate"]
+
+
+def _adopted_date(applied_at: str | None) -> str:
+    return (applied_at or "")[:10] or "unknown"
+
+
+def render_review_text(rows: list[dict]) -> str:
+    """docs/DESIGN.md 9: one line per adopted rule (its backing detectors'
+    combined before/after counts), then a closing "consider removing" line."""
+    if not rows:
+        return "no adopted rule to review\n"
+
+    lines = []
+    removing = []
+    for row in rows:
+        before, after = row["before"], row["after"]
+        label = ", ".join(row["detectors"]) if row["detectors"] else "(no detector)"
+        lines.append(
+            f"{row['rule_id']}  adopted {_adopted_date(row['applied_at'])}  "
+            f"{label}: {before['fired']} of {before['runs']} runs before, "
+            f"{after['fired']} of {after['runs']} runs after"
+        )
+        if _rule_not_improved(before, after):
+            removing.append(row["rule_id"])
+
+    lines.append("")
+    lines.append(f"consider removing: {', '.join(removing) if removing else 'none'}")
+    return "\n".join(lines) + "\n"
+
+
+def _display_review_target(target: str | None, redactor: Redactor) -> str:
+    """docs/DESIGN.md 9/5.1 (F13 hardening): `rules review`'s own target
+    field, target-N alone by default, the raw target string reserved for
+    --no-redact. Deliberately a separate function from _display_target
+    above: trend's own before/after rendering keeps 'target-N (basename)'
+    together by design (tests/test_trend.py pins it), but a basename is a
+    real filename that can carry a client or project name, and review must
+    never let it survive by default the way trend's richer, human-facing
+    rendering still does."""
+    target = target or ""
+    if not redactor.enabled or not target:
+        return target
+    return redactor.names.target(target)
+
+
+def review_to_json(rows: list[dict], redactor: Redactor | None = None) -> dict:
+    redactor = redactor or Redactor(enabled=True)
+    redactor.names = Pseudonyms(enabled=redactor.enabled)
+    removing = [row["rule_id"] for row in rows if _rule_not_improved(row["before"], row["after"])]
+    return {
+        "schema": SCHEMA_VERSION,
+        "reviews": [
+            {
+                "rule_id": row["rule_id"],
+                "target_kind": row["target_kind"],
+                "detectors": row["detectors"],
+                "adopted_at": row["applied_at"],
+                "target": _display_review_target(row["target"], redactor),
+                "before": row["before"],
+                "after": row["after"],
+            }
+            for row in rows
+        ],
+        "consider_removing": removing,
+    }
+
+
 def _format_rate(rate: float | None) -> str:
     if rate is None:
         return "n/a"
@@ -178,12 +288,13 @@ def _format_rate(rate: float | None) -> str:
 
 
 def _display_target(target: str | None, redactor: Redactor) -> str:
-    """docs/DESIGN.md 5.1: a rule target (the file `apply` wrote to) renders
-    as 'target-N (basename)', a per-render pseudonym plus the file's own
-    basename -- enough to tell two different targets apart in one report
-    without the full path, which routinely embeds a client or project name
-    (docs/DESIGN.md 5.1's own example: a CLAUDE.md under a client's
-    directory). The raw path prints only with --no-redact."""
+    """docs/DESIGN.md 5.1: a rule target (the free-text 'target' an owner
+    recorded for an adopted rule) renders as 'target-N (basename)', a
+    per-render pseudonym plus the file's own basename -- enough to tell two
+    different targets apart in one report without the full path, which
+    routinely embeds a client or project name (docs/DESIGN.md 5.1's own
+    example: an instruction file under a client's directory). The raw path
+    prints only with --no-redact."""
     target = target or ""
     if not redactor.enabled or not target:
         return target
@@ -218,9 +329,7 @@ def render_trend_text(
     lines.append("")
     lines.append("BEFORE / AFTER APPLIED RULES")
     if not before_after_rows:
-        lines.append(
-            "(no rules applied yet; run 'postmortem apply <RULE_ID> --target FILE --write')"
-        )
+        lines.append("(no rule adopted yet; see 'agent-postmortem rules review')")
     else:
         for row in before_after_rows:
             before = row["before"]
@@ -255,4 +364,14 @@ def to_json(
     before_after_rows = [
         {**row, "target": _display_target(row["target"], redactor)} for row in before_after_rows
     ]
-    return {"weeks": weeks, "weekly_counts": weekly, "before_after": before_after_rows}
+    # docs/DESIGN.md 5.3: schema 2. trend never filters a silenced detector
+    # out of weekly_counts or before_after -- docs/DESIGN.md 4.10: "a
+    # silenced detector still runs ... and still counts in trend" -- so this
+    # is the one JSON command whose payload shape and population are both
+    # completely unchanged by this unit apart from the new top-level key.
+    return {
+        "schema": SCHEMA_VERSION,
+        "weeks": weeks,
+        "weekly_counts": weekly,
+        "before_after": before_after_rows,
+    }

@@ -5,7 +5,8 @@ from pathlib import Path
 
 import agent_postmortem
 from agent_postmortem import __version__, rules, state
-from agent_postmortem.cli import _build_parser, main
+from agent_postmortem.cli import _build_parser, _top_detector, main
+from agent_postmortem.models import Finding
 
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs" / "reader_minimal"
 MAIN_RUN = (
@@ -45,6 +46,57 @@ def test_run_json_flag_emits_valid_json(capsys):
     assert payload["status"] == "INCOMPLETE"
 
 
+# --- unit M3c: user config (docs/DESIGN.md 4.10) at the CLI boundary -------
+
+
+def _write_config(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_run_exits_one_with_a_clear_message_when_off_names_a_critical_detector(
+    tmp_path, monkeypatch, capsys,
+):
+    config_path = _write_config(tmp_path, '[detectors]\noff = ["codex_write_denied"]\n')
+    monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(config_path))
+    code = main(["run", str(MAIN_RUN)])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert "codex_write_denied" in captured.err
+    assert "critical" in captured.err.lower()
+
+
+def test_run_warns_on_stderr_for_an_unknown_detector_id_but_still_runs(tmp_path, monkeypatch, capsys):
+    config_path = _write_config(tmp_path, '[detectors]\noff = ["not_a_real_detector"]\n')
+    monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(config_path))
+    code = main(["run", str(MAIN_RUN)])
+    captured = capsys.readouterr()
+    assert code == 4, captured.err  # unchanged from the no-config baseline
+    assert "not_a_real_detector" in captured.err
+    assert captured.out.splitlines()[0].startswith("RUN wf_b0000000-002")
+
+
+def test_run_warns_on_stderr_for_malformed_toml_and_silences_nothing(tmp_path, monkeypatch, capsys):
+    config_path = _write_config(tmp_path, "not [valid toml")
+    monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(config_path))
+    code = main(["run", str(MAIN_RUN)])
+    captured = capsys.readouterr()
+    assert code == 4, captured.err
+    assert "could not parse" in captured.err
+    assert "silenced by config" not in captured.out
+
+
+def test_run_with_a_missing_config_file_silences_nothing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(tmp_path / "does-not-exist.toml"))
+    code = main(["run", str(MAIN_RUN)])
+    captured = capsys.readouterr()
+    assert code == 4, captured.err
+    assert captured.err == ""
+    assert "silenced by config" not in captured.out
+
+
 INCOMPLETE_JOURNAL_RUN = Path(__file__).parent / "fixtures" / "runs" / "incomplete_journal"
 
 
@@ -57,6 +109,32 @@ def test_run_on_incomplete_journal_fixture_exits_four_without_a_critical_finding
     assert code == 4, captured.err
     assert "(INCOMPLETE)" in captured.out.splitlines()[0]
     assert "CLEAN" in captured.out.splitlines()[0]
+
+
+def _finding(severity, detector):
+    return Finding(
+        detector=detector, severity=severity, title="t", run_id="wf_x", agent_id=None,
+        evidence=[], metrics={}, rule_id=None,
+    )
+
+
+def test_top_detector_returns_none_for_info_only_findings():
+    """unit M1d: an info-only finding (wasted_time, present on every run)
+    must never be reported as the 'top detector' of an otherwise clean run."""
+    assert _top_detector([]) is None
+    assert _top_detector([_finding("info", "wasted_time")]) is None
+    assert _top_detector([_finding("minor", "bash_timeout")]) is None
+
+
+def test_top_detector_returns_the_major_or_critical_detector_with_the_most_findings():
+    findings = [
+        _finding("info", "wasted_time"),
+        _finding("minor", "bash_timeout"),
+        _finding("major", "silent_retry"),
+        _finding("major", "silent_retry"),
+        _finding("critical", "codex_write_denied"),
+    ]
+    assert _top_detector(findings) == "silent_retry"
 
 
 def test_scan_with_no_runs_under_root_exits_two(tmp_path, capsys):
@@ -98,7 +176,8 @@ def test_run_on_a_session_jsonl_path_exits_zero(capsys):
     code = main(["run", str(session_path)])
     captured = capsys.readouterr()
     assert code == 0, captured.err
-    assert "(session)" in captured.out.splitlines()[0]
+    # unit M3a: a session run's header word is "SESSION", not "RUN ... (session)".
+    assert captured.out.splitlines()[0].startswith("SESSION ")
 
 
 def test_run_on_an_arbitrary_file_is_refused_not_reported_clean(tmp_path, capsys):
@@ -132,12 +211,17 @@ def test_rules_all_lists_the_full_library_even_with_no_runs(tmp_path, capsys):
 
 
 def test_rules_json_flag_emits_valid_json(tmp_path, capsys):
-    """M8 review D2/D6: rules gains --json like the other commands."""
+    """M8 review D2/D6: rules gains --json like the other commands.
+
+    unit M3c (docs/DESIGN.md 5.3): the bare list became {schema, rules} so
+    this command's JSON carries the same schema-2 marker as run/scan/
+    trend/demo's."""
     code = main(["rules", "--root", str(tmp_path), "--all", "--json"])
     captured = capsys.readouterr()
     assert code == 0, captured.err
     payload = json.loads(captured.out)
-    assert any(row["rule_id"] == "R-RETRY-SAFE" for row in payload)
+    assert payload["schema"] == 2
+    assert any(row["rule_id"] == "R-RETRY-SAFE" for row in payload["rules"])
 
 
 def test_rules_show_json_flag_emits_valid_json(capsys):
@@ -196,26 +280,33 @@ def test_apply_dry_run_diff_is_redacted_by_default_and_raw_with_no_redact(capsys
     assert str(target) in captured.out
 
 
-def test_apply_write_reports_already_present_recorded_for_drift(tmp_path, capsys, monkeypatch):
-    """docs/DESIGN.md 9: a target that already carries the rule but has no
-    matching applied entry gets a distinct message from a true no-op, and
-    --write records the missing entry."""
+def test_apply_reports_already_present_message_and_bytes_are_unchanged(tmp_path, capsys, monkeypatch):
+    """Changed from testing --write's drift-recording message ("already
+    present, recorded", removed with --write and the state entry it wrote,
+    docs/DESIGN.md 9): the only remaining fact is the plain "already
+    present" message, and that the target's bytes never move."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     target = tmp_path / "CLAUDE.md"
-    target.write_text(
-        f"{rules.BEGIN_MARKER}\n- R-GIT-CWD: {rules.RULES['R-GIT-CWD'].text}\n{rules.END_MARKER}\n",
-        encoding="utf-8",
-    )
+    original = f"{rules.BEGIN_MARKER}\n- R-GIT-CWD: {rules.RULES['R-GIT-CWD'].text}\n{rules.END_MARKER}\n"
+    target.write_text(original, encoding="utf-8")
 
-    code = main(["apply", "R-GIT-CWD", "--target", str(target), "--write"])
+    # --no-redact: the target path itself is what this test checks, and a
+    # tmp_path can legitimately embed the machine's own account name, which
+    # --no-redact is exactly the flag that stops from being replaced.
+    code = main(["apply", "R-GIT-CWD", "--target", str(target), "--no-redact"])
     captured = capsys.readouterr()
 
     assert code == 0, captured.err
-    assert "already present, recorded" in captured.out
-    assert len(state.load_state()["applied"]) == 1
+    assert f"already present in {target}; nothing to add" in captured.out
+    assert "Apply it yourself" in captured.out
+    assert target.read_text(encoding="utf-8") == original
+    assert not state.state_path().exists()
 
 
-def test_apply_dry_run_reports_already_present_recorded_for_drift_without_writing(tmp_path, capsys, monkeypatch):
+def test_apply_never_records_state_even_when_the_rule_is_already_present(tmp_path, capsys, monkeypatch):
+    """Changed from asserting a drift entry gets recorded (removed along
+    with --write, docs/DESIGN.md 9): apply never touches the state store,
+    present or absent, so no state.json is ever created."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     target = tmp_path / "CLAUDE.md"
     target.write_text(
@@ -227,61 +318,98 @@ def test_apply_dry_run_reports_already_present_recorded_for_drift_without_writin
     captured = capsys.readouterr()
 
     assert code == 0, captured.err
-    assert "already present, recorded" in captured.out
-    assert not state.state_path().exists()  # dry run: no write happened
+    assert not state.state_path().exists()
 
 
-def test_apply_second_write_still_reports_plain_nothing_to_do(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+def test_apply_repeated_calls_show_the_same_diff_since_nothing_persists(tmp_path, capsys):
+    """Changed from testing that a second --write reports plain "nothing to
+    do" once the first write already applied the rule (removed, docs/
+    DESIGN.md 9): since apply never writes, target never exists after
+    either call, so both calls show the identical, still non-empty diff."""
     target = tmp_path / "CLAUDE.md"
 
-    main(["apply", "R-GIT-CWD", "--target", str(target), "--write"])
-    capsys.readouterr()
-    code = main(["apply", "R-GIT-CWD", "--target", str(target), "--write"])
-    captured = capsys.readouterr()
+    main(["apply", "R-GIT-CWD", "--target", str(target)])
+    first = capsys.readouterr().out
+    code = main(["apply", "R-GIT-CWD", "--target", str(target)])
+    second = capsys.readouterr().out
 
-    assert code == 0, captured.err
-    assert "nothing to do" in captured.out
-    assert "recorded" not in captured.out
+    assert code == 0
+    assert "R-GIT-CWD" in first
+    assert first == second
+    assert not target.exists()
 
 
 def test_apply_error_message_is_redacted_by_default_and_raw_with_no_redact(tmp_path, capsys, monkeypatch):
     """docs/DESIGN.md 5: every CLI error message that may carry a path
     passes through the active Redactor before printing."""
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     target = tmp_path / "CLAUDE.md"
     session_id = "00000000-0000-4000-8000-000000000000"
 
-    def _boom(rule_id, target, write=False):
+    def _boom(rule_id, target):
         raise OSError(f"could not lock state.lock (session {session_id})")
 
     monkeypatch.setattr(rules, "apply_rule", _boom)
 
-    code = main(["apply", "R-GIT-CWD", "--target", str(target), "--write"])
+    code = main(["apply", "R-GIT-CWD", "--target", str(target)])
     captured = capsys.readouterr()
     assert code == 1
     assert session_id not in captured.err
     assert "uuid:0000" in captured.err
 
-    code = main(["apply", "R-GIT-CWD", "--target", str(target), "--write", "--no-redact"])
+    code = main(["apply", "R-GIT-CWD", "--target", str(target), "--no-redact"])
     captured = capsys.readouterr()
     assert code == 1
     assert session_id in captured.err
 
 
-def test_apply_write_on_a_symlinked_target_exits_one_with_a_clear_message(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+def test_apply_on_a_symlinked_target_exits_zero_and_reads_through_it(tmp_path, capsys):
+    """Changed from expecting exit 1 with a symlink refusal (removed, docs/
+    DESIGN.md 9): that refusal was specific to the write path apply_rule no
+    longer has. Reading through a symlink is now the ordinary case."""
     real_target = tmp_path / "real.md"
     real_target.write_text("# rules\n", encoding="utf-8")
     link = tmp_path / "CLAUDE.md"
     link.symlink_to(real_target)
 
-    code = main(["apply", "R-RETRY-SAFE", "--target", str(link), "--write"])
+    code = main(["apply", "R-RETRY-SAFE", "--target", str(link)])
     captured = capsys.readouterr()
 
-    assert code == 1
-    assert "symlink" in captured.err
+    assert code == 0, captured.err
+    assert "R-RETRY-SAFE" in captured.out
     assert real_target.read_text(encoding="utf-8") == "# rules\n"
+
+
+def test_apply_write_is_an_unrecognized_argument(tmp_path, capsys):
+    """docs/DESIGN.md 9, R3: --write is removed entirely -- argparse itself
+    must refuse it, which raises SystemExit(1) (cli._Parser.error), the
+    same as --version does (test_version_flag_prints_version_and_exits_zero)."""
+    target = tmp_path / "CLAUDE.md"
+
+    try:
+        code = main(["apply", "R-RETRY-SAFE", "--target", str(target), "--write"])
+    except SystemExit as exc:
+        code = exc.code
+    capsys.readouterr()
+
+    assert code == 1
+    assert not target.exists()
+
+
+def test_apply_closing_sentence_never_claims_it_wrote_the_target(tmp_path, capsys):
+    target = tmp_path / "CLAUDE.md"
+
+    # --no-redact: tmp_path can embed the machine's own account name, which
+    # would otherwise be replaced and break the exact-text comparison below.
+    code = main(["apply", "R-RETRY-SAFE", "--target", str(target), "--no-redact"])
+    captured = capsys.readouterr()
+
+    assert code == 0, captured.err
+    last_line = captured.out.strip().splitlines()[-1]
+    assert last_line == (
+        "Apply it yourself: paste the block into the target file, or save this "
+        "output and run git apply."
+    )
+    assert not target.exists()
 
 
 def test_scan_wasted_hours_reflects_the_wasted_time_metric(capsys):
@@ -346,6 +474,29 @@ def test_scan_exits_zero_when_every_run_is_clean_and_complete(tmp_path, capsys):
     assert code == 0, captured.err
 
 
+def test_scan_shows_dash_for_a_clean_runs_top_detector(tmp_path, capsys):
+    """unit M1d: this session is CLEAN but still carries an info-only
+    wasted_time finding; the row must show '-', never 'wasted_time'.
+
+    unit M3b: a 0-subagent CLEAN session is never a NEEDS ATTENTION
+    candidate, so this row only ever shows up in the full --all list.
+    """
+    _write_minimal_session(tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000")
+
+    code = main(["scan", "--root", str(tmp_path), "--all"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    row_line = next(line for line in captured.out.splitlines() if line.startswith("s_"))
+    assert row_line.rstrip().endswith("CLEAN  -")
+
+    code = main(["scan", "--root", str(tmp_path), "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    payload = json.loads(captured.out)
+    assert payload["rows"][0]["verdict"] == "CLEAN"
+    assert payload["rows"][0]["top_detector"] is None
+
+
 def test_scan_runs_with_retries_ignores_an_unkeyed_attempt(tmp_path, capsys):
     """A run whose only 'started' journal event carries no key must not be
     counted as a run with retries: it has one agent, one attempt, zero
@@ -369,6 +520,26 @@ def test_trend_with_no_runs_under_root_exits_two(tmp_path, capsys):
     captured = capsys.readouterr()
     assert code == 2
     assert "no runs found" in captured.err
+
+
+def test_trend_still_counts_a_detector_silenced_by_config(tmp_path, monkeypatch, capsys):
+    """docs/DESIGN.md 4.10: 'a silenced detector still runs ... and still
+    counts in trend' -- unlike run/scan/demo, trend is never wired to
+    config.partition_silenced at all, so silencing silent_retry here must
+    not change its weekly count. wf_b0000000-002 (started 2026-09-01) fires
+    silent_retry; --weeks defaults to 8, comfortably covering that week from
+    any 'now' in this test suite's lifetime."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[detectors]\noff = ["silent_retry"]\n', encoding="utf-8")
+    monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(config_path))
+
+    code = main(["trend", "--root", str(FIXTURES_ROOT), "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    payload = json.loads(captured.out)
+    assert payload["schema"] == 2
+    silent_retry_weeks = payload["weekly_counts"].get("silent_retry", {})
+    assert sum(silent_retry_weeks.values()) == 1
 
 
 def test_trend_state_read_error_message_is_redacted_by_default_and_raw_with_no_redact(
@@ -468,7 +639,11 @@ def test_scan_kind_filter_session_only_in_text_and_json(tmp_path, capsys):
         tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000", "wf_00000000-820"
     )
 
-    code = main(["scan", "--root", str(tmp_path), "--kind", "session"])
+    # unit M3b: the default triage view lists only NEEDS ATTENTION
+    # candidates, and its own totals lines always mention "workflow runs"
+    # even at zero (the word this test's row-only check needs to rule out
+    # of); --all restores the plain row-per-run list this test pins.
+    code = main(["scan", "--root", str(tmp_path), "--kind", "session", "--all"])
     captured = capsys.readouterr()
     assert code == 0, captured.err
     # Row lines carry each run's own kind and must reflect the filter; the
@@ -502,8 +677,10 @@ def test_scan_kind_filter_workflow_only_in_json(tmp_path, capsys):
 
 
 def test_scan_text_output_shows_the_kind_column(tmp_path, capsys):
+    # unit M3b: this 0-subagent CLEAN session is never a NEEDS ATTENTION
+    # candidate, so the kind column is only visible in the --all row list.
     _write_minimal_session(tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000")
-    code = main(["scan", "--root", str(tmp_path)])
+    code = main(["scan", "--root", str(tmp_path), "--all"])
     captured = capsys.readouterr()
     assert code == 0, captured.err
     assert "session" in captured.out.splitlines()[0]
@@ -548,7 +725,11 @@ def test_scan_marks_an_unfinished_workflow_row_unfinished(tmp_path, capsys):
         '"agentId":"a1111111111111111","label":"impl:a","phase":"Implement"}\n',
         encoding="utf-8",
     )
-    code = main(["scan", "--root", str(tmp_path)])
+    # unit M3b: this 0-subagent CLEAN session is never a NEEDS ATTENTION
+    # candidate (and the workflow's own row-with-marker format below is the
+    # --all list's shape), so --all restores the row-per-run list this test
+    # pins.
+    code = main(["scan", "--root", str(tmp_path), "--all"])
     captured = capsys.readouterr()
     assert code == 0, captured.err
     lines = {line.split("  ")[0]: line for line in captured.out.splitlines() if line.startswith("wf_") or line.startswith("s_")}
@@ -594,8 +775,13 @@ def test_run_on_an_unfinished_workflow_still_computes_and_prints_findings(tmp_pa
     # never actually created -- exactly the kind of real finding the old
     # short-circuit hid.
     assert code == 3, captured.err
-    assert captured.out.startswith("RUN wf_00000000-960  FAILED (unfinished)\n")
-    assert "FINDINGS (critical 1" in captured.out
+    # unit M3a: the header line now continues past the verdict tag with
+    # "ended ...", so it is a prefix check, not an exact first-line match;
+    # FINDINGS is gone from the default report (--verbose only) -- the
+    # critical finding now shows up as a run-level story instead.
+    assert captured.out.startswith("RUN wf_00000000-960  FAILED (unfinished)  ")
+    assert "missing_artifact" not in captured.out  # detector id: verbose-only
+    assert "STORIES (1)" in captured.out
 
 
 def test_run_resolves_a_session_by_a_unique_s_prefix(tmp_path, capsys):
@@ -608,7 +794,8 @@ def test_run_resolves_a_session_by_a_unique_s_prefix(tmp_path, capsys):
     code = main(["run", run_id[:5], "--root", str(tmp_path)])
     captured = capsys.readouterr()
     assert code == 0, captured.err
-    assert captured.out.splitlines()[0].startswith(f"RUN {run_id}")
+    # unit M3a: a session run's header word is "SESSION", not "RUN".
+    assert captured.out.splitlines()[0].startswith(f"SESSION {run_id}")
 
 
 def test_json_export_omits_event_text(capsys):

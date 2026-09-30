@@ -4,7 +4,8 @@ blocking a command outright.
 DESIGN.md 4.3: critical severity, fires when the sandbox write-denial marker
 (SANDBOX_WRITE_DENIED in markers.py: two alternative observed forms, either
 is enough) or the shell-guard block marker (SHELL_GUARD_BLOCK_REGEX) appears
-in (a) an assistant text event, or (b) a Bash tool_result event whose own
+in (a) an assistant text event that starts with "[codex]" (the companion's
+own output echoed), or (b) a Bash tool_result event whose own
 command text mentions "codex" (case-insensitive). The Codex plugin is the
 only producer of WRITE_DENIED and the "read-only sandbox"/shell-guard prose;
 every other event is ignored by this detector (M8 review D-C) -- a python
@@ -26,6 +27,8 @@ WRITE_DENIED is not a sandbox denying anything.
 
 from __future__ import annotations
 
+import re
+
 from ..markers import SANDBOX_WRITE_DENIED
 from ..models import Event, Finding, Run
 from .base import (
@@ -45,6 +48,30 @@ RULE_ID_ARTIFACT = "R-ASSERT-ARTIFACT"
 # reader.py's _scan_markers already ran SHELL_GUARD_BLOCK_REGEX against each
 # event's full text and recorded a hit under this name.
 _SHELL_GUARD_MARKER = "SHELL_GUARD_BLOCK_REGEX"
+# The codex-companion prefixes every line it prints; an assistant message
+# that starts with it is that output echoed, not prose about it.
+_CODEX_ECHO_PREFIX = "[codex]"
+
+
+# codex run as a program: the first word of a command segment (start of the
+# command, or after ";", "&", "|", "(", or a newline), optionally
+# path-qualified, followed by whitespace or end; or the codex-companion
+# script named anywhere. The word inside command data (a heredoc body, a
+# file name such as "M3a-review-codex.txt") does not match.
+_CODEX_PROGRAM_RE = re.compile(
+    r"(^|[;&|(\n])\s*(\S*/)?codex(\s|$)|codex-companion\.mjs"
+)
+
+
+def _is_codex_bash_result(event: Event, command: str) -> bool:
+    """A Bash tool_result that can carry a real denial: its output is the
+    codex-companion's (every line prefixed "[codex]"; measured 23 of 23 real
+    denials on the build machine start that way) or its command runs codex
+    as a program. A command that only names a file containing "codex" (a
+    review file being read back) is neither."""
+    if event.text.lstrip().startswith(_CODEX_ECHO_PREFIX):
+        return True
+    return bool(_CODEX_PROGRAM_RE.search(command.lower()))
 
 
 def _matched_marker(event: Event) -> str | None:
@@ -73,10 +100,17 @@ class CodexWriteDenied:
                 # tool_result for an unrelated command that merely prints
                 # text quoting one of these markers) is ignored outright.
                 if event.kind == "assistant":
-                    pass
-                elif is_bash_event(event) and "codex" in preceding_bash_command(
-                    attempt, index
-                ).lower():
+                    # v0.2: only the companion's own output echoed verbatim
+                    # into an assistant message counts (it starts with
+                    # "[codex]"); assistant prose that quotes the marker (a
+                    # pasted review, a discussion of this detector) is not a
+                    # denial. Measured: every real denial on the build
+                    # machine was a Bash tool_result of a codex command.
+                    if not event.text.lstrip().startswith(_CODEX_ECHO_PREFIX):
+                        continue
+                elif is_bash_event(event) and _is_codex_bash_result(
+                    event, preceding_bash_command(attempt, index)
+                ):
                     pass
                 else:
                     continue

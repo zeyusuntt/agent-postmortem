@@ -162,6 +162,30 @@ def test_check_notifies_a_new_major_finding_with_verdict_and_postmortem_hint(mon
     assert payload["hookSpecificOutput"]["additionalContext"] == message
 
 
+def test_check_silences_a_major_finding_by_config_and_never_notifies_or_counts_it_toward_verdict(
+    monkeypatch, capsys, tmp_path,
+):
+    """docs/DESIGN.md 4.10/7.2: wf_00000000-710's only findings are two
+    major detectors, silent_retry and mislabeled_kill (see the baseline
+    test above: DEGRADED, notified). With both silenced by config, nothing
+    is left above the notify threshold (wasted_time is info) -- the hook
+    must emit nothing, and the unit's own cached verdict must read CLEAN,
+    never DEGRADED, and its 'reported' list must stay empty."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[detectors]\noff = ["silent_retry", "mislabeled_kill"]\n', encoding="utf-8")
+    monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(config_path))
+
+    code, out = _run(monkeypatch, capsys, "check", _base_payload())
+    assert code == 0
+    assert out == ""
+
+    data = _state_data()
+    unit = data["sessions"][SESSION_KEY]["units"]["subagents/workflows/wf_00000000-710"]
+    assert unit["state"] == "analyzed"
+    assert unit["verdict"] == "CLEAN"
+    assert unit["reported"] == []
+
+
 def test_check_never_notifies_the_same_finding_twice(monkeypatch, capsys):
     code1, out1 = _run(monkeypatch, capsys, "check", _base_payload())
     assert code1 == 0
@@ -740,23 +764,41 @@ def test_workflow_launched_registers_a_running_priority_unit_with_its_locator(mo
     transcript = session_dir.parent / f"{session_dir.name}.jsonl"
     transcript.write_text('{"type":"user"}\n', encoding="utf-8")
 
+    # docs/DESIGN.md 7.2's release-hardening note (F12): transcriptDir is
+    # only ever honored when it names a location inside this session's own
+    # subagents/workflows/ directory, so this fixture uses that shape
+    # (release finding F12) rather than an arbitrary path.
+    valid_transcript_dir = str(session_dir / "subagents" / "workflows" / "wf_00000000-798")
     payload = {
         "hook_event_name": "PostToolUse",
         "tool_name": "Workflow",
         "transcript_path": str(transcript),
         "session_id": "s-workflow-launched",
-        "tool_response": {"runId": "wf_00000000-798", "transcriptDir": "/whatever"},
+        "tool_response": {"runId": "wf_00000000-798", "transcriptDir": valid_transcript_dir},
     }
     code, out = _run(monkeypatch, capsys, "workflow-launched", payload)
     assert code == 0
-    assert out == ""
+    # .reviews/proposals/2026-09-v0.2-guided-rescue.md section 7: this used
+    # to assert out == "" (docs/DESIGN.md 7.2 pre-M5 said "emit nothing").
+    # workflow-launched now hands the session the watch command whenever it
+    # could read a run id, so a successful registration also emits the hint.
+    assert json.loads(out) == {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": (
+                "Workflow wf_00000000-798 launched. To notice a killed or failed agent "
+                "within seconds instead of hours, arm a Monitor now with this command: "
+                "agent-postmortem watch wf_00000000-798"
+            ),
+        }
+    }
 
     key = _session_key(session_dir.parent.parent, session_dir.name)
     data = _state_data()
     unit = data["sessions"][key]["units"]["subagents/workflows/wf_00000000-798"]
     assert unit["state"] == "running"
     assert unit["priority"] is True
-    assert unit["transcript_dir"] == "/whatever"
+    assert unit["transcript_dir"] == valid_transcript_dir
 
 
 def test_workflow_launched_falls_back_to_the_run_id_regex(monkeypatch, capsys, tmp_path):
@@ -774,7 +816,12 @@ def test_workflow_launched_falls_back_to_the_run_id_regex(monkeypatch, capsys, t
     }
     code, out = _run(monkeypatch, capsys, "workflow-launched", payload)
     assert code == 0
-    assert out == ""
+    # See the locator test above: was out == "" before unit M5.
+    assert json.loads(out)["hookSpecificOutput"]["additionalContext"] == (
+        "Workflow wf_00000000-799 launched. To notice a killed or failed agent "
+        "within seconds instead of hours, arm a Monitor now with this command: "
+        "agent-postmortem watch wf_00000000-799"
+    )
 
     key = _session_key(session_dir.parent.parent, session_dir.name)
     data = _state_data()
@@ -796,6 +843,120 @@ def test_workflow_launched_wrong_tool_name_is_silent(monkeypatch, capsys):
     assert not state_file.exists()
 
 
+def test_workflow_launched_hint_opted_out_by_env_var(monkeypatch, capsys, tmp_path):
+    """.reviews/proposals/2026-09-v0.2-guided-rescue.md section 7: 'Opt out:
+    AGENT_POSTMORTEM_WATCH_HINT=0'. Registration still happens -- only the
+    hint is suppressed, back to the pre-M5 'emit nothing'."""
+    monkeypatch.setenv("AGENT_POSTMORTEM_WATCH_HINT", "0")
+    session_dir = tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
+    (session_dir / "subagents").mkdir(parents=True)
+    transcript = session_dir.parent / f"{session_dir.name}.jsonl"
+    transcript.write_text('{"type":"user"}\n', encoding="utf-8")
+
+    payload = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Workflow",
+        "transcript_path": str(transcript),
+        "session_id": "s-workflow-hint-opt-out",
+        "tool_response": {"runId": "wf_00000000-801"},
+    }
+    code, out = _run(monkeypatch, capsys, "workflow-launched", payload)
+    assert code == 0
+    assert out == ""
+
+    key = _session_key(session_dir.parent.parent, session_dir.name)
+    data = _state_data()
+    assert "subagents/workflows/wf_00000000-801" in data["sessions"][key]["units"]
+
+
+@pytest.mark.parametrize(
+    "bad_run_id",
+    [
+        "wf_00000000-798\nmalicious",
+        "wf_00000000-798 extra",
+        "wf_00000000-79",  # too short: fails the 8-hex+dash+3-hex grammar
+        "wf_00000000-7980",  # too long
+        "not-even-close",
+    ],
+)
+def test_workflow_launched_structured_run_id_must_full_match_the_canonical_grammar(
+    monkeypatch, capsys, tmp_path, bad_run_id,
+):
+    """release finding F12: a structured runId is accepted only when it
+    full-matches docs/DESIGN.md 5.1's canonical grammar (reader._WORKFLOW_
+    RUN_ID_RE: 'wf_' + 8 hex + '-' + 3 hex). Anything else -- a newline or
+    trailing text that could inject content into additionalContext, or a
+    value simply the wrong shape -- means no run id was read at all: the
+    hook emits nothing and registers nothing, the same as
+    test_workflow_launched_no_run_id_emits_nothing."""
+    session_dir = tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
+    (session_dir / "subagents").mkdir(parents=True)
+    transcript = session_dir.parent / f"{session_dir.name}.jsonl"
+    transcript.write_text('{"type":"user"}\n', encoding="utf-8")
+
+    payload = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Workflow",
+        "transcript_path": str(transcript),
+        "session_id": "s-workflow-bad-run-id",
+        "tool_response": {"runId": bad_run_id, "transcriptDir": str(session_dir / "subagents" / "workflows" / "x")},
+    }
+    code, out = _run(monkeypatch, capsys, "workflow-launched", payload)
+    assert code == 0
+    assert out == ""
+    state_file = Path(os.environ["XDG_STATE_HOME"]) / "agent-postmortem" / "state.json"
+    assert not state_file.exists()
+
+
+def test_workflow_launched_transcript_dir_outside_the_session_is_dropped(monkeypatch, capsys, tmp_path):
+    """release finding F12: transcriptDir, after normalization, must be
+    inside this session's own subagents/workflows/ directory (the same
+    session_dir `check` derives from transcript_path). A value outside it
+    is dropped -- treated exactly as if transcriptDir had never been given
+    -- but the run id is still valid, so registration and the watch hint
+    proceed normally; only the untrusted locator itself is refused."""
+    session_dir = tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
+    (session_dir / "subagents").mkdir(parents=True)
+    transcript = session_dir.parent / f"{session_dir.name}.jsonl"
+    transcript.write_text('{"type":"user"}\n', encoding="utf-8")
+
+    outside = tmp_path / "elsewhere-outside-the-session"
+    payload = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Workflow",
+        "transcript_path": str(transcript),
+        "session_id": "s-workflow-bad-transcript-dir",
+        "tool_response": {"runId": "wf_00000000-799", "transcriptDir": str(outside)},
+    }
+    code, out = _run(monkeypatch, capsys, "workflow-launched", payload)
+    assert code == 0
+    assert json.loads(out)["hookSpecificOutput"]["additionalContext"] == (
+        "Workflow wf_00000000-799 launched. To notice a killed or failed agent "
+        "within seconds instead of hours, arm a Monitor now with this command: "
+        "agent-postmortem watch wf_00000000-799"
+    )
+    key = _session_key(session_dir.parent.parent, session_dir.name)
+    unit = _state_data()["sessions"][key]["units"]["subagents/workflows/wf_00000000-799"]
+    assert unit["state"] == "running"
+    assert "transcript_dir" not in unit
+
+
+def test_workflow_launched_no_run_id_emits_nothing(monkeypatch, capsys):
+    """docs/DESIGN.md 7.2: the hint is emitted only 'when it could read a run
+    id'; with neither a structured runId nor a regex-matchable one, nothing
+    is registered and nothing is emitted."""
+    payload = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Workflow",
+        "transcript_path": str(MAIN_TRANSCRIPT),
+        "session_id": "s-workflow-no-run-id",
+        "tool_response": {"note": "no run id anywhere in here"},
+    }
+    code, out = _run(monkeypatch, capsys, "workflow-launched", payload)
+    assert code == 0
+    assert out == ""
+
+
 def test_workflow_launched_as_the_first_call_of_a_session_needs_no_subagents_directory(monkeypatch, capsys, tmp_path):
     """docs/DESIGN.md 7.2's D4/D8: a workflow can be the very first thing a
     session ever does; the session's own subagents/ directory (and the
@@ -806,16 +967,25 @@ def test_workflow_launched_as_the_first_call_of_a_session_needs_no_subagents_dir
     transcript.write_text('{"type":"user"}\n', encoding="utf-8")
     assert not session_dir.exists()
 
+    # release finding F12: transcriptDir must be inside this session's own
+    # subagents/workflows/ directory (it need not exist on disk yet -- that
+    # is the whole point of this test, D8).
+    valid_transcript_dir = str(session_dir / "subagents" / "workflows" / "wf_00000000-753")
     payload = {
         "hook_event_name": "PostToolUse",
         "tool_name": "Workflow",
         "transcript_path": str(transcript),
         "session_id": "s-workflow-first-call",
-        "tool_response": {"runId": "wf_00000000-753", "transcriptDir": str(tmp_path / "elsewhere")},
+        "tool_response": {"runId": "wf_00000000-753", "transcriptDir": valid_transcript_dir},
     }
     code, out = _run(monkeypatch, capsys, "workflow-launched", payload)
     assert code == 0
-    assert out == ""
+    # See the locator test above: was out == "" before unit M5.
+    assert json.loads(out)["hookSpecificOutput"]["additionalContext"] == (
+        "Workflow wf_00000000-753 launched. To notice a killed or failed agent "
+        "within seconds instead of hours, arm a Monitor now with this command: "
+        "agent-postmortem watch wf_00000000-753"
+    )
     key = _session_key(session_dir.parent.parent, session_dir.name)
     data = _state_data()
     assert data["sessions"][key]["units"]["subagents/workflows/wf_00000000-753"]["state"] == "running"
@@ -824,7 +994,13 @@ def test_workflow_launched_as_the_first_call_of_a_session_needs_no_subagents_dir
 def test_check_uses_the_stored_transcript_dir_when_the_conventional_path_is_absent(monkeypatch, capsys, tmp_path):
     """docs/DESIGN.md 7.2's D8: `check` must be able to inspect a unit
     workflow-launched registered by its transcriptDir, before the
-    conventional subagents/workflows/<run id> directory exists."""
+    conventional subagents/workflows/<run id> directory exists.
+
+    release finding F12: transcriptDir is only ever honored when it is
+    inside this session's own subagents/workflows/ directory, so "elsewhere"
+    is nested there too -- named so it does not start with "wf_", the one
+    prefix _discover_units's own glob looks for, so this still exercises the
+    stored-locator fallback rather than plain directory discovery."""
     session_dir = tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
     (session_dir / "subagents").mkdir(parents=True)
     transcript = session_dir.parent / f"{session_dir.name}.jsonl"
@@ -832,8 +1008,8 @@ def test_check_uses_the_stored_transcript_dir_when_the_conventional_path_is_abse
         '{"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2026-01-01T00:00:00Z"}\n',
         encoding="utf-8",
     )
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
+    elsewhere = session_dir / "subagents" / "workflows" / "not-discovered-754"
+    elsewhere.mkdir(parents=True)
     elsewhere.joinpath("journal.jsonl").write_text(
         '{"type":"launched","timestamp":"2026-01-01T00:00:00Z"}\n'
         '{"type":"started","timestamp":"2026-01-01T00:00:01Z","key":"v2:a","agentId":"af300000000000001",'
@@ -1091,3 +1267,33 @@ def test_session_start_only_digests_its_own_root(monkeypatch, capsys, tmp_path):
 
     data = _state_data()
     assert other_qualified in data["digest"]["pending"]
+
+
+# --- F2 (M1 review finding 2): a malformed 'started' entry must not --------
+# --- crash the check hook path ----------------------------------------------
+
+MALFORMED_FIELDS_ROOT = (
+    Path(__file__).parent / "fixtures" / "runs" / "journal_malformed_fields"
+)
+MALFORMED_FIELDS_TRANSCRIPT = (
+    MALFORMED_FIELDS_ROOT / "-home-user-project" / "00000000-0000-4000-8000-000000000000.jsonl"
+)
+
+
+def test_check_does_not_crash_on_a_workflow_with_malformed_started_fields(monkeypatch, capsys):
+    """tests/fixtures/runs/journal_malformed_fields carries a 'started' entry
+    with a non-string agentId, one with a non-string key, one with a
+    non-string label, and one with a non-string phase (docs/DESIGN.md 4.6).
+    Before the fix, a non-string agentId crashed reader._valid_agent_id with
+    a TypeError; check must complete with exit 0 and, if it prints anything
+    at all, well-formed JSON."""
+    payload = {
+        "hook_event_name": "Stop",
+        "transcript_path": str(MALFORMED_FIELDS_TRANSCRIPT),
+        "session_id": "00000000-0000-4000-8000-000000000000",
+        "stop_hook_active": False,
+    }
+    code, out = _run(monkeypatch, capsys, "check", payload)  # must not raise
+    assert code == 0
+    if out:
+        json.loads(out)
