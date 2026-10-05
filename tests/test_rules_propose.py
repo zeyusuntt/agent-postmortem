@@ -170,6 +170,8 @@ def test_propose_row_to_json_shape():
         "runs": 3,
         "first": "2026-08-01",
         "last": "2026-08-02",
+        "adopted": None,
+        "since": None,
         "text": rules.RULES["R-GIT-CWD"].text,
     }
 
@@ -251,7 +253,7 @@ def test_cli_rules_propose_json_shape(tmp_path, capsys):
 
     assert code == 0, captured.err
     payload = json.loads(captured.out)
-    assert payload["schema"] == 2
+    assert payload["schema"] == 3
     assert payload["proposals"] == [
         {
             "rule_id": "R-GIT-CWD",
@@ -260,6 +262,8 @@ def test_cli_rules_propose_json_shape(tmp_path, capsys):
             "runs": 3,
             "first": "2026-08-01",
             "last": "2026-08-02",
+            "adopted": None,
+            "since": None,
             "text": rules.RULES["R-GIT-CWD"].text,
         }
     ]

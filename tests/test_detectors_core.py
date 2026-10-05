@@ -22,7 +22,7 @@ from agent_postmortem.redact import Redactor
 
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs"
 CLEAN_RUN = FIXTURES_ROOT / "clean_run"
-SILENT_RETRY_KILL = Path(agent_postmortem.__file__).parent / "demo" / "wf_00000000-d30"
+SILENT_RETRY_KILL = Path(agent_postmortem.__file__).parent / "demo" / "-home-user-project" / "00000000-0000-4000-8000-000000000000" / "subagents" / "workflows" / "wf_00000000-d30"
 
 
 def _attempt(agent_id: str, key: str | None, ordinal: int = 1) -> Attempt:
@@ -216,7 +216,8 @@ def test_mislabeled_kill_fires_once_per_killed_attempt():
     assert len(findings) == 2
     for finding in findings:
         assert finding.detector == "mislabeled_kill"
-        assert finding.severity == "major"
+        # N5b (4.13.4): runtime cause on a non-final attempt is minor, not major.
+        assert finding.severity == "minor"
         assert finding.rule_id == "R-MONITOR-RETRIES"
         assert finding.metrics["cause"] == "runtime"
         # Silence is exactly 416s for every killed attempt in this fixture.

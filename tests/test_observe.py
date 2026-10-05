@@ -760,7 +760,7 @@ def _write_observe_fixture_run(tmp_path: Path, repo: Path, dirty_path: Path, mis
         / "subagents" / "workflows" / "wf_00000000-0b2"
     )
     run_dir.mkdir(parents=True)
-    agent_id = "af0b200000000001"
+    agent_id = "af0b0200000000001"
     (run_dir / "journal.jsonl").write_text(
         '{"type":"started","key":"v2:observe","agentId":"' + agent_id + '",'
         '"label":"impl:observe","phase":"Implement"}\n'
@@ -824,6 +824,25 @@ def _write_observe_fixture_run(tmp_path: Path, repo: Path, dirty_path: Path, mis
         }),
     ]
     (run_dir / f"agent-{agent_id}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # N5c-1: the groups are observed from the ledger, and an attempt the tool
+    # cannot place in time is never assumed safe, so the run needs the parent
+    # transcript whose launch result places the attempt in its generation.
+    from tests.test_field_v03 import (
+        _envelope,
+        _notification_entry,
+        _parent_path,
+        _workflow_launch,
+        _workflow_launch_result,
+        _write_jsonl,
+    )
+
+    _write_jsonl(_parent_path(tmp_path), [
+        _workflow_launch("toolu_A", now - timedelta(seconds=30)),
+        _workflow_launch_result(
+            "toolu_A", now - timedelta(seconds=29), "wf_00000000-0b2", "tA",
+        ),
+        _notification_entry(now + timedelta(seconds=60), _envelope("tA", "toolu_A", "completed")),
+    ])
     return run_dir
 
 
@@ -871,12 +890,13 @@ def test_run_with_observe_flag_adds_observation_key_in_json(observe_cli_run, cap
     out = capsys.readouterr().out
     payload = json.loads(out)
     assert "observation" in payload
-    observation = payload["observation"]
-    assert observation["checked"] is True
-    states = {entry["state"] for entry in observation["paths"].values()}
+    # N5c-1: the observation is {groups: [...]}, one group per repository.
+    (group,) = payload["observation"]["groups"]
+    assert group["checked"] is True
+    states = {entry["state"] for entry in group["paths"].values()}
     assert observe.DIRTY_NOW in states
     assert observe.MISSING_NOW in states
-    for key in observation["paths"]:
+    for key in group["paths"]:
         assert key.startswith("path-")
 
 
@@ -885,8 +905,10 @@ def test_run_with_observe_and_no_redact_json_has_real_paths(observe_cli_run, cap
     cli.main(["run", str(run_dir), "--observe", "--json", "--no-redact"])
     out = capsys.readouterr().out
     payload = json.loads(out)
-    assert "tracked.txt" in payload["observation"]["paths"]
-    assert "never-existed.txt" in payload["observation"]["paths"]
+    # N5c-1: a group's paths are keyed by the absolute ledger path at raw.
+    (group,) = payload["observation"]["groups"]
+    assert str(repo / "tracked.txt") in group["paths"]
+    assert str(repo / "never-existed.txt") in group["paths"]
 
 
 def test_run_without_observe_flag_never_mentions_repo_state(observe_cli_run, capsys):
@@ -909,7 +931,7 @@ def test_run_without_observe_flag_json_has_no_observation_key(observe_cli_run, c
 def test_demo_run_without_observe_flag_is_unaffected(capsys):
     from importlib import resources
 
-    demo_ref = resources.files("agent_postmortem") / "demo" / "wf_00000000-d30"
+    demo_ref = resources.files("agent_postmortem") / "demo" / "-home-user-project" / "00000000-0000-4000-8000-000000000000" / "subagents" / "workflows" / "wf_00000000-d30"
     with resources.as_file(demo_ref) as demo_path:
         cli.main(["run", str(demo_path)])
     text_out = capsys.readouterr().out

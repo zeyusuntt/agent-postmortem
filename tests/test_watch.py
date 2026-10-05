@@ -34,6 +34,10 @@ DEMO_RUN_DIR = (
     / "src"
     / "agent_postmortem"
     / "demo"
+    / "-home-user-project"
+    / "00000000-0000-4000-8000-000000000000"
+    / "subagents"
+    / "workflows"
     / "wf_00000000-d30"
 )
 
@@ -125,6 +129,15 @@ def _meta(run_dir: Path, agent_id: str) -> None:
         json.dumps({"agentType": "general-purpose", "description": "", "workflowPhase": "Implement"}),
         encoding="utf-8",
     )
+
+
+def _agent_form(agent_id: str) -> str:
+    """N3b P14: the event attempt's own stable alias, the one `run` shows for
+    it (replaces the v0.2 per-watch label pseudonym `agent-N`)."""
+    from agent_postmortem import disclosure
+
+    book = disclosure.register([("agent", agent_id)])
+    return "a:" + book.alias("agent", agent_id)
 
 
 # --- fake clock / sleep -------------------------------------------------
@@ -316,9 +329,13 @@ def test_kill_line_then_second_line_then_done(monkeypatch, capsys, tmp_path):
     lines = out.splitlines()
 
     assert lines == [
-        "KILL   agent-1 attempt 1 after 416s of silence; restarted as attempt 2.",
+        # N8b K5.1: START first; K5.2: the restart's own result prints OK (the KILL put this key
+        # inside its rate limit, so the OK is retried and still printed before DONE, K5.4)
+        "START  wf_00000000-fa1: 1 agents started so far, 1 attempts.",
+        f"KILL   {_agent_form(agent1)} attempt 1 after 416s of silence; restarted as attempt 2.",
         "       attempt 1 wrote 2 paths, reported 0 commits.  "
         "-> agent-postmortem rescue plan wf_00000000-fa1",
+        f"OK     {_agent_form(agent2)} attempt 2 returned a result.",
         # silent_retry fires (major, no critical) whenever a key has more
         # than one attempt (docs/DESIGN.md 4.3), so this key's own restart
         # makes the run DEGRADED, not CLEAN.
@@ -344,13 +361,15 @@ def test_kill_json_line_carries_event(monkeypatch, capsys, tmp_path):
     out = capsys.readouterr().out
     records = [json.loads(line) for line in out.splitlines()]
 
-    assert [r["event"] for r in records] == ["KILL", "DONE"]
-    assert records[0]["agent"] == "agent-1"
+    # N8b K5.1, K5.2: START first, and the restart's own result prints OK before DONE
+    assert [r["event"] for r in records] == ["START", "KILL", "OK", "DONE"]
+    records = records[1:]
+    assert records[0]["agent"] == _agent_form(agent1)
     assert records[0]["attempt"] == 1
     assert records[0]["silence_seconds"] == 416
     assert records[0]["paths_written"] == 2
     assert records[0]["commits"] == 0
-    assert records[1]["verdict"] == "DEGRADED"
+    assert records[-1]["verdict"] == "DEGRADED"
     assert code == 0
 
 
@@ -389,10 +408,65 @@ def test_failed_line_uses_the_attempt_failed_cause_rule(monkeypatch, capsys, tmp
     out = capsys.readouterr().out
     lines = out.splitlines()
 
-    assert lines[0] == "FAILED agent-1 attempt 1: session usage limit reached, resets 18:00."
+    # N8b K5.1: START is the first line
+    assert lines[0] == "START  wf_00000000-fa2: 1 agents started so far, 1 attempts."
+    assert lines[1] == (
+        f"FAILED {_agent_form(agent1)} attempt 1: session usage limit reached, resets 18:00."
+    )
     assert lines[-1].startswith("DONE   ")
     # attempt_failed is major/minor, never critical, so a lone `failed` key
     # never fails a run on its own (see test_failed_verdict_and_exit_code).
+    assert code == 0
+
+
+def test_failed_line_does_not_call_a_kill_sentinel_lookalike_interrupted(
+    monkeypatch, capsys, tmp_path,
+):
+    """docs/DESIGN.md 4.13.2: the kill_sentinel marker anchors only when the
+    WHOLE flattened text, trailing-stripped, equals a KILL_SENTINEL_VARIANT
+    exactly -- the same rule detectors/attempt_failed.py now uses. watch's
+    own cause phrase claims to use that same rule, so a last user entry that
+    merely starts with the kill-sentinel prefix but carries extra trailing
+    content on the same line must not be called "interrupted before
+    finishing" there either; it must fall through to "cause not recorded",
+    exactly as attempt_failed's own finding would for the same transcript.
+    """
+    run_dir = tmp_path / "wf_00000000-fa3"
+    run_dir.mkdir(parents=True)
+    agent1 = "aab0000000000003a"
+    key = "v2:watch-fail-lookalike"
+    _write_lines(
+        run_dir / "journal.jsonl",
+        [
+            _journal_line(type="launched", timestamp="2026-02-01T00:00:00.000Z"),
+            _started("2026-02-01T00:00:00.000Z", key, agent1, "impl:fail"),
+            _failed("2026-02-01T00:05:00.000Z", key, agent1),
+        ],
+    )
+    _meta(run_dir, agent1)
+    _write_transcript(
+        _transcript_path(run_dir, agent1),
+        [
+            _user_text("2026-02-01T00:00:00.000Z", "Implement the watch-fail-lookalike module."),
+            _user_text(
+                "2026-02-01T00:04:59.000Z",
+                "[Request interrupted by user] extra trailing text on the same line",
+            ),
+        ],
+    )
+
+    clock = _Clock()
+    _patch_clock(monkeypatch, clock)
+    _patch_scripted_sleep(monkeypatch, [], clock)
+
+    code = main(["watch", str(run_dir), "--interval", "1"])
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+
+    # N8b K5.1: START is the first line
+    assert lines[0].startswith("START  ")
+    assert lines[1] == f"FAILED {_agent_form(agent1)} attempt 1: cause not recorded."
+    assert lines[-1].startswith("DONE   ")
     assert code == 0
 
 
@@ -428,8 +502,13 @@ def test_failed_verdict_and_exit_code(monkeypatch, capsys, tmp_path):
     assert code == 0
 
 
-def test_done_with_a_critical_finding_exits_3(monkeypatch, capsys, tmp_path):
-    run_dir = tmp_path / "wf_00000000-fa7"
+def test_done_with_a_failed_lifecycle_exits_3(monkeypatch, capsys, tmp_path):
+    # N5b (4.6, 4.13.4): FAILED is the harness reporting the workflow failed
+    # (the lifecycle terminal), not a detector's severity; no detector is
+    # critical any more. The run sits in the standard layout so its parent
+    # transcript, which carries the failed notification, is found.
+    session_dir = tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
+    run_dir = session_dir / "subagents" / "workflows" / "wf_00000000-fa7"
     run_dir.mkdir(parents=True)
     agent1 = "aad0000000000001a"
     key = "v2:watch-critical"
@@ -445,16 +524,44 @@ def test_done_with_a_critical_finding_exits_3(monkeypatch, capsys, tmp_path):
     _write_transcript(
         _transcript_path(run_dir, agent1),
         [
-            _user_text(
-                "2026-02-01T00:00:00.000Z",
-                "Write the report to /tmp/agent-postmortem-watch-fixture/missing-report.md when done.",
-            ),
+            _user_text("2026-02-01T00:00:00.000Z", "Do the work."),
             _assistant_text("2026-02-01T00:04:59.000Z", "Done."),
         ],
     )
-    missing = Path("/tmp/agent-postmortem-watch-fixture/missing-report.md")
-    if missing.exists():
-        missing.unlink()
+    envelope = (
+        "<task-notification>\n<task-id>t1</task-id>\n"
+        "<tool-use-id>toolu_1</tool-use-id>\n<status>failed</status>\n"
+        "</task-notification>"
+    )
+    _write_lines(
+        session_dir.parent / f"{session_dir.name}.jsonl",
+        [
+            json.dumps({
+                "type": "assistant",
+                "message": {
+                    "role": "assistant", "usage": {},
+                    "content": [{"type": "tool_use", "id": "toolu_1", "name": "Workflow", "input": {}}],
+                },
+                "timestamp": "2026-01-31T23:59:00.000Z",
+            }),
+            json.dumps({
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "launched"}],
+                },
+                "toolUseResult": {
+                    "runId": "wf_00000000-fa7", "taskId": "t1", "status": "async_launched",
+                },
+                "timestamp": "2026-01-31T23:59:01.000Z",
+            }),
+            json.dumps({
+                "type": "user", "message": {"role": "user", "content": envelope},
+                "origin": {"kind": "task-notification"},
+                "timestamp": "2026-02-01T00:06:00.000Z",
+            }),
+        ],
+    )
 
     clock = _Clock()
     _patch_clock(monkeypatch, clock)
@@ -504,8 +611,8 @@ def test_quiet_fires_once_then_again_only_when_silence_doubles(monkeypatch, caps
     out = capsys.readouterr().out
     quiet_lines = [line for line in out.splitlines() if line.startswith("QUIET")]
 
-    assert "QUIET  agent-1 attempt 1 has produced nothing for 300s." in quiet_lines
-    assert "QUIET  agent-1 attempt 1 has produced nothing for 600s." in quiet_lines
+    assert f"QUIET  {_agent_form(agent1)} attempt 1 has produced nothing for 300s." in quiet_lines
+    assert f"QUIET  {_agent_form(agent1)} attempt 1 has produced nothing for 600s." in quiet_lines
     assert not any(" for 500s." in line for line in quiet_lines)
     assert any(line.startswith("LIMIT") for line in out.splitlines())
     assert code == 4
@@ -777,8 +884,13 @@ def test_done_is_not_printed_during_a_gap_between_sequential_phases(monkeypatch,
 
     code = main(["watch", str(run_dir), "--interval", "1"])
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 1, lines
-    assert lines[0].startswith("DONE   2 agents, 2 attempts, CLEAN.")
+    # N8b K5.1, K5.2: START first, one OK per result; the point of the test is that exactly one
+    # DONE is printed, after both phases, never in the gap between them
+    assert len(lines) == 4, lines
+    assert lines[0] == "START  wf_00000000-fac: 1 agents started so far, 1 attempts."
+    assert lines[1] == f"OK     {_agent_form(a)} attempt 1 returned a result."
+    assert lines[2] == f"OK     {_agent_form(b)} attempt 1 returned a result."
+    assert lines[3].startswith("DONE   2 agents, 2 attempts, CLEAN.")
     assert code == 0
 
 
@@ -886,7 +998,11 @@ def test_done_grace_flag_zero_prints_done_at_once(monkeypatch, capsys, tmp_path)
     sleeps = []
     monkeypatch.setattr(watch, "_sleep", lambda s: sleeps.append(s))
     code = main(["watch", str(run_dir), "--interval", "1", "--done-grace", "0"])
-    assert capsys.readouterr().out.startswith("DONE   1 agents, 1 attempts, CLEAN.")
+    out_lines = capsys.readouterr().out.splitlines()
+    # N8b K5.1, K5.2: START and the OK for the one result come before the DONE, all on the
+    # first poll (no sleep at all)
+    assert [line.split()[0] for line in out_lines] == ["START", "OK", "DONE"]
+    assert out_lines[-1].startswith("DONE   1 agents, 1 attempts, CLEAN.")
     assert sleeps == []
     assert code == 0
 
@@ -1227,7 +1343,9 @@ def test_kill_forced_after_12_polls_when_transcript_never_appears(monkeypatch, c
     kill_lines = [line for line in lines if line.startswith("KILL")]
 
     assert len(kill_lines) == 1, lines
-    assert kill_lines[0] == "KILL   agent-1 attempt 1 (details unavailable); restarted as attempt 2."
+    assert kill_lines[0] == (
+        f"KILL   {_agent_form(agent1)} attempt 1 (details unavailable); restarted as attempt 2."
+    )
     assert code == 4
 
 

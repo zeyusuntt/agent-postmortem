@@ -1,9 +1,11 @@
 """Detects a StructuredOutput call whose payload failed schema validation.
 
-DESIGN.md 4.3: major severity, fires when a StructuredOutput tool_result
-contains the schema-mismatch or unparsable-JSON marker
-(STRUCTURED_OUTPUT_MISMATCH in markers.py: two alternative observed forms,
-either is enough). metrics: count. A 'bytes' metric measuring the recovered
+DESIGN.md 4.3, 4.13.4: severity comes from the `recovered` input (major unless
+the attempt or a later attempt completed with a result); fires on every
+anchored, not-in-payload 'structured_output_mismatch' MarkerHit (docs/DESIGN.md
+4.13.2: the
+registry's own shape restricts this id to a tool_result paired to
+StructuredOutput). metrics: count. A 'bytes' metric measuring the recovered
 payload is not included: reader.py truncates every event's text to a
 400-char excerpt before any detector sees it, so there is no way to recover
 the original payload size here, only the length of the (already bounded)
@@ -14,13 +16,23 @@ though a StructuredOutput call is never itself read-only in practice.
 
 from __future__ import annotations
 
-from ..markers import STRUCTURED_OUTPUT_MISMATCH
+from .. import severity as severity_rules
 from ..models import Event, Finding, Run
-from .base import KINDS_BOTH, Detector, evidence_line, make_finding_id, tooling_attempts
+from .base import (
+    KINDS_BOTH,
+    Detector,
+    anchored_marker_hits,
+    event_for_marker_hit,
+    evidence_line,
+    make_finding_id,
+    tooling_attempts,
+)
 
 ID = "structured_output_failure"
 SEVERITY = "major"
 RULE_ID = "R-SCALAR-SCHEMA"
+_REGISTRY_MARKER = "structured_output_mismatch"
+
 
 class StructuredOutputFailure:
     id = ID
@@ -30,19 +42,24 @@ class StructuredOutputFailure:
     def run(self, run: Run) -> list[Finding]:
         hits: list[Event] = []
         agent_id: str | None = None
+        levels: list[str] = []
         for attempt in tooling_attempts(run):
-            for event in attempt.events:
-                if event.kind not in ("tool_result", "attachment"):
-                    continue
-                if event.read_only_output:
-                    continue
-                if event.tool_name != "StructuredOutput":
-                    continue
-                if not any(marker in event.markers for marker in STRUCTURED_OUTPUT_MISMATCH):
+            attempt_hits = 0
+            for hit in anchored_marker_hits(attempt, _REGISTRY_MARKER):
+                event = event_for_marker_hit(attempt, hit)
+                if event is None or event.read_only_output:
                     continue
                 hits.append(event)
+                attempt_hits += 1
                 if agent_id is None:
                     agent_id = attempt.agent_id
+            if attempt_hits:
+                # Per attempt: did a later attempt, or the attempt itself, complete
+                # with a result (4.13.4)? The finding takes the highest of them.
+                levels.append(severity_rules.resolve(
+                    run, ID,
+                    recovered=severity_rules.recovered(run, attempt, include_self=True),
+                ))
         if not hits:
             return []
 
@@ -55,7 +72,7 @@ class StructuredOutputFailure:
         return [
             Finding(
                 detector=ID,
-                severity=SEVERITY,
+                severity=severity_rules.worst(levels),
                 title=title,
                 run_id=run.run_id,
                 agent_id=agent_id,

@@ -4,25 +4,32 @@ section 4.2). The cause is read from exactly one place: the attempt's own
 last transcript entry, never a wider window and never a user-authored
 prompt -- a fixture whose prompt merely mentions "API Error" must still come
 back unattributed (tests/fixtures/runs/attempt_failed_causes's af-decoy
-key, docs/DESIGN.md 4.3's disposition N6).
+key, docs/DESIGN.md 4.3's disposition N6). docs/DESIGN.md 4.13.2 (v0.3 N1):
+the four runtime-cause markers and the kill sentinel are read as anchored,
+not-in-payload MarkerHits on the attempt's own last event, never
+Event.text.startswith directly -- the registry's own permitted shapes
+already restrict these ids to the attempt's final transcript entry (the
+four causes) or a user entry (the sentinel), so an anchored hit there is, by
+construction, on the last event whenever the last event itself carries one.
 """
 
 from __future__ import annotations
 
 import re
 
-from ..markers import (
-    API_ERROR,
-    KILL_SENTINEL_PREFIX,
-    MACHINE_SLEEP,
-    USAGE_LIMIT_SESSION,
-    USAGE_LIMIT_WEEKLY,
-)
+from .. import severity as severity_rules
+from ..markers import USAGE_LIMIT_SESSION, USAGE_LIMIT_WEEKLY
 from ..models import Attempt, Event, Finding, Run
-from .base import KINDS_WORKFLOW_ONLY, Detector, evidence_line, make_finding_id
+from .base import (
+    KINDS_WORKFLOW_ONLY,
+    Detector,
+    anchored_marker_hits,
+    evidence_line,
+    make_finding_id,
+)
 
 ID = "attempt_failed"
-SEVERITY = "major"  # nominal; the real severity depends on whether a later attempt completed
+SEVERITY = "major"  # the highest row; the real severity comes from the `recovered` input
 RULE_ID_USAGE_LIMIT = "R-USAGE-LIMIT"
 
 _RESET_TIME_LIMIT = 40
@@ -37,46 +44,64 @@ _RESET_TIME_DISALLOWED_RE = re.compile(r"[^0-9A-Za-z:., /_()-]")
 def _clean_reset_time(remainder: str) -> str:
     return _RESET_TIME_DISALLOWED_RE.sub("", remainder).strip()[:_RESET_TIME_LIMIT]
 
-# (marker fragment, cause name, title phrase, retry_now) -- one row per
+# (canonical marker id, title phrase, retry_now) -- one row per
 # runtime-produced marker a `failed` attempt's last transcript entry can
-# carry (docs/DESIGN.md 4.3). Order does not matter: the four fragments are
-# mutually exclusive substrings.
-_CAUSE_TABLE: tuple[tuple[str, str, str, str], ...] = (
-    (USAGE_LIMIT_SESSION[0], "usage_limit_session", "session usage limit reached", "no"),
-    (USAGE_LIMIT_WEEKLY[0], "usage_limit_weekly", "weekly usage limit reached", "no"),
-    (MACHINE_SLEEP[0], "machine_sleep", "the machine went to sleep", "yes"),
-    (API_ERROR[0], "api_error", "a server error occurred", "yes"),
+# carry (docs/DESIGN.md 4.3, 4.13.2). Order does not matter: the four ids
+# are mutually exclusive by construction (each anchors on a distinct,
+# non-overlapping prefix of the same final entry).
+_CAUSE_TABLE: tuple[tuple[str, str, str], ...] = (
+    ("usage_limit_session", "session usage limit reached", "no"),
+    ("usage_limit_weekly", "weekly usage limit reached", "no"),
+    ("machine_sleep", "the machine went to sleep", "yes"),
+    ("api_error", "a server error occurred", "yes"),
 )
 
+# The two usage-limit markers alone carry a reset time after the fixed
+# prefix; machine_sleep and api_error do not.
+_RESET_TIME_FRAGMENTS = {
+    "usage_limit_session": USAGE_LIMIT_SESSION[0],
+    "usage_limit_weekly": USAGE_LIMIT_WEEKLY[0],
+}
 
-def _cause_from_last_event(event: Event) -> tuple[str, str, str | None] | None:
-    """(cause, title phrase, reset_time) from the caller's own last transcript
-    entry, checked only there, never anywhere else (docs/DESIGN.md 4.3). The
-    marker fragment must START the event's own text -- membership anywhere in
-    it is not enough: a last assistant entry that merely quotes a marker
-    inside ordinary prose ("I saw API Error: Server error mid-response in a
-    log") must come back unattributed, never misattributed to that marker's
-    cause. The four fragments are short, well under the 400-char excerpt
-    limit, so str.startswith on event.text (the excerpt) is exactly as
-    reliable as checking the full untruncated text would be. Returns None
-    when none of the four markers start the text."""
-    for fragment, cause, phrase, _retry in _CAUSE_TABLE:
-        if not event.text.startswith(fragment):
+
+def _anchored_on_event(attempt: Attempt, marker: str, event: Event) -> bool:
+    """Whether attempt carries an anchored, not-in-payload MarkerHit for
+    marker whose event_line is event's own line (docs/DESIGN.md 4.13.2)."""
+    return any(hit.event_line == event.line_no for hit in anchored_marker_hits(attempt, marker))
+
+
+def _cause_from_last_event(attempt: Attempt, event: Event) -> tuple[str, str, str | None] | None:
+    """(cause, title phrase, reset_time) from the caller's own last
+    transcript entry, checked only there, never anywhere else (docs/
+    DESIGN.md 4.3): the registry's final_assistant_entry shape already
+    restricts usage_limit_session/weekly, machine_sleep, and api_error to
+    exactly this entry, so an anchored hit for one of them is never
+    misattributed to a marker merely quoted inside ordinary prose elsewhere.
+    Returns None when none of the four ids anchor there."""
+    for marker, phrase, _retry in _CAUSE_TABLE:
+        if not _anchored_on_event(attempt, marker, event):
             continue
         reset_time = None
-        if cause in ("usage_limit_session", "usage_limit_weekly"):
-            remainder = event.text[len(fragment):]
+        fragment = _RESET_TIME_FRAGMENTS.get(marker)
+        # docs/DESIGN.md 4.13.2: the anchored check this loop just passed is
+        # computed on the flattened text after leading whitespace is
+        # stripped; the reset-time extraction must read the same stripped
+        # text, not the raw excerpt, so the two can never disagree about
+        # where the fragment starts.
+        stripped_text = event.text.lstrip(" \t\r\n")
+        if fragment is not None and stripped_text.startswith(fragment):
+            remainder = stripped_text[len(fragment):]
             reset_time = _clean_reset_time(remainder) or None
             if reset_time:
                 phrase = f"{phrase}, resets {reset_time}"
-        return cause, phrase, reset_time
+        return marker, phrase, reset_time
     return None
 
 
 def _retry_now_for(cause: str) -> str:
     """'no' for both usage limits, 'yes' for machine_sleep and api_error,
     'unknown' for interrupted and unattributed (docs/DESIGN.md 4.3)."""
-    for _fragment, table_cause, _phrase, retry_now in _CAUSE_TABLE:
+    for table_cause, _phrase, retry_now in _CAUSE_TABLE:
         if table_cause == cause:
             return retry_now
     return "unknown"
@@ -90,25 +115,25 @@ _TAIL_RETRIED_COMPLETED = "a later attempt completed"
 
 
 def _retry_outcome(run: Run, attempt: Attempt) -> tuple[str, str]:
-    """(tail phrase, severity) for attempt's title (docs/DESIGN.md 4.3),
-    distinguishing three cases instead of two: no later attempt for the key
-    at all ("the key was not retried", major); a later attempt exists but
-    none of them completed ("retried, no later attempt completed", major --
-    a "failed, started, failed" or "failed, started" (still open) sequence
-    both land here, since both really were retried); a later attempt
-    completed ("a later attempt completed", minor). "Later" means a higher
-    ordinal of the same key, exactly as before."""
-    if attempt.key is None:
-        return _TAIL_NOT_RETRIED, "major"
-    later = [
-        sibling for sibling in run.attempts
-        if sibling.key == attempt.key and sibling.ordinal > attempt.ordinal
-    ]
-    if not later:
-        return _TAIL_NOT_RETRIED, "major"
-    if any(sibling.outcome == "completed" for sibling in later):
-        return _TAIL_RETRIED_COMPLETED, "minor"
-    return _TAIL_RETRIED_INCOMPLETE, "major"
+    """(tail phrase, severity) for attempt's title (docs/DESIGN.md 4.3, 4.13.4).
+    The severity comes from the `recovered` input; the tail reads the same input,
+    so the two cannot disagree: no later attempt for the key at all ("the key was
+    not retried"); a later attempt exists but none was closed with a result
+    ("retried, no later attempt completed" -- a `failed, started, failed` and a
+    `failed, started` (still open) sequence both land here); a later attempt was
+    closed with a result ("a later attempt completed"). "Later" means a higher
+    ordinal of the same key."""
+    recovered = severity_rules.recovered(run, attempt, include_self=False)
+    severity = severity_rules.resolve(run, ID, recovered=recovered)
+    has_later = attempt.key is not None and any(
+        sibling.key == attempt.key and sibling.ordinal > attempt.ordinal
+        for sibling in run.attempts
+    )
+    if not has_later:
+        return _TAIL_NOT_RETRIED, severity
+    if recovered == "yes":
+        return _TAIL_RETRIED_COMPLETED, severity
+    return _TAIL_RETRIED_INCOMPLETE, severity
 
 
 class AttemptFailed:
@@ -129,13 +154,13 @@ class AttemptFailed:
             reset_time: str | None = None
 
             if last_event is not None:
-                if last_event.kind == "user" and last_event.text.startswith(
-                    KILL_SENTINEL_PREFIX
+                if last_event.kind == "user" and _anchored_on_event(
+                    attempt, "kill_sentinel", last_event
                 ):
                     cause = "interrupted"
                     phrase = "interrupted before finishing"
                 elif last_event.kind == "assistant":
-                    matched = _cause_from_last_event(last_event)
+                    matched = _cause_from_last_event(attempt, last_event)
                     if matched is not None:
                         cause, phrase, reset_time = matched
 

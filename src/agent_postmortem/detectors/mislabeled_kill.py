@@ -10,15 +10,9 @@ attempts only and never includes it (docs/DESIGN.md 4.3).
 
 from __future__ import annotations
 
+from .. import severity as severity_rules
 from ..models import Attempt, Event, Finding, Run
-from .base import KINDS_BOTH, Detector, evidence_line, make_finding_id
-
-# docs/DESIGN.md 4.4 clause 4: below this, an unattributed interrupt is
-# merely info (an agent could plausibly have gone quiet on its own for a
-# while); at or above it, silence this long is itself evidence consistent
-# with a runtime kill, so the finding is major even without a parent-side
-# confirmation.
-_MAJOR_SILENCE_THRESHOLD_SECONDS = 300.0
+from .base import KINDS_BOTH, Detector, anchored_marker_hits, evidence_line, make_finding_id
 
 
 def _kill_event(attempt: Attempt) -> Event | None:
@@ -33,19 +27,56 @@ def _kill_event(attempt: Attempt) -> Event | None:
     return attempt.events[last_user_index] if last_user_index is not None else None
 
 
-def _severity_and_title(attempt: Attempt) -> tuple[str, str]:
-    """Severity and title for attempt.interrupt.cause, in the four forms
-    docs/DESIGN.md 4.4 specifies."""
+def _backgrounded_precursor_line(attempt: Attempt) -> int | None:
+    """docs/DESIGN.md 4.4, 4.13.8: the transcript line of an anchored
+    bash_backgrounded tool_result (4.13.2) when it is the attempt's last tool
+    activity: no `tool_use` and no later `tool_result` event follows it in
+    the attempt (parallel calls can return out of order, so a later result of
+    another call also disqualifies it). None otherwise."""
+    last_tool = None
+    for index, event in enumerate(attempt.events):
+        if event.kind in ("tool_use", "tool_result"):
+            last_tool = index
+    if last_tool is None:
+        return None
+    last = attempt.events[last_tool]
+    if last.kind != "tool_result" or last.tool_use_id is None:
+        return None
+    for hit in anchored_marker_hits(attempt, "bash_backgrounded"):
+        if hit.event_line == last.line_no and hit.tool_use_id == last.tool_use_id:
+            return hit.event_line
+    return None
+
+
+def _severity_and_title(run: Run, attempt: Attempt) -> tuple[str, str]:
+    """Severity and title for attempt.interrupt.cause. The severity is the row
+    of docs/DESIGN.md 4.3's table for (cause, silence class, position); the
+    title keeps the four forms 4.4 specifies. "Consistent with a runtime kill"
+    is added to an unattributed interrupt after a long silence (the one 300 s
+    rule)."""
     interrupt = attempt.interrupt
     label = attempt.label
     cause = interrupt.cause
     silence = interrupt.silence_seconds
+    silence_class = severity_rules.silence_class(silence)
+    severity = severity_rules.resolve(
+        run, "mislabeled_kill", cause=cause, silence=silence_class,
+        position=severity_rules.position(run, attempt),
+    )
 
     if cause == "parent_stop":
-        return "info", f"{label} stopped by the parent session"
+        return severity, f"{label} stopped by the parent session"
 
     if cause == "human":
-        return "info", f"{label} interrupted together with the parent session"
+        return severity, f"{label} interrupted together with the parent session"
+
+    # The precursor clause only states what was observed just before the
+    # kill; it never says the backgrounding caused it (4.13.8).
+    precursor_line = _backgrounded_precursor_line(attempt)
+    precursor = (
+        f", after a Bash command was moved to the background (line {precursor_line})"
+        if precursor_line is not None else ""
+    )
 
     if cause == "runtime":
         silence_text = (
@@ -53,17 +84,20 @@ def _severity_and_title(attempt: Attempt) -> tuple[str, str]:
         )
         title = (
             f"{label} attempt {attempt.ordinal} was killed by the runtime after "
-            f"{silence_text}, logged as a user interrupt"
+            f"{silence_text}{precursor}, logged as a user interrupt"
         )
-        return "major", title
+        return severity, title
 
     # unattributed
     if silence is None:
-        return "info", f"{label} interrupted with silence unknown, cause unattributed"
-    base = f"{label} interrupted after {int(round(silence))}s of silence, cause unattributed"
-    if silence >= _MAJOR_SILENCE_THRESHOLD_SECONDS:
-        return "major", f"{base}, consistent with a runtime kill"
-    return "info", base
+        return severity, f"{label} interrupted with silence unknown, cause unattributed"
+    base = (
+        f"{label} interrupted after {int(round(silence))}s of silence{precursor}, "
+        "cause unattributed"
+    )
+    if silence_class == "long":
+        return severity, f"{base}, consistent with a runtime kill"
+    return severity, base
 
 
 def _rule_id(cause: str, severity: str) -> str | None:
@@ -80,7 +114,7 @@ def _rule_id(cause: str, severity: str) -> str | None:
 
 class MislabeledKill:
     id = "mislabeled_kill"
-    severity_default = "major"  # nominal; the real severity varies by cause (_severity_and_title)
+    severity_default = "major"  # the highest row; the real severity comes from the table
     kinds = KINDS_BOTH
 
     def run(self, run: Run) -> list[Finding]:
@@ -94,7 +128,7 @@ class MislabeledKill:
             if kill_event is None:
                 continue
 
-            severity, title = _severity_and_title(attempt)
+            severity, title = _severity_and_title(run, attempt)
             rule_id = _rule_id(interrupt.cause, severity)
 
             evidence = []

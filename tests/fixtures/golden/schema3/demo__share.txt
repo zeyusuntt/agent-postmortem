@@ -1,0 +1,354 @@
+##### case demo
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-d30",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-01-06T19:00:00+00:00",
+    "ended_at": "2026-01-06T19:55:05+00:00",
+    "counts": {
+      "agents": 2,
+      "attempts": 4,
+      "interrupted": 2
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "a:76c7463d911b",
+        "key": "2b720216",
+        "label": "agent-1",
+        "phase": "phase-1",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "killed",
+        "first_ts": "2026-01-06T19:00:00+00:00",
+        "last_ts": "2026-01-06T19:10:00+00:00",
+        "usage": {
+          "input_tokens": 190,
+          "output_tokens": 50,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 6,
+        "interrupt": {
+          "cause": "runtime",
+          "silence_seconds": 416.0
+        },
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 595.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_opaque_command"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "opaque_command",
+              "completion": "success",
+              "path": null,
+              "repo": "path-1",
+              "line": "agent-76c7463d911b.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "a:90cf96e5b798",
+        "key": "2b720216",
+        "label": "agent-1",
+        "phase": "phase-1",
+        "agent_type": "general-purpose",
+        "ordinal": 2,
+        "outcome": "completed",
+        "first_ts": "2026-01-06T19:10:05+00:00",
+        "last_ts": "2026-01-06T19:25:05+00:00",
+        "usage": {
+          "input_tokens": 160,
+          "output_tokens": 45,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "complete",
+          "reasons": [],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "a:46ef967114a1",
+        "key": "544fe3d2",
+        "label": "agent-2",
+        "phase": "phase-1",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "killed",
+        "first_ts": "2026-01-06T19:30:00+00:00",
+        "last_ts": "2026-01-06T19:40:00+00:00",
+        "usage": {
+          "input_tokens": 190,
+          "output_tokens": 50,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 6,
+        "interrupt": {
+          "cause": "runtime",
+          "silence_seconds": 416.0
+        },
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 595.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_opaque_command"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "opaque_command",
+              "completion": "success",
+              "path": null,
+              "repo": "path-1",
+              "line": "agent-46ef967114a1.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "a:a95a34d55066",
+        "key": "544fe3d2",
+        "label": "agent-2",
+        "phase": "phase-1",
+        "agent_type": "general-purpose",
+        "ordinal": 2,
+        "outcome": "completed",
+        "first_ts": "2026-01-06T19:40:05+00:00",
+        "last_ts": "2026-01-06T19:55:05+00:00",
+        "usage": {
+          "input_tokens": 160,
+          "output_tokens": 45,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "complete",
+          "reasons": [],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "completed",
+      "source": "notification",
+      "activity": "stale",
+      "generations": 1
+    }
+  },
+  "findings": [
+    {
+      "detector": "mislabeled_kill",
+      "severity": "minor",
+      "title": "agent-1 attempt 1 was killed by the runtime after 416s of silence, logged as a user interrupt",
+      "run_id": "wf_00000000-d30",
+      "agent_id": "a:76c7463d911b",
+      "evidence": [
+        "agent-76c7463d911b.jsonl:4",
+        "agent-76c7463d911b.jsonl:5 [kill_sentinel]"
+      ],
+      "metrics": {
+        "silence_seconds": 416.0,
+        "cause": "runtime",
+        "events": 6
+      },
+      "rule_id": "R-MONITOR-RETRIES",
+      "rule_ids": [
+        "R-MONITOR-RETRIES"
+      ],
+      "finding_id": "887d9b5cef83",
+      "silenced": false
+    },
+    {
+      "detector": "mislabeled_kill",
+      "severity": "minor",
+      "title": "agent-2 attempt 1 was killed by the runtime after 416s of silence, logged as a user interrupt",
+      "run_id": "wf_00000000-d30",
+      "agent_id": "a:46ef967114a1",
+      "evidence": [
+        "agent-46ef967114a1.jsonl:4",
+        "agent-46ef967114a1.jsonl:5 [kill_sentinel]"
+      ],
+      "metrics": {
+        "silence_seconds": 416.0,
+        "cause": "runtime",
+        "events": 6
+      },
+      "rule_id": "R-MONITOR-RETRIES",
+      "rule_ids": [
+        "R-MONITOR-RETRIES"
+      ],
+      "finding_id": "99700549b851",
+      "silenced": false
+    },
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "agent-1 restarted 1 time, 10m wasted",
+      "run_id": "wf_00000000-d30",
+      "agent_id": "a:90cf96e5b798",
+      "evidence": [
+        "agent-76c7463d911b.jsonl:5 [kill_sentinel]",
+        "agent-90cf96e5b798.jsonl:1"
+      ],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 600.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "cccfa3de6d9a",
+      "silenced": false
+    },
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "agent-2 restarted 1 time, 10m wasted",
+      "run_id": "wf_00000000-d30",
+      "agent_id": "a:a95a34d55066",
+      "evidence": [
+        "agent-46ef967114a1.jsonl:5 [kill_sentinel]",
+        "agent-a95a34d55066.jsonl:1"
+      ],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 600.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "80ed8f3ccbd2",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 55m wall-clock; 20m wasted across 2 retried attempts",
+      "run_id": "wf_00000000-d30",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 3305.0,
+        "attempt_seconds": 3000.0,
+        "wasted_seconds": 1200.0,
+        "wasted_tokens": 480
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "897fdd2005d6",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "share",
+  "rules": [
+    {
+      "rule_id": "R-MONITOR-RETRIES",
+      "count": 2
+    },
+    {
+      "rule_id": "R-RETRY-SAFE",
+      "count": 2
+    }
+  ],
+  "verdict": "DEGRADED",
+  "status": "COMPLETE",
+  "stories": [
+    {
+      "agent": "agent-1",
+      "severity": "major",
+      "text": "Killed 1 time by the runtime (416s of silence).",
+      "finding_ids": [
+        "887d9b5cef83",
+        "cccfa3de6d9a"
+      ]
+    },
+    {
+      "agent": "agent-2",
+      "severity": "major",
+      "text": "Killed 1 time by the runtime (416s of silence).",
+      "finding_ids": [
+        "99700549b851",
+        "80ed8f3ccbd2"
+      ]
+    }
+  ],
+  "next": [
+    {
+      "grade": "decide",
+      "text": "rules that would have prevented this",
+      "command": "agent-postmortem rules propose"
+    }
+  ]
+}
+<<<STDERR>>>
+<<<END>>>

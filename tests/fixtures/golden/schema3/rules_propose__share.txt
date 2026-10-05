@@ -1,0 +1,80 @@
+##### case fleet
+exit=0
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "proposals": [
+    {
+      "rule_id": "R-RETRY-SAFE",
+      "target_kind": "workflow prompt",
+      "findings": 9,
+      "runs": 6,
+      "first": "2026-02-01",
+      "last": "2026-09-27",
+      "adopted": null,
+      "since": null,
+      "text": "Every implementation prompt begins: You may be a retry after a killed attempt. First run git status and git diff --stat; if uncommitted work exists, verify it and commit it before continuing. Never git checkout, restore, or stash a file holding uncommitted work."
+    },
+    {
+      "rule_id": "R-ASSERT-ARTIFACT",
+      "target_kind": "workflow prompt",
+      "findings": 6,
+      "runs": 4,
+      "first": "2026-01-09",
+      "last": "2026-09-17",
+      "adopted": null,
+      "since": null,
+      "text": "When an agent was told to produce a file, assert the file exists and is non-trivial before any later stage consumes it. A truthy return means the agent replied, not that the work landed. A missing artifact fails loudly."
+    },
+    {
+      "rule_id": "R-MONITOR-RETRIES",
+      "target_kind": "workflow prompt",
+      "findings": 4,
+      "runs": 4,
+      "first": "2026-02-01",
+      "last": "2026-09-25",
+      "adopted": null,
+      "since": null,
+      "text": "After launching a workflow, watch for a second agent meta file appearing for the same logical agent; at the end compare journal starts to agent count and report retries and the wall-clock they burned."
+    },
+    {
+      "rule_id": "R-CODEX-CONTRACT",
+      "target_kind": "workflow prompt",
+      "findings": 4,
+      "runs": 3,
+      "first": "2026-01-09",
+      "last": "2026-09-17",
+      "adopted": null,
+      "since": null,
+      "text": "A Codex reviewer inside a workflow either writes to a path inside the project cwd with no read-only wording in its prompt, or stays read-only and returns findings as text for a writable stage to persist. Keep each Codex task under eight minutes."
+    },
+    {
+      "rule_id": "R-NO-LONG-BASH",
+      "target_kind": "agent prompt",
+      "findings": 4,
+      "runs": 3,
+      "first": "2026-01-07",
+      "last": "2026-09-01",
+      "adopted": null,
+      "since": null,
+      "text": "Inside a workflow agent never run a shell command that can outlive its timeout: scope test runs to touched files, pass an explicit timeout the run will meet, no sleep or poll loops. In a subagent, run long jobs from the main session; never background and wait. macOS has no timeout(1); use a python3 -c 'import subprocess; subprocess.run([...], timeout=N)' or perl -e 'alarm N; exec @ARGV' form instead."
+    },
+    {
+      "rule_id": "R-GIT-CWD",
+      "target_kind": "project instructions",
+      "findings": 0,
+      "runs": 0,
+      "first": null,
+      "last": null,
+      "adopted": "2026-09-10",
+      "since": {
+        "findings": 0,
+        "runs": 0
+      },
+      "text": "Give every agent the absolute repository path and have it cd there first; never rely on the inherited working directory."
+    }
+  ]
+}
+<<<STDERR>>>
+<<<END>>>

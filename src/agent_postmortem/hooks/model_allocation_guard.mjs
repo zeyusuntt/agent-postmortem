@@ -153,6 +153,21 @@ function argSetsModelOrAgentType(cleanedArg, rawArg) {
   return false;
 }
 
+// The reason this hook prints is shown at the default (share) level, so it never carries a path
+// or a raw error message: Node's messages quote the path and a JSON parse error quotes the
+// payload. The only thing taken from a failure is its class, and only from this closed list.
+const ERROR_CLASSES = new Set([
+  "ENOENT", "EACCES", "EPERM", "EISDIR", "ENOTDIR", "ELOOP", "EMFILE", "ENFILE",
+  "ENAMETOOLONG", "EIO", "EBUSY", "SyntaxError", "RangeError", "TypeError", "ReferenceError",
+]);
+
+function errorClass(err) {
+  const code = err && typeof err.code === "string" ? err.code : "";
+  if (ERROR_CLASSES.has(code)) return code;
+  const name = err && typeof err.name === "string" ? err.name : "";
+  return ERROR_CLASSES.has(name) ? name : "error";
+}
+
 function denyUninspectable(reason) {
   process.stdout.write(
     JSON.stringify({
@@ -173,7 +188,7 @@ let input;
 try {
   input = JSON.parse((await readStdin()) || "{}");
 } catch (err) {
-  denyUninspectable(`the hook payload is not valid JSON: ${err.message}`);
+  denyUninspectable(`the hook payload is not valid JSON (${errorClass(err)})`);
 }
 
 if (input.tool_name && input.tool_name !== "Workflow") process.exit(0); // confirmed non-Workflow
@@ -184,7 +199,7 @@ if (!src && typeof ti.scriptPath === "string" && ti.scriptPath.length) {
   try {
     src = readFileSync(resolve(input.cwd || process.cwd(), ti.scriptPath), "utf8");
   } catch (err) {
-    denyUninspectable(`could not read scriptPath "${ti.scriptPath}": ${err.message}`);
+    denyUninspectable(`could not read scriptPath: ${errorClass(err)}`);
   }
 }
 if (!src) process.exit(0); // named workflow or nothing to check
@@ -229,5 +244,5 @@ try {
   );
   process.exit(0);
 } catch (err) {
-  denyUninspectable(`internal error while scanning the script: ${err.message}`);
+  denyUninspectable(`internal error while scanning the script (${errorClass(err)})`);
 }

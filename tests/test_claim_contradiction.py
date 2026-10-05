@@ -23,6 +23,7 @@ import pytest
 from agent_postmortem import reader
 from agent_postmortem.cli import main
 from agent_postmortem.detectors import claim_contradiction
+from tests.n3b_helpers import alias_of
 
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs"
 CLAIM_CONTRADICTION = FIXTURES_ROOT / "claim_contradiction"
@@ -186,7 +187,12 @@ def test_report_path_missing_clause_alone():
     run = _load()
     finding = _findings_by_agent(run)[AGENT["report_missing"]]
     assert finding.metrics["clauses"] == ["report_path_missing"]
-    assert "report_path that does not exist" in finding.title
+    # N5b (4.13.4, D2): a report_path clause alone is info, with the D2 title.
+    assert finding.severity == "info"
+    assert finding.title == (
+        "/tmp/agent-postmortem-fixture/claim/missing-report.md is absent now; "  # F fix 7 (W7-2)
+        "the tool cannot tell whether it existed when the run ended"
+    )
     assert finding.evidence == [
         "journal.jsonl:13: a report_path that does not exist"
     ]
@@ -253,8 +259,14 @@ def test_claim_contradiction_is_registered_and_workflow_only():
 _ATTEMPT_EXPORT_KEYS = {
     "agent_id", "key", "label", "phase", "agent_type", "ordinal", "outcome",
     "first_ts", "last_ts", "usage", "event_count", "interrupt", "reported",
-    "facts",
+    "facts", "ledger",
 }
+
+
+def _shown_agent_id(real: str) -> str:
+    """N5a-1: the default level carries the stable alias in its rendered form,
+    never the raw agent id."""
+    return f"a:{alias_of('agent', real)}"
 
 
 def test_json_output_passes_the_export_allowlist_and_redacts_report_path(capsys):
@@ -273,7 +285,9 @@ def test_json_output_passes_the_export_allowlist_and_redacts_report_path(capsys)
     # the already-redacted value -- look the attempt up by its (never
     # redacted) agent_id instead. path-2 because impl:report-missing's own
     # report_path registers first, in journal order, as path-1.
-    clean_dict = next(a for a in attempts if a["agent_id"] == AGENT["clean_dict"])
+    clean_dict = next(
+        a for a in attempts if a["agent_id"] == _shown_agent_id(AGENT["clean_dict"])
+    )
     assert clean_dict["reported"]["claims"]["report_path"] == "path-2"
     assert any(f["detector"] == "claim_contradiction" for f in payload["findings"])
 
@@ -289,12 +303,11 @@ def test_json_output_gives_the_same_path_pseudonym_in_the_attempt_and_the_findin
     assert code == 0, captured.err
     payload = json.loads(captured.out)
 
-    attempt = next(
-        a for a in payload["run"]["attempts"] if a["agent_id"] == AGENT["report_missing"]
-    )
+    shown_id = _shown_agent_id(AGENT["report_missing"])
+    attempt = next(a for a in payload["run"]["attempts"] if a["agent_id"] == shown_id)
     finding = next(
         f for f in payload["findings"]
-        if f["detector"] == "claim_contradiction" and f["agent_id"] == AGENT["report_missing"]
+        if f["detector"] == "claim_contradiction" and f["agent_id"] == shown_id
     )
     attempt_path = attempt["reported"]["claims"]["report_path"]
     finding_path = finding["metrics"]["claims"]["report_path"]

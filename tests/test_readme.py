@@ -10,6 +10,7 @@ never fall out of sync; and no user-facing prose file uses an em-dash
 
 from __future__ import annotations
 
+import argparse
 import re
 from pathlib import Path
 
@@ -36,18 +37,65 @@ EM_DASH = "—"
 COMMAND_CELL_RE = re.compile(r"`agent-postmortem (\w+)")
 
 
+_LEVEL_FLAGS = ("--local", "--raw", "--no-redact")
+
+
+def _nested_parsers(parser) -> list:
+    """The subparsers one level below `parser` (rules propose, rescue plan,
+    ...), or [] for a command with none."""
+    if parser._subparsers is None:
+        return []
+    action = next(
+        (action for action in parser._subparsers._group_actions if hasattr(action, "choices")),
+        None,
+    )
+    return list(action.choices.values()) if action is not None else []
+
+
+def _runnable_alone(parser) -> bool:
+    """A command whose nested subcommand is optional (`rules`) runs on its own,
+    so its own parser's flags matter; a group that requires one (`rescue`,
+    `hook`) is never run without a leaf."""
+    action = next(
+        (a for a in parser._actions if isinstance(a, argparse._SubParsersAction)), None
+    )
+    return action is None or not action.required
+
+
+def _takes(parser, flag: str) -> bool:
+    """A command takes a flag when every way a reader can run it has it: the
+    parent parser (when the parent runs on its own, as `rules` does) and every
+    nested leaf (rules propose, rescue plan, ...). A group that cannot run
+    alone is judged by its leaves only. Never short-circuits on the parent
+    (N3c review finding 6)."""
+    nested = _nested_parsers(parser)
+    if not nested:
+        return flag in parser._option_string_actions
+    if _runnable_alone(parser) and flag not in parser._option_string_actions:
+        return False
+    return all(flag in sub._option_string_actions for sub in nested)
+
+
 def _flag_support() -> dict[str, tuple[bool, bool]]:
-    """{command: (has --json, has --no-redact)}, read straight off the live
-    argparse parser, in the order its subparsers were added."""
+    """{command: (takes --json, takes the level flags)}, read straight off
+    the live argparse parser, in the order its subparsers were added. The
+    level flags --local, --raw, and --no-redact (N3b, docs/DESIGN.md 4.13.5)
+    always come together; a command that took some but not all of them
+    fails here rather than producing a sentence."""
     parser = _build_parser()
-    subparsers_action = next(
+    support = {}
+    for name, subparser in zip(_subcommand_names(parser), _nested_parsers(parser)):
+        levels = [_takes(subparser, flag) for flag in _LEVEL_FLAGS]
+        assert all(levels) or not any(levels), f"{name} takes only some level flags: {levels}"
+        support[name] = (_takes(subparser, "--json"), all(levels))
+    return support
+
+
+def _subcommand_names(parser) -> list[str]:
+    action = next(
         action for action in parser._subparsers._group_actions if hasattr(action, "choices")
     )
-    support = {}
-    for name, subparser in subparsers_action.choices.items():
-        options = set(subparser._option_string_actions)
-        support[name] = ("--json" in options, "--no-redact" in options)
-    return support
+    return list(action.choices)
 
 
 def _join_command_names(names: list[str]) -> str:
@@ -73,9 +121,9 @@ def _expected_flag_sentence() -> str:
             seen_signatures.append(sig)
 
     clause_templates = {
-        (True, True): "{names} take `--json` and `--no-redact`",
+        (True, True): "{names} take `--json` and the level flags",
         (True, False): "{names} take{s} `--json` only",
-        (False, True): "{names} take{s} `--no-redact` only",
+        (False, True): "{names} take{s} the level flags only",
         (False, False): "{names} take{s} neither",
     }
     clauses = []

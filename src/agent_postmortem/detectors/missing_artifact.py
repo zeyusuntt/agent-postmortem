@@ -1,28 +1,29 @@
 """Detects an attempt told to write a file that never showed up.
 
-DESIGN.md 4.3: critical severity, fires when an attempt's first user event
-names an absolute path it must write (a write/save/append/create/persist
-verb followed within 80 chars by a path ending .md/.json/.txt/.jsonl) and
-the path does not exist at scan time. This is the only detector that touches
-anything outside the run directory: an os.path.exists() on the named path
-and nothing else. A path outside the user's home directory or /tmp cannot be
-trusted with a filesystem check, so it is still reported, but as
-'unverified' at severity info instead of critical. rule_id: R-ASSERT-ARTIFACT.
+DESIGN.md 4.3, 4.13.4: info severity (D2), fires when an attempt's first user
+event names an absolute path it must write (a write/save/append/create/persist
+verb followed within 80 chars by a path ending .md/.json/.txt/.jsonl) and the
+path is not present at scan time. This is the only detector that touches
+anything outside the run directory, with claim_contradiction: one
+severity.absence() (an os.stat) on the named path and nothing else. The
+check is `observed_later`: the file may have existed when the run ended and
+been moved or removed since, and the finding's title says so. The `verified`
+metric records whether the path is under the home directory or /tmp.
+rule_id: R-ASSERT-ARTIFACT.
 """
 
 from __future__ import annotations
 
-import os
 import re
 import tempfile
 from pathlib import Path
 
-from ..models import Attempt, Event, Finding, Run
+from .. import severity as severity_rules
+from ..models import Attempt, Event, Finding, Run, TitleParts
 from .base import KINDS_BOTH, Detector, evidence_line, make_finding_id
 
 ID = "missing_artifact"
-SEVERITY_MISSING = "critical"
-SEVERITY_UNVERIFIED = "info"
+SEVERITY = "info"  # the highest (only) row of docs/DESIGN.md 4.3
 RULE_ID = "R-ASSERT-ARTIFACT"
 _MAX_GAP = 80
 
@@ -91,9 +92,31 @@ def _is_under_allowed_root(path: Path) -> bool:
     return False
 
 
+_ABSENT_TEMPLATE = (
+    "{path} is absent now; the tool cannot tell whether it existed when the run ended"
+)
+_UNCHECKED_TEMPLATE = (
+    "{path} could not be checked now; the tool cannot tell whether it existed "
+    "when the run ended"
+)
+
+
+def _title_parts(path: str, state: str) -> TitleParts:
+    """D2 (docs/DESIGN.md 4.13.4): a check made now says nothing about the end of the run. The
+    title is a fixed template and the path (F fix 7, W7-2): a renderer formats it once and never
+    scans the result."""
+    template = _ABSENT_TEMPLATE if state == "absent_now" else _UNCHECKED_TEMPLATE
+    return TitleParts(template, path)
+
+
+def _title(path: str, state: str) -> str:
+    """The title with the real path (what `raw` prints)."""
+    return _title_parts(path, state).raw()
+
+
 class MissingArtifact:
     id = ID
-    severity_default = SEVERITY_MISSING
+    severity_default = SEVERITY
     kinds = KINDS_BOTH
 
     def run(self, run: Run) -> list[Finding]:
@@ -107,17 +130,21 @@ class MissingArtifact:
                 if _NEGATION_RE.search(preceding):
                     continue
                 path_str = match.group(1)
-                if os.path.exists(path_str):
+                state = severity_rules.absence(path_str)
+                if state == "present_now":
                     continue
                 verified = _is_under_allowed_root(Path(path_str))
-                severity = SEVERITY_MISSING if verified else SEVERITY_UNVERIFIED
-                status = "missing" if verified else "unverified"
+                severity = severity_rules.resolve(
+                    run, ID, obligation="prompt_path", absence=state,
+                )
                 evidence = [evidence_line(run, event)]
+                parts = _title_parts(path_str, state)
                 findings.append(
                     Finding(
                         detector=ID,
                         severity=severity,
-                        title=f"required artifact {status}: {path_str}",
+                        title=parts.raw(),
+                        title_parts=parts,
                         run_id=run.run_id,
                         agent_id=attempt.agent_id,
                         evidence=evidence,

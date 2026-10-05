@@ -50,7 +50,7 @@ from dataclasses import dataclass, replace
 from importlib import metadata
 from pathlib import Path
 
-from . import config, detectors, reader, report, state
+from . import config, detectors, disclosure, reader, report, state
 from .markers import KILL_SENTINEL_PREFIX
 from .redact import Redactor
 
@@ -277,18 +277,27 @@ def _iter_json_lines(path: Path):
 
 
 def _workflow_finished(journal_path: Path) -> bool:
-    """docs/DESIGN.md 7.2 and 4.1 (unit M1a): delegates to
-    reader.workflow_journal_finished, the per-key state machine's own
-    'finished' rule, so this hook and reader.py's own Run.finished can
-    never disagree about what 'finished' means (v0.1 reimplemented an
-    older, `failed`-blind version of this rule here on its own). False
-    (not merely unknown) when the journal is missing or empty -- a
-    workflow directory can exist before its journal.jsonl does."""
-    try:
-        journal = list(_iter_json_lines(journal_path))
-    except OSError:
-        return False
-    return reader.workflow_journal_finished(journal)
+    """docs/DESIGN.md 7.2 and section 3 (N2 root-cause fix): a workflow unit
+    is finished iff Run.finished would be true for it -- reader.
+    workflow_lifecycle computes the exact same Lifecycle _load_workflow
+    derives Run.lifecycle from, from the run directory alone (journal,
+    parent index, directory mtimes), parsing no agent transcript; reader.
+    lifecycle_finished then applies the one 'finished' rule to it. This
+    hook and reader.py's own Run.finished can therefore never again
+    disagree about what 'finished' means the way they used to: the parent
+    can report a terminal (failed/stopped) before the journal's own open
+    key ever closes, or the journal can be fully resolved while an
+    ambiguous launch leaves the lifecycle unknown, and a journal-only rule
+    (v0.1's own, and the N2 checkpoint's unintentional revival of it here)
+    gets either case backwards. `journal_path` is still a *journal* path
+    (every call site and the existing unit tests pass one) -- its parent
+    directory is the workflow run directory workflow_lifecycle needs, and
+    is derived here rather than changing every caller's own signature.
+    workflow_lifecycle already tolerates a run directory whose journal.jsonl
+    is missing or empty (a workflow directory can exist before its journal
+    does) the same tolerant way _load_workflow's own journal parsing does,
+    so this never raises for that case either."""
+    return reader.lifecycle_finished(reader.workflow_lifecycle(journal_path.parent))
 
 
 def _entry_user_text(entry: dict) -> str:
@@ -379,19 +388,21 @@ def _subagent_finished_evidence(path: Path, agent_id: str, payload: dict, parent
     return task_status == "finished"
 
 
-# --- analysis: turning a finished unit into (run_id, findings, status, headline) --
+# --- analysis: turning a finished unit into (run_id, findings, status, headline,
+# failed), where `failed` is the run's own lifecycle terminal being `failed`
+# (docs/DESIGN.md 4.6, 4.13.4: the verdict word's FAILED condition) ------------
 
 
-def _analyze_finished_workflow(path: Path) -> tuple[str, list, str, str]:
+def _analyze_finished_workflow(path: Path) -> tuple[str, list, str, str, bool]:
     run = reader.load_run(path)
     findings = detectors.run_detectors(run)
     headline = report.summary_line(run).split(";", 1)[0].strip()
-    return run.run_id, findings, run.status, headline
+    return run.run_id, findings, run.status, headline, report.lifecycle_failed(run)
 
 
 def _analyze_finished_subagent(
     path: Path, main_transcript: Path, main_cache: dict
-) -> tuple[str, list, str, str]:
+) -> tuple[str, list, str, str, bool]:
     """docs/DESIGN.md 7.2's D6: analyzed in isolation via
     reader.load_session_view(main_transcript, [path], ...) -- main plus only
     this one subagent, never the whole session's subagents/ directory, so an
@@ -420,7 +431,8 @@ def _analyze_finished_subagent(
         ended_at=attempt.last_ts,
     )
     headline = report.summary_line(synthetic).split(";", 1)[0].strip()
-    return view.run_id, findings, view.status, headline
+    # A session has no lifecycle, so a subagent unit is never failed by one.
+    return view.run_id, findings, view.status, headline, report.lifecycle_failed(view)
 
 
 # --- per-unit state transition ---------------------------------------------
@@ -452,6 +464,9 @@ class _NotifyInfo:
     is_incomplete: bool
     finding_count: int
     quiet_unfinished: bool = False
+    # N3b P17: the canonical agent ids behind the findings that triggered
+    # this notification, in finding order; rendered as stable aliases.
+    agent_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -464,12 +479,13 @@ class _UnitOutcome:
 def _fallback_run_id(kind: str, path: Path) -> str:
     """An identifier to notify with when a unit can never actually be
     analyzed (docs/DESIGN.md 7.2's D6: the forced-INCOMPLETE analysis
-    attempt itself raised). A workflow directory's own name is already
-    shaped like a run id; a subagent has no such name of its own, so one is
+    attempt itself raised). A workflow directory's name is used only when it
+    passes the reader's validator (N3b C2), else the replacement `run` uses
+    for it; a subagent has no such name of its own, so one is
     derived the same way a session's public id is (a short hash), prefixed
     the same way (docs/DESIGN.md 4.2's 's_')."""
     if kind == "workflow":
-        return path.name
+        return reader.valid_workflow_run_id(path.name)
     return "s_" + hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:10]
 
 
@@ -488,6 +504,23 @@ def _entry_skeleton(
     if transcript_dir:
         entry["transcript_dir"] = transcript_dir
     return entry
+
+
+def _notified_agent_ids(
+    shown: list, reported_prev: list[str], threshold_rank: int,
+) -> tuple[str, ...]:
+    """The canonical agent ids of the findings a notification is about, in
+    finding order, each once (a non-canonical or missing id is never named)."""
+    ids: list[str] = []
+    for finding in shown:
+        if _SEVERITY_RANK.get(finding.severity, 0) < threshold_rank:
+            continue
+        if finding.finding_id in reported_prev:
+            continue
+        agent_id = finding.agent_id
+        if disclosure.is_canonical_id("agent", agent_id) and agent_id not in ids:
+            ids.append(agent_id)
+    return tuple(ids)
 
 
 def _check_one_unit(
@@ -551,9 +584,9 @@ def _check_one_unit(
 
     try:
         if kind == "workflow":
-            run_id, findings, status, headline = _analyze_finished_workflow(path)
+            run_id, findings, status, headline, failed = _analyze_finished_workflow(path)
         else:
-            run_id, findings, status, headline = _analyze_finished_subagent(
+            run_id, findings, status, headline, failed = _analyze_finished_subagent(
                 path, main_transcript, main_cache
             )
     except Exception:
@@ -562,7 +595,7 @@ def _check_one_unit(
             # one -- it can quote a path or a session id straight out of
             # the transcript that failed to parse.
             redactor = Redactor()
-            print(redactor(traceback.format_exc()), file=sys.stderr)
+            print(redactor.scrub_leftover_paths(traceback.format_exc()), file=sys.stderr)
         if state_word == "unknown":
             # docs/DESIGN.md 7.2's D6: this was already the forced,
             # must-produce-INCOMPLETE analysis attempt (stable_checks had
@@ -623,7 +656,7 @@ def _check_one_unit(
     # the full finding set, an informational number cached for
     # session-start's digest, not a notify decision.
     shown, _silenced = config.partition_silenced(findings, cfg)
-    verdict = report.verdict_word(shown, effective_status)
+    verdict = report.verdict_word(shown, effective_status, terminal_failed=failed)
     wasted_seconds = sum(
         f.metrics.get("wasted_seconds", 0.0) for f in findings if f.detector == "wasted_time"
     )
@@ -659,6 +692,7 @@ def _check_one_unit(
             is_incomplete=reader_incomplete,
             quiet_unfinished=state_word == "unknown" and not reader_incomplete,
             finding_count=len(new_finding_ids),
+            agent_ids=_notified_agent_ids(shown, reported_prev, threshold_rank),
         )
     return _UnitOutcome(entry=entry, notify=notify)
 
@@ -734,12 +768,37 @@ def _process_units_for_session(
 _VERDICT_WORD_RANK = {"CLEAN": 0, "DEGRADED": 1, "FAILED": 2}
 
 
-def _format_notify_lines(notifications: list[_NotifyInfo]) -> list[str]:
+_MAX_NAMED_AGENTS = 3
+
+
+def _agents_clause(group: list[_NotifyInfo], redactor: Redactor) -> str:
+    """N3b P17: `  agents a:<alias>, ...` after the command, at most three,
+    then `+N more`; empty when no finding names a canonical agent id."""
+    ids: list[str] = []
+    for notify in group:
+        for agent_id in notify.agent_ids:
+            if agent_id not in ids:
+                ids.append(agent_id)
+    if not ids:
+        return ""
+    named = ", ".join(redactor.identity_text("agent", a) for a in ids[:_MAX_NAMED_AGENTS])
+    more = f", +{len(ids) - _MAX_NAMED_AGENTS} more" if len(ids) > _MAX_NAMED_AGENTS else ""
+    return f"  agents {named}{more}"
+
+
+_POSTMORTEM_HINT = "/postmortem"
+
+
+def _format_notify_lines(notifications: list[_NotifyInfo], redactor: Redactor) -> list[str]:
     """docs/DESIGN.md 7.2's D-C: group by run id. A workflow unit's run id
     is unique to it, so it always forms a group of one and keeps the plain
     per-unit line; several subagent units of one session share that
     session's own run id, so they collapse into a single
-    '<n> subagents finished, <k> findings' line instead of one line each."""
+    '<n> subagents finished, <k> findings' line instead of one line each.
+
+    The lines are returned already redacted, piece by piece: the fixed slash command
+    `/postmortem` the plugin tells the user to type is not a path and must not meet the
+    free-text path scanner (docs/DESIGN.md 5.1, F fix 4); every other piece does."""
     groups: dict[str, list[_NotifyInfo]] = {}
     order: list[str] = []
     for notify in notifications:
@@ -764,15 +823,23 @@ def _format_notify_lines(notifications: list[_NotifyInfo]) -> list[str]:
             suffix = ""
         if len(group) == 1:
             only = group[0]
+            # each piece is scanned on its own: a path in the headline hides the rest of the
+            # text it is scanned with (docs/DESIGN.md 5.1), so the run id must not follow it
             lines.append(
-                f"{only.verdict_word}{suffix}  {only.headline}  {run_id}  /postmortem {run_id}"
+                f"{only.verdict_word}{suffix}  {redactor(only.headline)}  {redactor(run_id)}  "
+                + f"{_POSTMORTEM_HINT} {redactor(run_id)}"
+                + redactor(_agents_clause(group, redactor))
             )
             continue
         total_findings = sum(n.finding_count for n in group)
         finding_plural = "" if total_findings == 1 else "s"
         lines.append(
-            f"{worst.verdict_word}{suffix}  {len(group)} subagents finished, "
-            f"{total_findings} finding{finding_plural}  {run_id}  /postmortem {run_id}"
+            redactor(
+                f"{worst.verdict_word}{suffix}  {len(group)} subagents finished, "
+                f"{total_findings} finding{finding_plural}  {run_id}  "
+            )
+            + f"{_POSTMORTEM_HINT} {redactor(run_id)}"
+            + redactor(_agents_clause(group, redactor))
         )
     return lines
 
@@ -798,10 +865,24 @@ def _cmd_check(payload: dict) -> None:
     if not notifications:
         return
 
-    lines = _format_notify_lines(notifications)
-
-    redactor = Redactor()
-    message = redactor("\n".join(lines))
+    # N3b P17, P8: one registration for every agent the message names (none
+    # when it names no agent); always share. If the book is unavailable the
+    # names are positional and the diagnostic is part of the message, so it
+    # reaches systemMessage and, when emitted, additionalContext, inside the
+    # one JSON object.
+    identities: list[tuple[str, str]] = []
+    for notify in notifications:
+        for agent_id in notify.agent_ids:
+            if ("agent", agent_id) not in identities:
+                identities.append(("agent", agent_id))
+    book = disclosure.register(identities) if identities else None
+    redactor = Redactor(context=disclosure.DisclosureContext(
+        level="share", book=book, identities=tuple(identities),
+    ))
+    lines = _format_notify_lines(notifications, redactor)
+    message = "\n".join(lines)
+    if book is not None and not book.available:
+        message += f"  ({disclosure.UNAVAILABLE_DIAGNOSTIC})"
     output: dict = {"systemMessage": message}
     if not stop_hook_active:
         output["hookSpecificOutput"] = {
@@ -877,16 +958,18 @@ def _cmd_session_start(payload: dict) -> None:
         worst = max(summaries, key=_verdict_rank)
         wasted_seconds = sum(entry.get("wasted_seconds", 0.0) for entry in summaries)
         plural = "" if len(summaries) == 1 else "s"
+        redactor = Redactor()
         message = (
-            f"{len(summaries)} run{plural} analyzed since last digest: "
-            f"worst {worst.get('verdict', 'CLEAN')}, "
-            f"{report.format_duration(wasted_seconds)} wasted. "
-            f"/postmortem {worst.get('run_id', '')}"
+            redactor(
+                f"{len(summaries)} run{plural} analyzed since last digest: "
+                f"worst {worst.get('verdict', 'CLEAN')}, "
+                f"{report.format_duration(wasted_seconds)} wasted. "
+            )
+            + f"{_POSTMORTEM_HINT} {redactor(str(worst.get('run_id', '')))}"
         )
 
     if message:
-        redactor = Redactor()
-        print(json.dumps({"systemMessage": redactor(message)}))
+        print(json.dumps({"systemMessage": message}))
 
 
 # --- hook session-end --------------------------------------------------
@@ -917,7 +1000,7 @@ def _cmd_session_end(payload: dict) -> None:
     # "worst verdict" digest ranking, so it must never be swayed by a
     # detector the user silenced either.
     shown, _silenced = config.partition_silenced(findings, config.load_config())
-    verdict = report.verdict_word(shown, run.status)
+    verdict = report.verdict_word(shown, run.status, terminal_failed=report.lifecycle_failed(run))
     wasted_seconds = sum(
         f.metrics.get("wasted_seconds", 0.0) for f in findings if f.detector == "wasted_time"
     )
@@ -981,7 +1064,7 @@ def _extract_run_id(tool_response: object) -> str | None:
                 text = ""
         match = _RUN_ID_RE.search(text)
         candidate = match.group(1) if match else None
-    if candidate is None or not reader._WORKFLOW_RUN_ID_RE.match(candidate):
+    if candidate is None or not reader._WORKFLOW_RUN_ID_RE.fullmatch(candidate):
         return None
     return candidate
 
@@ -1127,5 +1210,7 @@ def dispatch(command: str) -> int:
         return 0
     except Exception:
         if os.environ.get("AGENT_POSTMORTEM_DEBUG"):
-            traceback.print_exc(file=sys.stderr)
+            # Redacted like the analysis traceback (7.2's D10): share level,
+            # a path outside home and /tmp as path-N.
+            print(Redactor().scrub_leftover_paths(traceback.format_exc()), file=sys.stderr)
         return 0

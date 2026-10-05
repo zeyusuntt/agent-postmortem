@@ -18,8 +18,11 @@ from __future__ import annotations
 import difflib
 import json
 import textwrap
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from .models import Finding, Run
 
@@ -41,10 +44,12 @@ class Rule:
     hook_template: str | None  # filename under hooks/, or None
     # docs/DESIGN.md 9: where a human should put this rule -- "workflow
     # prompt" (the agent prompt preamble in a workflow script, where most
-    # rules belong), "hook" (a Claude Code hook, like R-MODEL-ALLOCATION),
-    # or "project instructions" (a repo-wide file like R-GIT-CWD, since it
-    # is about how every agent in every workflow is launched, not one
-    # workflow's own prompt).
+    # rules belong), "agent prompt" (the prompt any agent receives, a
+    # workflow preamble or an Agent-tool subagent's prompt: R-NO-LONG-BASH),
+    # "hook" (a Claude Code hook, like R-MODEL-ALLOCATION), or "project
+    # instructions" (a repo-wide file like R-GIT-CWD, since it is about how
+    # every agent in every workflow is launched, not one workflow's own
+    # prompt).
     target_kind: str
 
 
@@ -82,12 +87,15 @@ RULES: dict[str, Rule] = {
         text=(
             "Inside a workflow agent never run a shell command that can outlive its "
             "timeout: scope test runs to touched files, pass an explicit timeout the "
-            "run will meet, no sleep or poll loops."
+            "run will meet, no sleep or poll loops. In a subagent, run long jobs from "
+            "the main session; never background and wait. macOS has no timeout(1); "
+            "use a python3 -c 'import subprocess; subprocess.run([...], timeout=N)' "
+            "or perl -e 'alarm N; exec @ARGV' form instead."
         ),
         enforcement="prompt",
         detectors=("bash_backgrounded", "bash_timeout"),
         hook_template=None,
-        target_kind="workflow prompt",
+        target_kind="agent prompt",
     ),
     "R-SMALL-QUANTUM": Rule(
         id="R-SMALL-QUANTUM",
@@ -220,9 +228,24 @@ def render_rules_text(rows: list[tuple[Rule, int]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_rule_show(rule: Rule) -> str:
+AGENT_PROMPT_ACTION = (
+    "add this directive to the workflow's agent preamble or to the Agent-tool "
+    "prompt that launches the subagent"
+)
+
+
+def action_line(rule: Rule) -> str | None:
+    """docs/DESIGN.md 9 (N8): what to do with a rule that has no file to
+    apply to. An `agent prompt` rule names the two places its directive goes;
+    every other kind returns None and keeps the `apply ... --target <file>`
+    line of `rules propose`."""
+    return AGENT_PROMPT_ACTION if rule.target_kind == "agent prompt" else None
+
+
+def render_rule_show(rule: Rule, path_display: Callable[[str], str] = str) -> str:
     """The full text of one rule: id, title, enforcement, detectors,
-    target_kind, text."""
+    target_kind, text. `path_display` shows the template path (N3b C4: the
+    command redacts it as one value before it joins the sentence)."""
     detectors = ", ".join(rule.detectors) if rule.detectors else "(none in v0)"
     lines = [
         f"{rule.id}: {rule.title}",
@@ -232,9 +255,13 @@ def render_rule_show(rule: Rule) -> str:
         "",
         rule.text,
     ]
+    action = action_line(rule)
+    if action is not None:
+        lines.append("")
+        lines.append(action)
     if rule.hook_template:
         lines.append("")
-        lines.append(f"hook template: {_HOOKS_DIR / rule.hook_template}")
+        lines.append(f"hook template: {path_display(str(_HOOKS_DIR / rule.hook_template))}")
     return "\n".join(lines) + "\n"
 
 
@@ -251,7 +278,7 @@ def rule_to_json(rule: Rule) -> dict:
     }
 
 
-def render_hook_install_note(rule: Rule) -> str:
+def render_hook_install_note(rule: Rule, path_display: Callable[[str], str] = str) -> str:
     """Template path and a settings.json snippet to register the rule's hook.
 
     Returns "" for a rule with no hook_template. v0 never edits settings.json
@@ -259,7 +286,7 @@ def render_hook_install_note(rule: Rule) -> str:
     """
     if not rule.hook_template:
         return ""
-    template_path = _HOOKS_DIR / rule.hook_template
+    template_path = path_display(str(_HOOKS_DIR / rule.hook_template))
     snippet = json.dumps(
         {
             "hooks": {
@@ -281,12 +308,19 @@ def render_hook_install_note(rule: Rule) -> str:
     )
 
 
+def directive_line(rule_id: str) -> str:
+    """The canonical directive of one rule: the single line `apply` puts in
+    the managed block (N3b P18 prints it at share, where no byte of the target
+    file is shown)."""
+    rule = RULES.get(rule_id)
+    text = rule.text if rule is not None else "(unknown rule)"
+    return f"- {rule_id}: {text}"
+
+
 def _render_block(rule_ids: set[str]) -> str:
     lines = [BEGIN_MARKER]
     for rule_id in sorted(rule_ids):
-        rule = RULES.get(rule_id)
-        text = rule.text if rule is not None else "(unknown rule)"
-        lines.append(f"- {rule_id}: {text}")
+        lines.append(directive_line(rule_id))
     lines.append(END_MARKER)
     return "\n".join(lines)
 
@@ -335,17 +369,18 @@ def _with_rule_applied(original: str, rule_id: str) -> str:
     return original[:begin_idx] + block_text + original[end_idx_full:]
 
 
-def _diff_text(original: str, new_text: str, target: Path) -> str:
+def _diff_text(original: str, new_text: str, target: Path, label: str | None = None) -> str:
+    shown = str(target) if label is None else label
     diff_lines = difflib.unified_diff(
         original.splitlines(keepends=True),
         new_text.splitlines(keepends=True),
-        fromfile=str(target),
-        tofile=str(target),
+        fromfile=shown,
+        tofile=shown,
     )
     return "".join(diff_lines)
 
 
-def apply_rule(rule_id: str, target: Path) -> str:
+def apply_rule(rule_id: str, target: Path, label: str | None = None) -> str:
     """The unified diff of adding rule_id to target's managed rules block
     against target's current content ('' if target does not exist); '' when
     the rule is already present (nothing to add).
@@ -354,6 +389,9 @@ def apply_rule(rule_id: str, target: Path) -> str:
     argument to ask it to -- the tool has no code path that writes an
     instruction file. A human reads the diff and applies it themselves,
     with their own editor or `git apply`.
+
+    `label` (N3b P19) replaces the target path in the diff's two header lines;
+    None keeps the real path, which is what `git apply` needs.
 
     Raises ValueError for an unknown rule id or a target whose rules block
     has a begin marker but no end marker.
@@ -364,7 +402,7 @@ def apply_rule(rule_id: str, target: Path) -> str:
     target = Path(target)
     original = target.read_text(encoding="utf-8") if target.exists() else ""
     new_text = _with_rule_applied(original, rule_id)
-    return _diff_text(original, new_text, target)
+    return _diff_text(original, new_text, target, label)
 
 
 # --- rules propose (docs/DESIGN.md 9) ---------------------------------------
@@ -376,76 +414,197 @@ PROPOSE_MIN_RUNS = 3
 PROPOSE_MIN_DAYS = 2
 
 
-def propose_rules(runs_with_findings: list[tuple[Run, list[Finding]]]) -> list[dict]:
+class RuleCount(NamedTuple):
+    """What the one shared counter returns (docs/DESIGN.md 9, N8): findings
+    whose own rule_ids name the rule, the distinct runs holding at least one,
+    and the earliest and latest start date among those runs (None when no
+    dated run backs the count)."""
+
+    findings: int
+    runs: int
+    first: str | None
+    last: str | None
+
+
+def _run_date(run: Run) -> date | None:
+    return run.started_at.date() if run.started_at is not None else None
+
+
+def count_rule(
+    rule_id: str, runs_with_findings: list[tuple[Run, list[Finding]]], since: date | None = None,
+) -> RuleCount:
+    """The one counter for a rule over a run set. A finding counts once per
+    rule named in its own rule_ids (the same way rules_for() counts it), never
+    because a backing detector merely fired. `since` keeps only runs started
+    on or after that date; a run with no start date cannot be placed and is
+    left out then."""
+    findings = 0
+    run_ids: set[str] = set()
+    dates: set[date] = set()
+    for run, run_findings in runs_with_findings:
+        run_date = _run_date(run)
+        if since is not None and (run_date is None or run_date < since):
+            continue
+        backing = sum(1 for finding in run_findings if rule_id in finding.rule_ids)
+        if backing == 0:
+            continue
+        findings += backing
+        run_ids.add(run.run_id)
+        if run_date is not None:
+            dates.add(run_date)
+    return RuleCount(
+        findings,
+        len(run_ids),
+        min(dates).isoformat() if dates else None,
+        max(dates).isoformat() if dates else None,
+    )
+
+
+def _adoptions(adopted: Iterable) -> dict[str, tuple[date, int]]:
+    """rule id -> (earliest adoption date, number of records) over every
+    `[[adopted]]` record (anything with `.rule` and a `.date` of YYYY-MM-DD)."""
+    found: dict[str, tuple[date, int]] = {}
+    for item in adopted:
+        try:
+            when = datetime.strptime(item.date, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            continue
+        earliest, records = found.get(item.rule, (when, 0))
+        found[item.rule] = (min(earliest, when), records + 1)
+    return found
+
+
+def propose_rules(
+    runs_with_findings: list[tuple[Run, list[Finding]]],
+    adopted: Iterable = (),
+    *,
+    single_run: bool = False,
+) -> list[dict]:
     """Which rules a fleet's worth of runs backs strongly enough to propose
-    adopting (docs/DESIGN.md 9), sorted by run count descending then rule id.
+    adopting (docs/DESIGN.md 9), sorted by run count descending then rule id,
+    followed by one status row per adopted rule (by rule id).
 
     A finding backs a rule the same way rules_for() counts it: once per rule
     named in its own rule_ids. Each returned dict is {'rule': Rule,
-    'findings': int, 'runs': int, 'first': 'YYYY-MM-DD', 'last':
-    'YYYY-MM-DD'} -- 'findings' is the total finding count, 'runs' the
-    number of distinct runs that backed it at least once, 'first'/'last'
-    the earliest/latest start date among those runs. A run with no
-    started_at still counts toward 'findings'/'runs' (its own finding did
-    happen) but can never be one of the >= PROPOSE_MIN_DAYS distinct days a
-    rule needs to qualify, since it cannot be placed on a calendar day at
-    all.
+    'findings': int, 'runs': int, 'first': 'YYYY-MM-DD'|None, 'last':
+    'YYYY-MM-DD'|None, 'adopted': 'YYYY-MM-DD'|None, 'adopted_records': int,
+    'since': {'findings', 'runs'}|None}. For a proposal 'findings' is the
+    total finding count, 'runs' the number of distinct runs that backed it at
+    least once, 'first'/'last' the earliest/latest start date among those
+    runs, and 'adopted'/'since' are None. A run with no started_at still
+    counts toward 'findings'/'runs' (its own finding did happen) but can
+    never be one of the >= PROPOSE_MIN_DAYS distinct days a rule needs to
+    qualify, since it cannot be placed on a calendar day at all.
+
+    A rule listed in `adopted` is never proposed again (N8, 4.13.8): its row
+    carries the earliest adoption date and counts everything since it, and is
+    kept whether or not it clears the threshold. `single_run` (rules propose
+    --run) lists every rule backed by at least one finding, since one run can
+    never meet the threshold; an adopted rule then appears only when the run
+    backs it.
     """
-    by_rule: dict[str, dict] = {}
+    adoptions = _adoptions(adopted)
+    backed: dict[str, dict] = {}
     for run, findings in runs_with_findings:
-        run_date = run.started_at.date() if run.started_at is not None else None
+        run_date = _run_date(run)
         for finding in findings:
             for rule_id in finding.rule_ids:
                 if rule_id not in RULES:
                     continue
-                entry = by_rule.setdefault(rule_id, {"findings": 0, "runs": set(), "dates": set()})
-                entry["findings"] += 1
+                entry = backed.setdefault(rule_id, {"runs": set(), "dates": set()})
                 entry["runs"].add(run.run_id)
                 if run_date is not None:
                     entry["dates"].add(run_date)
 
     rows: list[dict] = []
-    for rule_id, entry in by_rule.items():
-        if len(entry["runs"]) < PROPOSE_MIN_RUNS or len(entry["dates"]) < PROPOSE_MIN_DAYS:
+    for rule_id, entry in backed.items():
+        if rule_id in adoptions:
             continue
+        if not single_run and (
+            len(entry["runs"]) < PROPOSE_MIN_RUNS or len(entry["dates"]) < PROPOSE_MIN_DAYS
+        ):
+            continue
+        counted = count_rule(rule_id, runs_with_findings)
         rows.append({
             "rule": RULES[rule_id],
-            "findings": entry["findings"],
-            "runs": len(entry["runs"]),
-            "first": min(entry["dates"]).isoformat(),
-            "last": max(entry["dates"]).isoformat(),
+            "findings": counted.findings,
+            "runs": counted.runs,
+            "first": counted.first,
+            "last": counted.last,
+            "adopted": None,
+            "adopted_records": 0,
+            "since": None,
         })
-
     rows.sort(key=lambda row: (-row["runs"], row["rule"].id))
+
+    for rule_id in sorted(adoptions):
+        if rule_id not in RULES or (single_run and rule_id not in backed):
+            continue
+        when, records = adoptions[rule_id]
+        counted = count_rule(rule_id, runs_with_findings, since=when)
+        rows.append({
+            "rule": RULES[rule_id],
+            "findings": counted.findings,
+            "runs": counted.runs,
+            "first": counted.first,
+            "last": counted.last,
+            "adopted": when.isoformat(),
+            "adopted_records": records,
+            "since": {"findings": counted.findings, "runs": counted.runs},
+        })
     return rows
 
 
-def render_propose_text(rows: list[dict]) -> str:
+def _count_word(count: int, singular: str) -> str:
+    return f"{count} {singular}" + ("" if count == 1 else "s")
+
+
+def render_propose_text(rows: list[dict], *, run_id: str | None = None) -> str:
     """docs/DESIGN.md 9: one block per proposed rule, blank-line separated,
-    sorted the same way propose_rules() already sorted `rows`."""
+    sorted the same way propose_rules() already sorted `rows`; an adopted
+    rule is one status line instead. With `run_id` (rules propose --run) the
+    text opens with the single-run heading."""
     if not rows:
+        if run_id is not None:
+            return f"no rule is backed by a finding in run {run_id}\n"
         return "no rule is backed by 3 runs on 2 days yet\n"
 
     blocks = []
     for row in rows:
         rule = row["rule"]
-        findings_plural = "" if row["findings"] == 1 else "s"
-        runs_plural = "" if row["runs"] == 1 else "s"
-        lines = [
-            f"{rule.id}   backed by {row['findings']} finding{findings_plural} in "
-            f"{row['runs']} run{runs_plural}, first {row['first']}, last {row['last']}",
-            f"  belongs in: {rule.target_kind}",
-        ]
+        if row.get("adopted") is not None:
+            records = row.get("adopted_records", 1)
+            kept = f" ({records} records)" if records > 1 else ""
+            blocks.append(
+                f"{rule.id}   adopted {row['adopted']}{kept}; still violated "
+                f"{_count_word(row['findings'], 'time')} in "
+                f"{_count_word(row['runs'], 'run')} since"
+            )
+            continue
+        header = (
+            f"{rule.id}   backed by {_count_word(row['findings'], 'finding')} in "
+            f"{_count_word(row['runs'], 'run')}"
+        )
+        if row["first"] is not None:
+            header += f", first {row['first']}, last {row['last']}"
+        lines = [header, f"  belongs in: {rule.target_kind}"]
         lines.extend(
             textwrap.fill(
                 rule.text, width=76, initial_indent="  ", subsequent_indent="  "
             ).splitlines()
         )
-        lines.append(
-            f"  show the diff for a file: agent-postmortem apply {rule.id} --target <file>"
-        )
+        action = action_line(rule)
+        if action is not None:
+            lines.append(f"  {action}")
+        else:
+            lines.append(
+                f"  show the diff for a file: agent-postmortem apply {rule.id} --target <file>"
+            )
         blocks.append("\n".join(lines))
-    return "\n\n".join(blocks) + "\n"
+    body = "\n\n".join(blocks) + "\n"
+    if run_id is not None:
+        return f"rules backed by findings in run {run_id}\n\n{body}"
+    return body
 
 
 def propose_row_to_json(row: dict) -> dict:
@@ -459,5 +618,7 @@ def propose_row_to_json(row: dict) -> dict:
         "runs": row["runs"],
         "first": row["first"],
         "last": row["last"],
+        "adopted": row.get("adopted"),
+        "since": row.get("since"),
         "text": rule.text,
     }

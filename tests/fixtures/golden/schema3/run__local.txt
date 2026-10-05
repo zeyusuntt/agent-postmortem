@@ -1,0 +1,5688 @@
+##### case reader_minimal:wf_a0000000-001
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_a0000000-001",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": null,
+    "started_at": null,
+    "ended_at": null,
+    "counts": {
+      "agents": 0,
+      "attempts": 0,
+      "interrupted": 0
+    },
+    "diagnostics": [],
+    "attempts": [],
+    "lifecycle": {
+      "terminal": "none",
+      "source": null,
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 0s wall-clock; 0s wasted across 0 retried attempts",
+      "run_id": "wf_a0000000-001",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 0.0,
+        "attempt_seconds": 0,
+        "wasted_seconds": 0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "69b3da7070cb",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN",
+  "status": "COMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case reader_minimal:wf_b0000000-002
+exit=4
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_b0000000-002",
+    "kind": "workflow",
+    "status": "INCOMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-01T10:00:00+00:00",
+    "ended_at": "2026-09-01T10:09:00+00:00",
+    "counts": {
+      "agents": 1,
+      "attempts": 2,
+      "interrupted": 1
+    },
+    "diagnostics": [
+      "agent-a1111111111111111.jsonl:4: Expecting value: line 1 column 1 (char 0)"
+    ],
+    "attempts": [
+      {
+        "agent_id": "a1111111111111111",
+        "key": "a19d0f2d",
+        "label": "impl:demo",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "killed",
+        "first_ts": "2026-09-01T10:00:00+00:00",
+        "last_ts": "2026-09-01T10:05:00+00:00",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 20
+        },
+        "event_count": 5,
+        "interrupt": {
+          "cause": "runtime",
+          "silence_seconds": 180.0
+        },
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 240.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "undecodable_line",
+            "shell_context_unverified",
+            "possible_opaque_command",
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "opaque_command",
+              "completion": "error",
+              "path": null,
+              "repo": "path-1",
+              "line": "agent-a1111111111111111.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "a2222222222222222",
+        "key": "a19d0f2d",
+        "label": "impl:demo",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 2,
+        "outcome": "completed",
+        "first_ts": "2026-09-01T10:06:00+00:00",
+        "last_ts": "2026-09-01T10:09:00+00:00",
+        "usage": {
+          "input_tokens": 8,
+          "output_tokens": 12
+        },
+        "event_count": 4,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Read",
+          "seconds_since_last_tool_at_end": 120.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "bash_timeout",
+      "severity": "minor",
+      "title": "1 Bash command ended with exit code 143 (a hard timeout or another termination)",
+      "run_id": "wf_b0000000-002",
+      "agent_id": "a1111111111111111",
+      "evidence": [
+        "agent-a1111111111111111.jsonl:3"
+      ],
+      "metrics": {
+        "count": 1
+      },
+      "rule_id": "R-NO-LONG-BASH",
+      "rule_ids": [
+        "R-NO-LONG-BASH"
+      ],
+      "finding_id": "b9c6e03aa7e9",
+      "silenced": false
+    },
+    {
+      "detector": "mislabeled_kill",
+      "severity": "info",
+      "title": "impl:demo attempt 1 was killed by the runtime after 180s of silence, logged as a user interrupt",
+      "run_id": "wf_b0000000-002",
+      "agent_id": "a1111111111111111",
+      "evidence": [
+        "agent-a1111111111111111.jsonl:3",
+        "agent-a1111111111111111.jsonl:5 [kill_sentinel]"
+      ],
+      "metrics": {
+        "silence_seconds": 180.0,
+        "cause": "runtime",
+        "events": 5
+      },
+      "rule_id": "R-MONITOR-RETRIES",
+      "rule_ids": [
+        "R-MONITOR-RETRIES"
+      ],
+      "finding_id": "f46445b7c980",
+      "silenced": false
+    },
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "impl:demo restarted 1 time, 5m wasted",
+      "run_id": "wf_b0000000-002",
+      "agent_id": "a2222222222222222",
+      "evidence": [
+        "agent-a1111111111111111.jsonl:5 [kill_sentinel]",
+        "agent-a2222222222222222.jsonl:1"
+      ],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 300.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "57fcc5ba404d",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 9m wall-clock; 5m wasted across 1 retried attempts",
+      "run_id": "wf_b0000000-002",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 540.0,
+        "attempt_seconds": 480.0,
+        "wasted_seconds": 300.0,
+        "wasted_tokens": 30
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "5a0b710be8bc",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [
+    {
+      "rule_id": "R-MONITOR-RETRIES",
+      "count": 1
+    },
+    {
+      "rule_id": "R-NO-LONG-BASH",
+      "count": 1
+    },
+    {
+      "rule_id": "R-RETRY-SAFE",
+      "count": 1
+    }
+  ],
+  "verdict": "DEGRADED (INCOMPLETE)",
+  "status": "INCOMPLETE",
+  "stories": [
+    {
+      "agent": "impl:demo",
+      "severity": "major",
+      "text": "Restarted 1 time. 1 Bash commands timed out.",
+      "finding_ids": [
+        "b9c6e03aa7e9",
+        "57fcc5ba404d"
+      ]
+    }
+  ],
+  "next": [
+    {
+      "grade": "decide",
+      "text": "rules that would have prevented this",
+      "command": "agent-postmortem rules propose"
+    }
+  ]
+}
+<<<STDERR>>>
+<<<END>>>
+##### case reader_minimal:wf_c0000000-003
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_c0000000-003",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": null,
+    "started_at": null,
+    "ended_at": null,
+    "counts": {
+      "agents": 0,
+      "attempts": 0,
+      "interrupted": 0
+    },
+    "diagnostics": [],
+    "attempts": [],
+    "lifecycle": {
+      "terminal": "none",
+      "source": null,
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 0s wall-clock; 0s wasted across 0 retried attempts",
+      "run_id": "wf_c0000000-003",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 0.0,
+        "attempt_seconds": 0,
+        "wasted_seconds": 0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "8f8dbfdf9e44",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN",
+  "status": "COMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case journal_malformed_fields:wf_00000000-af1
+exit=4
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-af1",
+    "kind": "workflow",
+    "status": "INCOMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-29T09:00:01+00:00",
+    "ended_at": "2026-09-29T09:04:05+00:00",
+    "counts": {
+      "agents": 3,
+      "attempts": 3,
+      "interrupted": 0
+    },
+    "diagnostics": [
+      "journal.jsonl:4: started event has a non-string agentId",
+      "journal.jsonl:5: started event has a non-string key",
+      "journal.jsonl:6: started event has a non-string label",
+      "journal.jsonl:8: started event has a non-string phase",
+      "malformed launch result at line 3"
+    ],
+    "attempts": [
+      {
+        "agent_id": "aee00000000000001",
+        "key": "6f0e3fa5",
+        "label": "impl:good",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-29T09:00:01+00:00",
+        "last_ts": "2026-09-29T09:00:05+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "aee00000000000003",
+        "key": "67d3f750",
+        "label": "",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-29T09:03:00+00:00",
+        "last_ts": "2026-09-29T09:03:05+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "aee00000000000004",
+        "key": "24b181d1",
+        "label": "impl:bad-phase",
+        "phase": "",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-29T09:04:00+00:00",
+        "last_ts": "2026-09-29T09:04:05+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "none",
+      "source": null,
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 4m wall-clock; 0s wasted across 0 retried attempts",
+      "run_id": "wf_00000000-af1",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 244.0,
+        "attempt_seconds": 14.0,
+        "wasted_seconds": 0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "f9c9bf9c51fa",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN (INCOMPLETE)",
+  "status": "INCOMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case journal_malformed_fields:session
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "s_82d2d30035",
+    "kind": "session",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-29T09:00:00+00:00",
+    "ended_at": "2026-09-29T09:00:02+00:00",
+    "counts": {
+      "agents": 0,
+      "attempts": 0,
+      "interrupted": 0
+    },
+    "diagnostics": [
+      "malformed launch result at line 3"
+    ],
+    "attempts": [],
+    "lifecycle": null
+  },
+  "findings": [
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "session ran 2s; 0 subagents used 0s of agent time",
+      "run_id": "s_82d2d30035",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 2.0,
+        "child_seconds": 0,
+        "child_count": 0,
+        "wasted_seconds": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "22bd26df05b8",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN",
+  "status": "COMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case hook_session:wf_00000000-710
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-710",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-02-01T10:00:02+00:00",
+    "ended_at": "2026-02-01T10:10:02+00:00",
+    "counts": {
+      "agents": 1,
+      "attempts": 2,
+      "interrupted": 1
+    },
+    "diagnostics": [
+      "malformed launch result at line 3"
+    ],
+    "attempts": [
+      {
+        "agent_id": "ae100000000000001",
+        "key": "4baebf44",
+        "label": "impl:alpha",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "killed",
+        "first_ts": "2026-02-01T10:00:02+00:00",
+        "last_ts": "2026-02-01T10:05:00+00:00",
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 30,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 5,
+        "interrupt": {
+          "cause": "runtime",
+          "silence_seconds": 294.0
+        },
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 295.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_opaque_command",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "opaque_command",
+              "completion": "success",
+              "path": null,
+              "repo": "path-1",
+              "line": "agent-ae100000000000001.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "ae100000000000002",
+        "key": "4baebf44",
+        "label": "impl:alpha",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 2,
+        "outcome": "completed",
+        "first_ts": "2026-02-01T10:05:02+00:00",
+        "last_ts": "2026-02-01T10:10:02+00:00",
+        "usage": {
+          "input_tokens": 130,
+          "output_tokens": 47,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 5,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 297.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_opaque_command",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "opaque_command",
+              "completion": "success",
+              "path": null,
+              "repo": "path-1",
+              "line": "agent-ae100000000000002.jsonl:3"
+            }
+          ]
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "mislabeled_kill",
+      "severity": "info",
+      "title": "impl:alpha attempt 1 was killed by the runtime after 294s of silence, logged as a user interrupt",
+      "run_id": "wf_00000000-710",
+      "agent_id": "ae100000000000001",
+      "evidence": [
+        "agent-ae100000000000001.jsonl:3",
+        "agent-ae100000000000001.jsonl:4 [kill_sentinel]"
+      ],
+      "metrics": {
+        "silence_seconds": 294.0,
+        "cause": "runtime",
+        "events": 5
+      },
+      "rule_id": "R-MONITOR-RETRIES",
+      "rule_ids": [
+        "R-MONITOR-RETRIES"
+      ],
+      "finding_id": "53c675e7a363",
+      "silenced": false
+    },
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "impl:alpha restarted 1 time, 4m wasted",
+      "run_id": "wf_00000000-710",
+      "agent_id": "ae100000000000002",
+      "evidence": [
+        "agent-ae100000000000001.jsonl:4 [kill_sentinel]",
+        "agent-ae100000000000002.jsonl:1"
+      ],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 298.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "ab110a7d47c0",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 10m wall-clock; 4m wasted across 1 retried attempts",
+      "run_id": "wf_00000000-710",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 600.0,
+        "attempt_seconds": 598.0,
+        "wasted_seconds": 298.0,
+        "wasted_tokens": 130
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "366f729432de",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [
+    {
+      "rule_id": "R-MONITOR-RETRIES",
+      "count": 1
+    },
+    {
+      "rule_id": "R-RETRY-SAFE",
+      "count": 1
+    }
+  ],
+  "verdict": "DEGRADED",
+  "status": "COMPLETE",
+  "stories": [
+    {
+      "agent": "impl:alpha",
+      "severity": "major",
+      "text": "Restarted 1 time.",
+      "finding_ids": [
+        "ab110a7d47c0"
+      ]
+    }
+  ],
+  "next": [
+    {
+      "grade": "decide",
+      "text": "rules that would have prevented this",
+      "command": "agent-postmortem rules propose"
+    }
+  ]
+}
+<<<STDERR>>>
+<<<END>>>
+##### case hook_session:session
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "s_311deb29a5",
+    "kind": "session",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-02-01T10:00:00+00:00",
+    "ended_at": "2026-02-01T10:01:35+00:00",
+    "counts": {
+      "agents": 1,
+      "attempts": 1,
+      "interrupted": 0
+    },
+    "diagnostics": [
+      "malformed launch result at line 3"
+    ],
+    "attempts": [
+      {
+        "agent_id": "ae300000000000001",
+        "key": "071c1029",
+        "label": "check-status",
+        "phase": "",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-02-01T10:00:06+00:00",
+        "last_ts": "2026-02-01T10:01:30+00:00",
+        "usage": {
+          "input_tokens": 13,
+          "output_tokens": 15
+        },
+        "event_count": 5,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 70.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": null
+  },
+  "findings": [
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "session ran 1m; 1 subagents used 1m of agent time",
+      "run_id": "s_311deb29a5",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 95.0,
+        "child_seconds": 84.0,
+        "child_count": 1,
+        "wasted_seconds": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "a61d4b4e3641",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN",
+  "status": "COMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case session_human_interrupt:session
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "s_aece06acec",
+    "kind": "session",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-19T09:00:00+00:00",
+    "ended_at": "2026-09-19T09:03:05+00:00",
+    "counts": {
+      "agents": 1,
+      "attempts": 1,
+      "interrupted": 1
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "acc00000000000001",
+        "key": "86e833b3",
+        "label": "impl:helper",
+        "phase": "",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "killed",
+        "first_ts": "2026-09-19T09:00:10+00:00",
+        "last_ts": "2026-09-19T09:03:05+00:00",
+        "usage": {
+          "input_tokens": 9,
+          "output_tokens": 6
+        },
+        "event_count": 3,
+        "interrupt": {
+          "cause": "human",
+          "silence_seconds": 170.0
+        },
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": null
+  },
+  "findings": [
+    {
+      "detector": "mislabeled_kill",
+      "severity": "info",
+      "title": "impl:helper interrupted together with the parent session",
+      "run_id": "s_aece06acec",
+      "agent_id": "acc00000000000001",
+      "evidence": [
+        "agent-acc00000000000001.jsonl:2",
+        "agent-acc00000000000001.jsonl:3 [kill_sentinel]",
+        "00000000-0000-4000-8000-000000000000.jsonl:3 [kill_sentinel]"
+      ],
+      "metrics": {
+        "silence_seconds": 170.0,
+        "cause": "human",
+        "events": 3
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "17c01380f447",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "session ran 3m; 1 subagents used 2m of agent time",
+      "run_id": "s_aece06acec",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 185.0,
+        "child_seconds": 175.0,
+        "child_count": 1,
+        "wasted_seconds": 175.0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "1dd1c3bc2d6e",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN",
+  "status": "COMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case session_parent_stop:session
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "s_2a74169191",
+    "kind": "session",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-19T09:00:00+00:00",
+    "ended_at": "2026-09-19T09:02:16+00:00",
+    "counts": {
+      "agents": 1,
+      "attempts": 1,
+      "interrupted": 1
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "acb00000000000001",
+        "key": "f3316844",
+        "label": "impl:fixer",
+        "phase": "",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "killed",
+        "first_ts": "2026-09-19T09:00:10+00:00",
+        "last_ts": "2026-09-19T09:02:10+00:00",
+        "usage": {
+          "input_tokens": 9,
+          "output_tokens": 7
+        },
+        "event_count": 3,
+        "interrupt": {
+          "cause": "parent_stop",
+          "silence_seconds": 110.0
+        },
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": null
+  },
+  "findings": [
+    {
+      "detector": "mislabeled_kill",
+      "severity": "info",
+      "title": "impl:fixer stopped by the parent session",
+      "run_id": "s_2a74169191",
+      "agent_id": "acb00000000000001",
+      "evidence": [
+        "agent-acb00000000000001.jsonl:2",
+        "agent-acb00000000000001.jsonl:3 [kill_sentinel]",
+        "00000000-0000-4000-8000-000000000000.jsonl:3"
+      ],
+      "metrics": {
+        "silence_seconds": 110.0,
+        "cause": "parent_stop",
+        "events": 3
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "bc4652027d47",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "session ran 2m; 1 subagents used 2m of agent time",
+      "run_id": "s_2a74169191",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 136.0,
+        "child_seconds": 120.0,
+        "child_count": 1,
+        "wasted_seconds": 120.0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "3524e6a693a2",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN",
+  "status": "COMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case redaction_adversarial:wf_00000000-960
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-960",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-20T10:00:02+00:00",
+    "ended_at": "2026-09-20T10:04:55+00:00",
+    "counts": {
+      "agents": 1,
+      "attempts": 1,
+      "interrupted": 0
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "ad100000000000001",
+        "key": "be3e66f4",
+        "label": "impl:redact-check",
+        "phase": "adversarial-phase-never-a-label",
+        "agent_type": "adversarial-type-never-a-label",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-20T10:00:02+00:00",
+        "last_ts": "2026-09-20T10:04:55+00:00",
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 3
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 4m wall-clock; 0s wasted across 0 retried attempts",
+      "run_id": "wf_00000000-960",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 293.0,
+        "attempt_seconds": 293.0,
+        "wasted_seconds": 0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "929327c490d5",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN",
+  "status": "COMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case attempt_facts:wf_00000000-af0
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-af0",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-01T10:00:00+00:00",
+    "ended_at": "2026-09-01T12:10:07+00:00",
+    "counts": {
+      "agents": 11,
+      "attempts": 11,
+      "interrupted": 1
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "af200000000000001",
+        "key": "e80b8a1d",
+        "label": "impl:edit-ok",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-01T10:00:00+00:00",
+        "last_ts": "2026-09-01T10:00:30+00:00",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 10
+        },
+        "event_count": 4,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [
+            "path-1"
+          ],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-2"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Edit",
+          "seconds_since_last_tool_at_end": 25.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "observed",
+              "basis": "tool_result",
+              "completion": "success",
+              "path": "path-1",
+              "repo": "path-2",
+              "line": "agent-af200000000000001.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "af200000000000002",
+        "key": "0746342d",
+        "label": "impl:write-error",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-01T10:10:00+00:00",
+        "last_ts": "2026-09-01T10:10:06+00:00",
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 5
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-2"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Write",
+          "seconds_since_last_tool_at_end": 1.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "attempted",
+              "basis": "tool_result",
+              "completion": "error",
+              "path": "path-8",
+              "repo": "path-2",
+              "line": "agent-af200000000000002.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "af200000000000003",
+        "key": "0574d9b2",
+        "label": "impl:killed-edit",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "killed",
+        "first_ts": "2026-09-01T11:00:00+00:00",
+        "last_ts": "2026-09-01T11:00:10+00:00",
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 5
+        },
+        "event_count": 3,
+        "interrupt": {
+          "cause": "unattributed",
+          "silence_seconds": 5.0
+        },
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [
+            {
+              "tool": "Edit",
+              "path": "path-3",
+              "line_no": 2
+            }
+          ],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-2"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Edit",
+          "seconds_since_last_tool_at_end": 5.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unpaired_write_call",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "attempted",
+              "basis": "tool_result",
+              "completion": "no_result",
+              "path": "path-3",
+              "repo": "path-2",
+              "line": "agent-af200000000000003.jsonl:2"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "af200000000000004",
+        "key": "082c5586",
+        "label": "impl:completed-inflight",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-01T11:10:00+00:00",
+        "last_ts": "2026-09-01T11:10:25+00:00",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 10
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-2"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Edit",
+          "seconds_since_last_tool_at_end": 20.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unpaired_write_call",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "attempted",
+              "basis": "tool_result",
+              "completion": "no_result",
+              "path": "path-9",
+              "repo": "path-2",
+              "line": "agent-af200000000000004.jsonl:2"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "af200000000000005",
+        "key": "949f1bd1",
+        "label": "impl:commit",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-01T11:20:00+00:00",
+        "last_ts": "2026-09-01T11:20:11+00:00",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 10
+        },
+        "event_count": 5,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [
+            "abc1234"
+          ],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-2"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 1.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_opaque_command",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "opaque_command",
+              "completion": "success",
+              "path": null,
+              "repo": "path-2",
+              "line": "agent-af200000000000005.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "af200000000000006",
+        "key": "dfc08d4f",
+        "label": "impl:backgrounded",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-01T11:30:00+00:00",
+        "last_ts": "2026-09-01T11:30:35+00:00",
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 5
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-2"
+          ],
+          "background_unfinished": 1,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 30.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_background_process",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "background_process",
+              "completion": "no_result",
+              "path": null,
+              "repo": "path-2",
+              "line": "agent-af200000000000006.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "af200000000000008",
+        "key": "1f3f4777",
+        "label": "impl:long-path",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-01T11:40:00+00:00",
+        "last_ts": "2026-09-01T11:40:11+00:00",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 10
+        },
+        "event_count": 5,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [
+            "path-4"
+          ],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-2"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Edit",
+          "seconds_since_last_tool_at_end": 1.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "truncated_field",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "observed",
+              "basis": "tool_result",
+              "completion": "success",
+              "path": "path-4",
+              "repo": "path-2",
+              "line": "agent-af200000000000008.jsonl:3"
+            },
+            {
+              "effect": "observed",
+              "basis": "tool_result",
+              "completion": "success",
+              "path": null,
+              "repo": "path-2",
+              "line": "agent-af200000000000008.jsonl:5"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "af200000000000009",
+        "key": "4dacec4d",
+        "label": "impl:cwd-norm",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-01T11:50:00+00:00",
+        "last_ts": "2026-09-01T11:50:11+00:00",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 10
+        },
+        "event_count": 5,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-5",
+            "path-6"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 1.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af200000000000010",
+        "key": "d6bda52f",
+        "label": "impl:no-ts",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-01T12:00:00+00:00",
+        "last_ts": "2026-09-01T12:00:40+00:00",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 10
+        },
+        "event_count": 5,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [
+            "path-7"
+          ],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-2"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Edit",
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "observed",
+              "basis": "tool_result",
+              "completion": "success",
+              "path": "path-7",
+              "repo": "path-2",
+              "line": "agent-af200000000000010.jsonl:5"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "af200000000000011",
+        "key": "b56b799b",
+        "label": "impl:parallel-order",
+        "phase": "Implement",
+        "agent_type": "workflow-subagent",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-01T12:10:00+00:00",
+        "last_ts": "2026-09-01T12:10:07+00:00",
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 5
+        },
+        "event_count": 5,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 9
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-2"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 2.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af200000000000012",
+        "key": "9cbfc6fe",
+        "label": "impl:missing-transcript",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": null,
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "none",
+      "source": null,
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:missing-transcript attempt 1 failed, cause not recorded in the transcript; the key was not retried",
+      "run_id": "wf_00000000-af0",
+      "agent_id": "af200000000000012",
+      "evidence": [],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "d8d40c36ffa3",
+      "silenced": false
+    },
+    {
+      "detector": "bash_backgrounded",
+      "severity": "minor",
+      "title": "1 Bash command timed out and moved to the background",
+      "run_id": "wf_00000000-af0",
+      "agent_id": "af200000000000006",
+      "evidence": [
+        "agent-af200000000000006.jsonl:3 [bash_backgrounded]"
+      ],
+      "metrics": {
+        "count": 1
+      },
+      "rule_id": "R-NO-LONG-BASH",
+      "rule_ids": [
+        "R-NO-LONG-BASH"
+      ],
+      "finding_id": "cac37d71e6af",
+      "silenced": false
+    },
+    {
+      "detector": "mislabeled_kill",
+      "severity": "info",
+      "title": "impl:killed-edit interrupted after 5s of silence, cause unattributed",
+      "run_id": "wf_00000000-af0",
+      "agent_id": "af200000000000003",
+      "evidence": [
+        "agent-af200000000000003.jsonl:2",
+        "agent-af200000000000003.jsonl:3 [kill_sentinel]"
+      ],
+      "metrics": {
+        "silence_seconds": 5.0,
+        "cause": "unattributed",
+        "events": 3
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "5e4e7d9f4028",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 2h10m wall-clock; 10s wasted across 0 retried attempts and 2 final attempts that ended without a result",
+      "run_id": "wf_00000000-af0",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 7807.0,
+        "attempt_seconds": 186.0,
+        "wasted_seconds": 10.0,
+        "wasted_tokens": 10
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "34ee306d7954",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [
+    {
+      "rule_id": "R-NO-LONG-BASH",
+      "count": 1
+    }
+  ],
+  "verdict": "DEGRADED",
+  "status": "COMPLETE",
+  "stories": [
+    {
+      "agent": "impl:missing-transcript",
+      "severity": "major",
+      "text": "Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "d8d40c36ffa3"
+      ]
+    },
+    {
+      "agent": "impl:backgrounded",
+      "severity": "minor",
+      "text": "1 Bash commands backgrounded.",
+      "finding_ids": [
+        "cac37d71e6af"
+      ]
+    }
+  ],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:attempt_failed_causes
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c01",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-26T09:00:01+00:00",
+    "ended_at": "2026-09-26T10:44:55+00:00",
+    "counts": {
+      "agents": 11,
+      "attempts": 11,
+      "interrupted": 0
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "af100000000000001",
+        "key": "68ed1cd6",
+        "label": "impl:usage-session",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-26T09:00:01+00:00",
+        "last_ts": "2026-09-26T09:04:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af100000000000002",
+        "key": "c2a7c6ae",
+        "label": "impl:usage-weekly",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-26T09:10:00+00:00",
+        "last_ts": "2026-09-26T09:14:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af100000000000003",
+        "key": "fd2c95ad",
+        "label": "impl:machine-sleep",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-26T09:20:00+00:00",
+        "last_ts": "2026-09-26T09:24:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af100000000000004",
+        "key": "5d0c5402",
+        "label": "impl:api-error",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-26T09:30:00+00:00",
+        "last_ts": "2026-09-26T09:34:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af100000000000005",
+        "key": "1a0d24d7",
+        "label": "impl:decoy",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-26T09:40:00+00:00",
+        "last_ts": "2026-09-26T09:44:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af100000000000006",
+        "key": "b155240d",
+        "label": "impl:marker-not-last",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-26T09:50:00+00:00",
+        "last_ts": "2026-09-26T09:54:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af1000000000000a1",
+        "key": "c22ba728",
+        "label": "impl:session-prose",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-26T10:00:00+00:00",
+        "last_ts": "2026-09-26T10:04:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af1000000000000a2",
+        "key": "6ca7662b",
+        "label": "impl:weekly-prose",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-26T10:10:00+00:00",
+        "last_ts": "2026-09-26T10:14:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af1000000000000a3",
+        "key": "e27aea1d",
+        "label": "impl:sleep-prose",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-26T10:20:00+00:00",
+        "last_ts": "2026-09-26T10:24:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af1000000000000a4",
+        "key": "cad6afe4",
+        "label": "impl:api-prose",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-26T10:30:00+00:00",
+        "last_ts": "2026-09-26T10:34:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "af100000000000007",
+        "key": "7a67d475",
+        "label": "impl:usage-session-leading-ws",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-26T10:40:01+00:00",
+        "last_ts": "2026-09-26T10:44:55+00:00",
+        "usage": {
+          "input_tokens": 45,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:usage-session attempt 1 failed: session usage limit reached, resets 2pm; the key was not retried",
+      "run_id": "wf_00000000-c01",
+      "agent_id": "af100000000000001",
+      "evidence": [
+        "agent-af100000000000001.jsonl:3 [usage_limit_session]"
+      ],
+      "metrics": {
+        "cause": "usage_limit_session",
+        "retry_now": "no",
+        "reset_time": "2pm"
+      },
+      "rule_id": "R-USAGE-LIMIT",
+      "rule_ids": [
+        "R-USAGE-LIMIT"
+      ],
+      "finding_id": "ebcb1dc4c077",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:usage-weekly attempt 1 failed: weekly usage limit reached, resets Monday 9am; the key was not retried",
+      "run_id": "wf_00000000-c01",
+      "agent_id": "af100000000000002",
+      "evidence": [
+        "agent-af100000000000002.jsonl:3 [usage_limit_weekly]"
+      ],
+      "metrics": {
+        "cause": "usage_limit_weekly",
+        "retry_now": "no",
+        "reset_time": "Monday 9am"
+      },
+      "rule_id": "R-USAGE-LIMIT",
+      "rule_ids": [
+        "R-USAGE-LIMIT"
+      ],
+      "finding_id": "fa4d2270eb1a",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:machine-sleep attempt 1 failed: the machine went to sleep; the key was not retried",
+      "run_id": "wf_00000000-c01",
+      "agent_id": "af100000000000003",
+      "evidence": [
+        "agent-af100000000000003.jsonl:3 [machine_sleep]"
+      ],
+      "metrics": {
+        "cause": "machine_sleep",
+        "retry_now": "yes",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "df33cf938dbb",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:api-error attempt 1 failed: a server error occurred; the key was not retried",
+      "run_id": "wf_00000000-c01",
+      "agent_id": "af100000000000004",
+      "evidence": [
+        "agent-af100000000000004.jsonl:3 [api_error]"
+      ],
+      "metrics": {
+        "cause": "api_error",
+        "retry_now": "yes",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "25507aa5e6e7",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:decoy attempt 1 failed, cause not recorded in the transcript; the key was not retried",
+      "run_id": "wf_00000000-c01",
+      "agent_id": "af100000000000005",
+      "evidence": [
+        "agent-af100000000000005.jsonl:3"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "53fc130f7104",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:session-prose attempt 1 failed, cause not recorded in the transcript; the key was not retried",
+      "run_id": "wf_00000000-c01",
+      "agent_id": "af1000000000000a1",
+      "evidence": [
+        "agent-af1000000000000a1.jsonl:3"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "648c2cbc4bb4",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:weekly-prose attempt 1 failed, cause not recorded in the transcript; the key was not retried",
+      "run_id": "wf_00000000-c01",
+      "agent_id": "af1000000000000a2",
+      "evidence": [
+        "agent-af1000000000000a2.jsonl:3"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "83f08df962d2",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:sleep-prose attempt 1 failed, cause not recorded in the transcript; the key was not retried",
+      "run_id": "wf_00000000-c01",
+      "agent_id": "af1000000000000a3",
+      "evidence": [
+        "agent-af1000000000000a3.jsonl:3"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "01a2008a883d",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:api-prose attempt 1 failed, cause not recorded in the transcript; the key was not retried",
+      "run_id": "wf_00000000-c01",
+      "agent_id": "af1000000000000a4",
+      "evidence": [
+        "agent-af1000000000000a4.jsonl:3"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "9921f586c132",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:usage-session-leading-ws attempt 1 failed: session usage limit reached, resets 2pm; the key was not retried",
+      "run_id": "wf_00000000-c01",
+      "agent_id": "af100000000000007",
+      "evidence": [
+        "agent-af100000000000007.jsonl:3 [usage_limit_session]"
+      ],
+      "metrics": {
+        "cause": "usage_limit_session",
+        "retry_now": "no",
+        "reset_time": "2pm"
+      },
+      "rule_id": "R-USAGE-LIMIT",
+      "rule_ids": [
+        "R-USAGE-LIMIT"
+      ],
+      "finding_id": "1bb0ca63dc7f",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 1h44m wall-clock; 49m wasted across 0 retried attempts and 10 final attempts that ended without a result",
+      "run_id": "wf_00000000-c01",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 6294.0,
+        "attempt_seconds": 3243.0,
+        "wasted_seconds": 2948.0,
+        "wasted_tokens": 570
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "53b3c520d00b",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [
+    {
+      "rule_id": "R-USAGE-LIMIT",
+      "count": 3
+    }
+  ],
+  "verdict": "DEGRADED",
+  "status": "COMPLETE",
+  "stories": [
+    {
+      "agent": "impl:usage-session",
+      "severity": "major",
+      "text": "Attempt 1 failed: session usage limit reached, resets 2pm.",
+      "finding_ids": [
+        "ebcb1dc4c077"
+      ]
+    },
+    {
+      "agent": "impl:usage-weekly",
+      "severity": "major",
+      "text": "Attempt 1 failed: weekly usage limit reached, resets Monday 9am.",
+      "finding_ids": [
+        "fa4d2270eb1a"
+      ]
+    },
+    {
+      "agent": "impl:machine-sleep",
+      "severity": "major",
+      "text": "Attempt 1 failed: the machine went to sleep.",
+      "finding_ids": [
+        "df33cf938dbb"
+      ]
+    },
+    {
+      "agent": "impl:api-error",
+      "severity": "major",
+      "text": "Attempt 1 failed: a server error occurred.",
+      "finding_ids": [
+        "25507aa5e6e7"
+      ]
+    },
+    {
+      "agent": "impl:decoy",
+      "severity": "major",
+      "text": "Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "53fc130f7104"
+      ]
+    },
+    {
+      "agent": "impl:session-prose",
+      "severity": "major",
+      "text": "Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "648c2cbc4bb4"
+      ]
+    },
+    {
+      "agent": "impl:weekly-prose",
+      "severity": "major",
+      "text": "Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "83f08df962d2"
+      ]
+    },
+    {
+      "agent": "impl:sleep-prose",
+      "severity": "major",
+      "text": "Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "01a2008a883d"
+      ]
+    },
+    {
+      "agent": "impl:api-prose",
+      "severity": "major",
+      "text": "Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "9921f586c132"
+      ]
+    },
+    {
+      "agent": "impl:usage-session-leading-ws",
+      "severity": "major",
+      "text": "Attempt 1 failed: session usage limit reached, resets 2pm.",
+      "finding_ids": [
+        "1bb0ca63dc7f"
+      ]
+    }
+  ],
+  "next": [
+    {
+      "grade": "decide",
+      "text": "wait until 2pm before relaunching",
+      "command": null
+    },
+    {
+      "grade": "decide",
+      "text": "rules that would have prevented this",
+      "command": "agent-postmortem rules propose"
+    }
+  ]
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:attempt_failed_retry_tail
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c02",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-27T09:00:01+00:00",
+    "ended_at": "2026-09-27T09:24:55+00:00",
+    "counts": {
+      "agents": 2,
+      "attempts": 4,
+      "interrupted": 0
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "afa10000000000001",
+        "key": "8f391d96",
+        "label": "impl:both-failed",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-27T09:00:01+00:00",
+        "last_ts": "2026-09-27T09:04:55+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "afa10000000000002",
+        "key": "8f391d96",
+        "label": "impl:both-failed",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 2,
+        "outcome": "failed",
+        "first_ts": "2026-09-27T09:06:00+00:00",
+        "last_ts": "2026-09-27T09:09:55+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "afb10000000000001",
+        "key": "d72c6620",
+        "label": "impl:still-open",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-27T09:20:00+00:00",
+        "last_ts": "2026-09-27T09:24:55+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "afb10000000000002",
+        "key": "d72c6620",
+        "label": "impl:still-open",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 2,
+        "outcome": "unknown",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": null,
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "none",
+      "source": null,
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:both-failed attempt 1 failed, cause not recorded in the transcript; retried, no later attempt completed",
+      "run_id": "wf_00000000-c02",
+      "agent_id": "afa10000000000001",
+      "evidence": [
+        "agent-afa10000000000001.jsonl:2"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "f82a88954a4b",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:both-failed attempt 2 failed, cause not recorded in the transcript; the key was not retried",
+      "run_id": "wf_00000000-c02",
+      "agent_id": "afa10000000000002",
+      "evidence": [
+        "agent-afa10000000000002.jsonl:2"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "81ab054db250",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:still-open attempt 1 failed, cause not recorded in the transcript; retried, no later attempt completed",
+      "run_id": "wf_00000000-c02",
+      "agent_id": "afb10000000000001",
+      "evidence": [
+        "agent-afb10000000000001.jsonl:2"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "436337b8c72c",
+      "silenced": false
+    },
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "impl:both-failed restarted 1 time, 4m wasted",
+      "run_id": "wf_00000000-c02",
+      "agent_id": "afa10000000000002",
+      "evidence": [
+        "agent-afa10000000000002.jsonl:1"
+      ],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 294.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "92147fdb3236",
+      "silenced": false
+    },
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "impl:still-open restarted 1 time, 4m wasted",
+      "run_id": "wf_00000000-c02",
+      "agent_id": "afb10000000000002",
+      "evidence": [],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 295.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "da582e7bfef4",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 24m wall-clock; 13m wasted across 2 retried attempts and 1 final attempt that ended without a result",
+      "run_id": "wf_00000000-c02",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 1494.0,
+        "attempt_seconds": 824.0,
+        "wasted_seconds": 824.0,
+        "wasted_tokens": 156
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "335fba6581a9",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [
+    {
+      "rule_id": "R-RETRY-SAFE",
+      "count": 2
+    }
+  ],
+  "verdict": "DEGRADED",
+  "status": "COMPLETE",
+  "stories": [
+    {
+      "agent": "impl:still-open",
+      "severity": "major",
+      "text": "Restarted 1 time. Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "436337b8c72c",
+        "da582e7bfef4"
+      ]
+    },
+    {
+      "agent": "impl:both-failed",
+      "severity": "major",
+      "text": "Restarted 1 time. Attempt 1 failed: cause not recorded in the transcript. Attempt 2 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "f82a88954a4b",
+        "81ab054db250",
+        "92147fdb3236"
+      ]
+    }
+  ],
+  "next": [
+    {
+      "grade": "decide",
+      "text": "rules that would have prevented this",
+      "command": "agent-postmortem rules propose"
+    }
+  ]
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:clean_run
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c05",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-01-05T10:00:01+00:00",
+    "ended_at": "2026-01-05T10:00:11+00:00",
+    "counts": {
+      "agents": 2,
+      "attempts": 2,
+      "interrupted": 0
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "ac100000000000001",
+        "key": "3d3e6b07",
+        "label": "impl:alpha",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-01-05T10:00:01+00:00",
+        "last_ts": "2026-01-05T10:00:10+00:00",
+        "usage": {
+          "input_tokens": 270,
+          "output_tokens": 65,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 6,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 5.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_opaque_command",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "opaque_command",
+              "completion": "success",
+              "path": null,
+              "repo": "path-1",
+              "line": "agent-ac100000000000001.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "ac100000000000002",
+        "key": "4bca03fe",
+        "label": "impl:beta",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-01-05T10:00:02+00:00",
+        "last_ts": "2026-01-05T10:00:11+00:00",
+        "usage": {
+          "input_tokens": 250,
+          "output_tokens": 57,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 5,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 5.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_opaque_command",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "opaque_command",
+              "completion": "success",
+              "path": null,
+              "repo": "path-1",
+              "line": "agent-ac100000000000002.jsonl:3"
+            }
+          ]
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 10s wall-clock; 0s wasted across 0 retried attempts",
+      "run_id": "wf_00000000-c05",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 10.0,
+        "attempt_seconds": 18.0,
+        "wasted_seconds": 0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "0a5f91f24e46",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN",
+  "status": "COMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:codex_write_denied
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c06",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-01-09T08:00:01+00:00",
+    "ended_at": "2026-01-09T08:25:00+00:00",
+    "counts": {
+      "agents": 3,
+      "attempts": 3,
+      "interrupted": 0
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "ac500000000000001",
+        "key": "5ac6a9a1",
+        "label": "review:proxy-doctor",
+        "phase": "Review",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-01-09T08:00:01+00:00",
+        "last_ts": "2026-01-09T08:05:00+00:00",
+        "usage": {
+          "input_tokens": 170,
+          "output_tokens": 40,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 4,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 295.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_delegation",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "delegation",
+              "completion": "error",
+              "path": null,
+              "repo": "path-1",
+              "line": "agent-ac500000000000001.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "ac500000000000002",
+        "key": "ba0b2e98",
+        "label": "impl:cleanup",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-01-09T08:10:00+00:00",
+        "last_ts": "2026-01-09T08:15:00+00:00",
+        "usage": {
+          "input_tokens": 145,
+          "output_tokens": 33,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 4,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 295.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_delegation",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "delegation",
+              "completion": "error",
+              "path": null,
+              "repo": "path-1",
+              "line": "agent-ac500000000000002.jsonl:3"
+            }
+          ]
+        }
+      },
+      {
+        "agent_id": "ac500000000000003",
+        "key": "f4d8ea5c",
+        "label": "impl:print-marker",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-01-09T08:20:00+00:00",
+        "last_ts": "2026-01-09T08:25:00+00:00",
+        "usage": {
+          "input_tokens": 75,
+          "output_tokens": 33,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 4,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [
+            "path-1"
+          ],
+          "background_unfinished": 0,
+          "last_tool": "Bash",
+          "seconds_since_last_tool_at_end": 295.0
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "shell_context_unverified",
+            "possible_opaque_command",
+            "unassignable_attempt"
+          ],
+          "entries": [
+            {
+              "effect": "possible",
+              "basis": "opaque_command",
+              "completion": "success",
+              "path": null,
+              "repo": "path-1",
+              "line": "agent-ac500000000000003.jsonl:3"
+            }
+          ]
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "codex_write_denied",
+      "severity": "minor",
+      "title": "1 sandboxed write denied",
+      "run_id": "wf_00000000-c06",
+      "agent_id": "ac500000000000001",
+      "evidence": [
+        "agent-ac500000000000001.jsonl:3 [sandbox_write_denied]"
+      ],
+      "metrics": {
+        "count": 1,
+        "marker": [
+          "sandbox_write_denied"
+        ]
+      },
+      "rule_id": "R-CODEX-CONTRACT",
+      "rule_ids": [
+        "R-CODEX-CONTRACT",
+        "R-ASSERT-ARTIFACT"
+      ],
+      "finding_id": "e249f394ca38",
+      "silenced": false
+    },
+    {
+      "detector": "codex_write_denied",
+      "severity": "minor",
+      "title": "1 sandboxed write denied",
+      "run_id": "wf_00000000-c06",
+      "agent_id": "ac500000000000002",
+      "evidence": [
+        "agent-ac500000000000002.jsonl:3 [shell_guard_block]"
+      ],
+      "metrics": {
+        "count": 1,
+        "marker": [
+          "shell_guard_block"
+        ]
+      },
+      "rule_id": "R-CODEX-CONTRACT",
+      "rule_ids": [
+        "R-CODEX-CONTRACT",
+        "R-ASSERT-ARTIFACT"
+      ],
+      "finding_id": "1d28842ff6f0",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 24m wall-clock; 0s wasted across 0 retried attempts",
+      "run_id": "wf_00000000-c06",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 1499.0,
+        "attempt_seconds": 899.0,
+        "wasted_seconds": 0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "e090d9f7f727",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [
+    {
+      "rule_id": "R-ASSERT-ARTIFACT",
+      "count": 2
+    },
+    {
+      "rule_id": "R-CODEX-CONTRACT",
+      "count": 2
+    }
+  ],
+  "verdict": "CLEAN",
+  "status": "COMPLETE",
+  "stories": [
+    {
+      "agent": "review:proxy-doctor",
+      "severity": "minor",
+      "text": "1 sandbox write denials.",
+      "finding_ids": [
+        "e249f394ca38"
+      ]
+    },
+    {
+      "agent": "impl:cleanup",
+      "severity": "minor",
+      "text": "1 sandbox write denials.",
+      "finding_ids": [
+        "1d28842ff6f0"
+      ]
+    }
+  ],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:incomplete_journal
+exit=4
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c08",
+    "kind": "workflow",
+    "status": "INCOMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-20T10:00:01+00:00",
+    "ended_at": "2026-09-20T10:04:59+00:00",
+    "counts": {
+      "agents": 1,
+      "attempts": 1,
+      "interrupted": 0
+    },
+    "diagnostics": [
+      "journal.jsonl:2: Expecting value: line 1 column 1 (char 0)"
+    ],
+    "attempts": [
+      {
+        "agent_id": "ad000000000000001",
+        "key": "08f80b24",
+        "label": "impl:incomplete",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-20T10:00:01+00:00",
+        "last_ts": "2026-09-20T10:04:59+00:00",
+        "usage": {
+          "input_tokens": 20,
+          "output_tokens": 10,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 4m wall-clock; 0s wasted across 0 retried attempts",
+      "run_id": "wf_00000000-c08",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 298.0,
+        "attempt_seconds": 298.0,
+        "wasted_seconds": 0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "7d9cd37c6854",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN (INCOMPLETE)",
+  "status": "INCOMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_resolved
+exit=4
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c0a",
+    "kind": "workflow",
+    "status": "INCOMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-25T09:00:01+00:00",
+    "ended_at": "2026-09-25T10:14:55+00:00",
+    "counts": {
+      "agents": 7,
+      "attempts": 10,
+      "interrupted": 1
+    },
+    "diagnostics": [
+      "journal.jsonl: 'failed' event for key@18 has no open attempt",
+      "journal.jsonl: key@13 attempt 1 was replaced by a later attempt with no recorded outcome"
+    ],
+    "attempts": [
+      {
+        "agent_id": "ad200000000000001",
+        "key": "f10eaf17",
+        "label": "impl:completed",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-25T09:00:01+00:00",
+        "last_ts": "2026-09-25T09:04:50+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ad300000000000001",
+        "key": "85f736d7",
+        "label": "impl:failed",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-25T09:10:00+00:00",
+        "last_ts": "2026-09-25T09:10:05+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ad400000000000001",
+        "key": "16b6233d",
+        "label": "impl:retry",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-25T09:20:00+00:00",
+        "last_ts": "2026-09-25T09:20:05+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ad400000000000002",
+        "key": "16b6233d",
+        "label": "impl:retry",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 2,
+        "outcome": "completed",
+        "first_ts": "2026-09-25T09:23:00+00:00",
+        "last_ts": "2026-09-25T09:27:50+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ad500000000000001",
+        "key": "fd856c5f",
+        "label": "impl:killed-retry",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "killed",
+        "first_ts": "2026-09-25T09:30:00+00:00",
+        "last_ts": "2026-09-25T09:40:00+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": {
+          "cause": "runtime",
+          "silence_seconds": 595.0
+        },
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ad500000000000002",
+        "key": "fd856c5f",
+        "label": "impl:killed-retry",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 2,
+        "outcome": "completed",
+        "first_ts": "2026-09-25T09:40:05+00:00",
+        "last_ts": "2026-09-25T09:45:00+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ad600000000000001",
+        "key": "96183bb4",
+        "label": "impl:superseded",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "superseded",
+        "first_ts": "2026-09-25T09:50:00+00:00",
+        "last_ts": "2026-09-25T09:50:05+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ad600000000000002",
+        "key": "96183bb4",
+        "label": "impl:superseded",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 2,
+        "outcome": "completed",
+        "first_ts": "2026-09-25T09:55:05+00:00",
+        "last_ts": "2026-09-25T10:00:00+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ad700000000000001",
+        "key": "97c622dd",
+        "label": "impl:double-fail",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-25T10:05:00+00:00",
+        "last_ts": "2026-09-25T10:05:05+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ad800000000000001",
+        "key": "3bd89056",
+        "label": "impl:failed-sentinel",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": "2026-09-25T10:10:00+00:00",
+        "last_ts": "2026-09-25T10:14:55+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 3,
+        "interrupt": {
+          "cause": "unattributed",
+          "silence_seconds": 290.0
+        },
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:failed attempt 1 failed, cause not recorded in the transcript; the key was not retried",
+      "run_id": "wf_00000000-c0a",
+      "agent_id": "ad300000000000001",
+      "evidence": [
+        "agent-ad300000000000001.jsonl:2"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "ab00b4ca5fc5",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "minor",
+      "title": "impl:retry attempt 1 failed, cause not recorded in the transcript; a later attempt completed",
+      "run_id": "wf_00000000-c0a",
+      "agent_id": "ad400000000000001",
+      "evidence": [
+        "agent-ad400000000000001.jsonl:2"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "739c835665ec",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:double-fail attempt 1 failed, cause not recorded in the transcript; the key was not retried",
+      "run_id": "wf_00000000-c0a",
+      "agent_id": "ad700000000000001",
+      "evidence": [
+        "agent-ad700000000000001.jsonl:2"
+      ],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "45ed395ace7d",
+      "silenced": false
+    },
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:failed-sentinel attempt 1 failed: interrupted before finishing; the key was not retried",
+      "run_id": "wf_00000000-c0a",
+      "agent_id": "ad800000000000001",
+      "evidence": [
+        "agent-ad800000000000001.jsonl:3 [kill_sentinel]"
+      ],
+      "metrics": {
+        "cause": "interrupted",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "c03cb59f3fbb",
+      "silenced": false
+    },
+    {
+      "detector": "mislabeled_kill",
+      "severity": "minor",
+      "title": "impl:killed-retry attempt 1 was killed by the runtime after 595s of silence, logged as a user interrupt",
+      "run_id": "wf_00000000-c0a",
+      "agent_id": "ad500000000000001",
+      "evidence": [
+        "agent-ad500000000000001.jsonl:2",
+        "agent-ad500000000000001.jsonl:3 [kill_sentinel]"
+      ],
+      "metrics": {
+        "silence_seconds": 595.0,
+        "cause": "runtime",
+        "events": 3
+      },
+      "rule_id": "R-MONITOR-RETRIES",
+      "rule_ids": [
+        "R-MONITOR-RETRIES"
+      ],
+      "finding_id": "d72b8ae1a342",
+      "silenced": false
+    },
+    {
+      "detector": "mislabeled_kill",
+      "severity": "info",
+      "title": "impl:failed-sentinel interrupted after 290s of silence, cause unattributed",
+      "run_id": "wf_00000000-c0a",
+      "agent_id": "ad800000000000001",
+      "evidence": [
+        "agent-ad800000000000001.jsonl:2",
+        "agent-ad800000000000001.jsonl:3 [kill_sentinel]"
+      ],
+      "metrics": {
+        "silence_seconds": 290.0,
+        "cause": "unattributed",
+        "events": 3
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "8fafaabac0b1",
+      "silenced": false
+    },
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "impl:retry restarted 1 time, 5s wasted",
+      "run_id": "wf_00000000-c0a",
+      "agent_id": "ad400000000000002",
+      "evidence": [
+        "agent-ad400000000000002.jsonl:1"
+      ],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 5.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "211495091483",
+      "silenced": false
+    },
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "impl:killed-retry restarted 1 time, 10m wasted",
+      "run_id": "wf_00000000-c0a",
+      "agent_id": "ad500000000000002",
+      "evidence": [
+        "agent-ad500000000000001.jsonl:3 [kill_sentinel]",
+        "agent-ad500000000000002.jsonl:1"
+      ],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 600.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "2d3386fc1713",
+      "silenced": false
+    },
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "impl:superseded restarted 1 time, 5s wasted",
+      "run_id": "wf_00000000-c0a",
+      "agent_id": "ad600000000000002",
+      "evidence": [
+        "agent-ad600000000000002.jsonl:1"
+      ],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 5.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "d127bdf47585",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 1h14m wall-clock; 15m wasted across 3 retried attempts and 3 final attempts that ended without a result",
+      "run_id": "wf_00000000-c0a",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 4494.0,
+        "attempt_seconds": 2084.0,
+        "wasted_seconds": 915.0,
+        "wasted_tokens": 312
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "2b505c32eec7",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [
+    {
+      "rule_id": "R-RETRY-SAFE",
+      "count": 3
+    },
+    {
+      "rule_id": "R-MONITOR-RETRIES",
+      "count": 1
+    }
+  ],
+  "verdict": "DEGRADED (INCOMPLETE)",
+  "status": "INCOMPLETE",
+  "stories": [
+    {
+      "agent": "impl:killed-retry",
+      "severity": "major",
+      "text": "Killed 1 time by the runtime (595s of silence).",
+      "finding_ids": [
+        "d72b8ae1a342",
+        "2d3386fc1713"
+      ]
+    },
+    {
+      "agent": "impl:retry",
+      "severity": "major",
+      "text": "Restarted 1 time. Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "739c835665ec",
+        "211495091483"
+      ]
+    },
+    {
+      "agent": "impl:superseded",
+      "severity": "major",
+      "text": "Restarted 1 time.",
+      "finding_ids": [
+        "d127bdf47585"
+      ]
+    },
+    {
+      "agent": "impl:failed",
+      "severity": "major",
+      "text": "Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "ab00b4ca5fc5"
+      ]
+    },
+    {
+      "agent": "impl:double-fail",
+      "severity": "major",
+      "text": "Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "45ed395ace7d"
+      ]
+    },
+    {
+      "agent": "impl:failed-sentinel",
+      "severity": "major",
+      "text": "Attempt 1 failed: interrupted before finishing.",
+      "finding_ids": [
+        "c03cb59f3fbb"
+      ]
+    }
+  ],
+  "next": [
+    {
+      "grade": "decide",
+      "text": "rules that would have prevented this",
+      "command": "agent-postmortem rules propose"
+    }
+  ]
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_unresolved
+exit=4
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c0b",
+    "kind": "workflow",
+    "status": "INCOMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-09-25T11:00:01+00:00",
+    "ended_at": "2026-09-25T11:00:10+00:00",
+    "counts": {
+      "agents": 1,
+      "attempts": 1,
+      "interrupted": 0
+    },
+    "diagnostics": [
+      "journal.jsonl: 'result' event for key@3 does not match the open attempt's agent id"
+    ],
+    "attempts": [
+      {
+        "agent_id": "ad900000000000001",
+        "key": "0c9a6451",
+        "label": "impl:foreign",
+        "phase": "Implement",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-09-25T11:00:01+00:00",
+        "last_ts": "2026-09-25T11:00:10+00:00",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "none",
+      "source": null,
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 9s wall-clock; 0s wasted across 0 retried attempts",
+      "run_id": "wf_00000000-c0b",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 9.0,
+        "attempt_seconds": 9.0,
+        "wasted_seconds": 0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "a3210da34b2a",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN (INCOMPLETE)",
+  "status": "INCOMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_orphan_failed
+exit=4
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c09",
+    "kind": "workflow",
+    "status": "INCOMPLETE",
+    "claude_version": null,
+    "started_at": null,
+    "ended_at": null,
+    "counts": {
+      "agents": 0,
+      "attempts": 0,
+      "interrupted": 0
+    },
+    "diagnostics": [
+      "journal.jsonl: 'failed' event for key@2 has no open attempt"
+    ],
+    "attempts": [],
+    "lifecycle": {
+      "terminal": "none",
+      "source": null,
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 0s wall-clock; 0s wasted across 0 retried attempts",
+      "run_id": "wf_00000000-c09",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 0.0,
+        "attempt_seconds": 0,
+        "wasted_seconds": 0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "df01957456ea",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "CLEAN (INCOMPLETE)",
+  "status": "INCOMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:missing_artifact
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c0c",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": "2.1.267",
+    "started_at": "2026-01-10T11:00:01+00:00",
+    "ended_at": "2026-01-10T11:15:00+00:00",
+    "counts": {
+      "agents": 2,
+      "attempts": 2,
+      "interrupted": 0
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "ac600000000000001",
+        "key": "a950a2bd",
+        "label": "audit:missing",
+        "phase": "Review",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-01-10T11:00:01+00:00",
+        "last_ts": "2026-01-10T11:05:00+00:00",
+        "usage": {
+          "input_tokens": 120,
+          "output_tokens": 30,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ac600000000000002",
+        "key": "c27d7d43",
+        "label": "audit:present",
+        "phase": "Review",
+        "agent_type": "general-purpose",
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": "2026-01-10T11:10:00+00:00",
+        "last_ts": "2026-01-10T11:15:00+00:00",
+        "usage": {
+          "input_tokens": 110,
+          "output_tokens": 25,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "event_count": 2,
+        "interrupt": null,
+        "reported": null,
+        "facts": {
+          "paths_written": [],
+          "in_flight": [],
+          "commits": [],
+          "commit_commands_without_id": 0,
+          "cwds": [],
+          "background_unfinished": 0,
+          "last_tool": null,
+          "seconds_since_last_tool_at_end": null
+        },
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "missing_artifact",
+      "severity": "info",
+      "title": "path-1 is absent now; the tool cannot tell whether it existed when the run ended",
+      "run_id": "wf_00000000-c0c",
+      "agent_id": "ac600000000000001",
+      "evidence": [
+        "agent-ac600000000000001.jsonl:1"
+      ],
+      "metrics": {
+        "paths": [
+          "path-1"
+        ],
+        "verified": true
+      },
+      "rule_id": "R-ASSERT-ARTIFACT",
+      "rule_ids": [
+        "R-ASSERT-ARTIFACT"
+      ],
+      "finding_id": "7be9bb94f679",
+      "silenced": false
+    },
+    {
+      "detector": "missing_artifact",
+      "severity": "info",
+      "title": "path-2 is absent now; the tool cannot tell whether it existed when the run ended",
+      "run_id": "wf_00000000-c0c",
+      "agent_id": "ac600000000000002",
+      "evidence": [
+        "agent-ac600000000000002.jsonl:1"
+      ],
+      "metrics": {
+        "paths": [
+          "path-2"
+        ],
+        "verified": true
+      },
+      "rule_id": "R-ASSERT-ARTIFACT",
+      "rule_ids": [
+        "R-ASSERT-ARTIFACT"
+      ],
+      "finding_id": "031f6d6a575e",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 14m wall-clock; 0s wasted across 0 retried attempts",
+      "run_id": "wf_00000000-c0c",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 899.0,
+        "attempt_seconds": 599.0,
+        "wasted_seconds": 0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "4ddea386661f",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [
+    {
+      "rule_id": "R-ASSERT-ARTIFACT",
+      "count": 2
+    }
+  ],
+  "verdict": "CLEAN",
+  "status": "COMPLETE",
+  "stories": [],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:claim_contradiction
+exit=0
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c04",
+    "kind": "workflow",
+    "status": "COMPLETE",
+    "claude_version": null,
+    "started_at": null,
+    "ended_at": null,
+    "counts": {
+      "agents": 11,
+      "attempts": 11,
+      "interrupted": 0
+    },
+    "diagnostics": [],
+    "attempts": [
+      {
+        "agent_id": "acd10000000000001",
+        "key": "82e0c985",
+        "label": "impl:tests-failed",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok",
+            "tests_failed",
+            "tests_passed"
+          ],
+          "claims": {
+            "ok": true,
+            "tests_passed": 8,
+            "tests_failed": 2
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "acd10000000000002",
+        "key": "2cb8b5b0",
+        "label": "impl:suite-failed",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "suite_failed",
+            "suite_passed"
+          ],
+          "claims": {
+            "suite_passed": 4,
+            "suite_failed": 1
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "acd10000000000003",
+        "key": "2613cb29",
+        "label": "impl:ok-false",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok",
+            "status"
+          ],
+          "claims": {
+            "ok": false,
+            "status": "blocked"
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "acd10000000000004",
+        "key": "e56216f1",
+        "label": "impl:ready-false",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ready"
+          ],
+          "claims": {
+            "ready": false
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "acd10000000000005",
+        "key": "4d8d107e",
+        "label": "impl:blockers",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "blockers"
+          ],
+          "claims": {
+            "blockers_count": 3
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "acd10000000000006",
+        "key": "8eeef172",
+        "label": "impl:report-missing",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "report_path"
+          ],
+          "claims": {
+            "report_path": "path-1"
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "acd10000000000007",
+        "key": "486703c3",
+        "label": "impl:two-clauses",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok",
+            "tests_failed",
+            "tests_passed"
+          ],
+          "claims": {
+            "ok": false,
+            "tests_passed": 3,
+            "tests_failed": 1
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "acd10000000000008",
+        "key": "5eb4ac25",
+        "label": "impl:clean-dict",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "note",
+            "ok",
+            "report_path",
+            "summary",
+            "tests_failed",
+            "tests_passed"
+          ],
+          "claims": {
+            "ok": true,
+            "tests_passed": 10,
+            "tests_failed": 0,
+            "report_path": "path-2"
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "acd10000000000009",
+        "key": "4ea1fd8f",
+        "label": "impl:text-result",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "text",
+          "text_length": 47
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "acd1000000000000a",
+        "key": "bda3549d",
+        "label": "impl:commits-mixed",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "commits"
+          ],
+          "claims": {
+            "commits_count": 3,
+            "commits": [
+              "abc1234",
+              "deadbeefcafe0123"
+            ]
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "acd1000000000000b",
+        "key": "533cc154",
+        "label": "impl:failed-attempt",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "failed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": null,
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "attempt_failed",
+      "severity": "major",
+      "title": "impl:failed-attempt attempt 1 failed, cause not recorded in the transcript; the key was not retried",
+      "run_id": "wf_00000000-c04",
+      "agent_id": "acd1000000000000b",
+      "evidence": [],
+      "metrics": {
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "158ebb87716c",
+      "silenced": false
+    },
+    {
+      "detector": "claim_contradiction",
+      "severity": "major",
+      "title": "impl:tests-failed attempt 1 completed but its own result reports 2 failed tests",
+      "run_id": "wf_00000000-c04",
+      "agent_id": "acd10000000000001",
+      "evidence": [
+        "journal.jsonl:3"
+      ],
+      "metrics": {
+        "clauses": [
+          "tests_failed"
+        ],
+        "claims": {
+          "ok": true,
+          "tests_passed": 8,
+          "tests_failed": 2
+        }
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "868e471691c6",
+      "silenced": false
+    },
+    {
+      "detector": "claim_contradiction",
+      "severity": "major",
+      "title": "impl:suite-failed attempt 1 completed but its own result reports 1 failed suite check",
+      "run_id": "wf_00000000-c04",
+      "agent_id": "acd10000000000002",
+      "evidence": [
+        "journal.jsonl:5"
+      ],
+      "metrics": {
+        "clauses": [
+          "suite_failed"
+        ],
+        "claims": {
+          "suite_passed": 4,
+          "suite_failed": 1
+        }
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "d8f99a824f06",
+      "silenced": false
+    },
+    {
+      "detector": "claim_contradiction",
+      "severity": "major",
+      "title": "impl:ok-false attempt 1 completed but its own result reports ok is false",
+      "run_id": "wf_00000000-c04",
+      "agent_id": "acd10000000000003",
+      "evidence": [
+        "journal.jsonl:7"
+      ],
+      "metrics": {
+        "clauses": [
+          "ok_false"
+        ],
+        "claims": {
+          "ok": false,
+          "status": "blocked"
+        }
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "5d1e9e9ddc9f",
+      "silenced": false
+    },
+    {
+      "detector": "claim_contradiction",
+      "severity": "major",
+      "title": "impl:ready-false attempt 1 completed but its own result reports ready is false",
+      "run_id": "wf_00000000-c04",
+      "agent_id": "acd10000000000004",
+      "evidence": [
+        "journal.jsonl:9"
+      ],
+      "metrics": {
+        "clauses": [
+          "ready_false"
+        ],
+        "claims": {
+          "ready": false
+        }
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "d68c5ed15e12",
+      "silenced": false
+    },
+    {
+      "detector": "claim_contradiction",
+      "severity": "major",
+      "title": "impl:blockers attempt 1 completed but its own result reports 3 blockers",
+      "run_id": "wf_00000000-c04",
+      "agent_id": "acd10000000000005",
+      "evidence": [
+        "journal.jsonl:11"
+      ],
+      "metrics": {
+        "clauses": [
+          "blockers"
+        ],
+        "claims": {
+          "blockers_count": 3
+        }
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "2ef9cb775f3a",
+      "silenced": false
+    },
+    {
+      "detector": "claim_contradiction",
+      "severity": "info",
+      "title": "path-1 is absent now; the tool cannot tell whether it existed when the run ended",
+      "run_id": "wf_00000000-c04",
+      "agent_id": "acd10000000000006",
+      "evidence": [
+        "journal.jsonl:13"
+      ],
+      "metrics": {
+        "clauses": [
+          "report_path_missing"
+        ],
+        "claims": {
+          "report_path": "path-1"
+        }
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "69d4f2f5f6e7",
+      "silenced": false
+    },
+    {
+      "detector": "claim_contradiction",
+      "severity": "major",
+      "title": "impl:two-clauses attempt 1 completed but its own result reports 1 failed test; ok is false",
+      "run_id": "wf_00000000-c04",
+      "agent_id": "acd10000000000007",
+      "evidence": [
+        "journal.jsonl:15"
+      ],
+      "metrics": {
+        "clauses": [
+          "tests_failed",
+          "ok_false"
+        ],
+        "claims": {
+          "ok": false,
+          "tests_passed": 3,
+          "tests_failed": 1
+        }
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "4fc19209729b",
+      "silenced": false
+    },
+    {
+      "detector": "claim_contradiction",
+      "severity": "info",
+      "title": "path-2 is absent now; the tool cannot tell whether it existed when the run ended",
+      "run_id": "wf_00000000-c04",
+      "agent_id": "acd10000000000008",
+      "evidence": [
+        "journal.jsonl:17"
+      ],
+      "metrics": {
+        "clauses": [
+          "report_path_missing"
+        ],
+        "claims": {
+          "ok": true,
+          "tests_passed": 10,
+          "tests_failed": 0,
+          "report_path": "path-2"
+        }
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "d2ba7b528030",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 0s wall-clock; 0s wasted across 0 retried attempts and 1 final attempt that ended without a result",
+      "run_id": "wf_00000000-c04",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 0.0,
+        "attempt_seconds": 0.0,
+        "wasted_seconds": 0.0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "a095adaaa02b",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [],
+  "verdict": "DEGRADED",
+  "status": "COMPLETE",
+  "stories": [
+    {
+      "agent": "impl:tests-failed",
+      "severity": "major",
+      "text": "Attempt 1 completed but reported 2 failed tests.",
+      "finding_ids": [
+        "868e471691c6"
+      ]
+    },
+    {
+      "agent": "impl:suite-failed",
+      "severity": "major",
+      "text": "Attempt 1 completed but reported 1 failed suite check.",
+      "finding_ids": [
+        "d8f99a824f06"
+      ]
+    },
+    {
+      "agent": "impl:ok-false",
+      "severity": "major",
+      "text": "Attempt 1 completed but reported ok is false.",
+      "finding_ids": [
+        "5d1e9e9ddc9f"
+      ]
+    },
+    {
+      "agent": "impl:ready-false",
+      "severity": "major",
+      "text": "Attempt 1 completed but reported ready is false.",
+      "finding_ids": [
+        "d68c5ed15e12"
+      ]
+    },
+    {
+      "agent": "impl:blockers",
+      "severity": "major",
+      "text": "Attempt 1 completed but reported 3 blockers.",
+      "finding_ids": [
+        "2ef9cb775f3a"
+      ]
+    },
+    {
+      "agent": "impl:two-clauses",
+      "severity": "major",
+      "text": "Attempt 1 completed but reported 1 failed test; ok is false.",
+      "finding_ids": [
+        "4fc19209729b"
+      ]
+    },
+    {
+      "agent": "impl:failed-attempt",
+      "severity": "major",
+      "text": "Attempt 1 failed: cause not recorded in the transcript.",
+      "finding_ids": [
+        "158ebb87716c"
+      ]
+    }
+  ],
+  "next": []
+}
+<<<STDERR>>>
+<<<END>>>
+##### case synthetic:no_canonical_agent_id
+exit=4
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c20",
+    "kind": "workflow",
+    "status": "INCOMPLETE",
+    "claude_version": null,
+    "started_at": null,
+    "ended_at": null,
+    "counts": {
+      "agents": 4,
+      "attempts": 5,
+      "interrupted": 0
+    },
+    "diagnostics": [
+      "journal.jsonl: 'failed' event for key@8 has no open attempt",
+      "journal.jsonl:2: started event has no canonical agentId",
+      "journal.jsonl: agent id did not match the expected format, replaced with agent-e3b0c442",
+      "journal.jsonl:3: started event has no canonical agentId",
+      "journal.jsonl: agent id did not match the expected format, replaced with agent-e3b0c442",
+      "journal.jsonl:4: started event has no canonical agentId",
+      "journal.jsonl: agent id did not match the expected format, replaced with agent-3d42a0e0",
+      "journal.jsonl: key@5 attempt 1 was replaced by a later attempt with no recorded outcome"
+    ],
+    "attempts": [
+      {
+        "agent_id": "agent-e3b0c442",
+        "key": "98ea7ac2",
+        "label": "impl:no-id",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "unknown",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": null,
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "agent-e3b0c442",
+        "key": "02d69aab",
+        "label": "impl:null-id",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "unknown",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": null,
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "agent-3d42a0e0",
+        "key": "1f5ea85a",
+        "label": "impl:bad-id",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "unknown",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": null,
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ac900000000000001",
+        "key": "781dcbdf",
+        "label": "impl:first",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "superseded",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": null,
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ac900000000000002",
+        "key": "781dcbdf",
+        "label": "impl:second",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 2,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "none",
+      "source": null,
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "impl:first restarted 1 time, 0s wasted",
+      "run_id": "wf_00000000-c20",
+      "agent_id": "ac900000000000002",
+      "evidence": [],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 0.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "9edb41c3ff09",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 0s wall-clock; 0s wasted across 1 retried attempts",
+      "run_id": "wf_00000000-c20",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 0.0,
+        "attempt_seconds": 0.0,
+        "wasted_seconds": 0.0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "d1819bc9e496",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [
+    {
+      "rule_id": "R-RETRY-SAFE",
+      "count": 1
+    }
+  ],
+  "verdict": "DEGRADED (INCOMPLETE)",
+  "status": "INCOMPLETE",
+  "stories": [
+    {
+      "agent": "impl:first",
+      "severity": "major",
+      "text": "Restarted 1 time.",
+      "finding_ids": [
+        "9edb41c3ff09"
+      ]
+    }
+  ],
+  "next": [
+    {
+      "grade": "decide",
+      "text": "rules that would have prevented this",
+      "command": "agent-postmortem rules propose"
+    }
+  ]
+}
+<<<STDERR>>>
+<<<END>>>
+##### case synthetic:status_flip
+exit=4
+<<<STDOUT>>>
+{
+  "run": {
+    "run_id": "wf_00000000-c21",
+    "kind": "workflow",
+    "status": "INCOMPLETE",
+    "claude_version": null,
+    "started_at": null,
+    "ended_at": null,
+    "counts": {
+      "agents": 2,
+      "attempts": 3,
+      "interrupted": 0
+    },
+    "diagnostics": [
+      "journal.jsonl:2: started event has no canonical agentId",
+      "journal.jsonl: agent id did not match the expected format, replaced with agent-e3b0c442",
+      "journal.jsonl: key@4 attempt 1 was replaced by a later attempt with no recorded outcome"
+    ],
+    "attempts": [
+      {
+        "agent_id": "agent-e3b0c442",
+        "key": "a6582a1d",
+        "label": "impl:flip",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ac900000000000005",
+        "key": "3c8a1c40",
+        "label": "impl:one",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 1,
+        "outcome": "superseded",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": null,
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      },
+      {
+        "agent_id": "ac900000000000006",
+        "key": "3c8a1c40",
+        "label": "impl:two",
+        "phase": "Implement",
+        "agent_type": null,
+        "ordinal": 2,
+        "outcome": "completed",
+        "first_ts": null,
+        "last_ts": null,
+        "usage": {},
+        "event_count": 0,
+        "interrupt": null,
+        "reported": {
+          "type": "dict",
+          "keys": [
+            "ok"
+          ],
+          "claims": {
+            "ok": true
+          }
+        },
+        "facts": null,
+        "ledger": {
+          "completeness": "partial",
+          "reasons": [
+            "transcript_missing",
+            "unassignable_attempt",
+            "discovery_incomplete"
+          ],
+          "entries": []
+        }
+      }
+    ],
+    "lifecycle": {
+      "terminal": "journal_resolved",
+      "source": "journal",
+      "activity": "stale",
+      "generations": 0
+    }
+  },
+  "findings": [
+    {
+      "detector": "silent_retry",
+      "severity": "major",
+      "title": "impl:one restarted 1 time, 0s wasted",
+      "run_id": "wf_00000000-c21",
+      "agent_id": "ac900000000000006",
+      "evidence": [],
+      "metrics": {
+        "attempts": 2,
+        "keys": 1,
+        "wasted_seconds": 0.0,
+        "burst": false
+      },
+      "rule_id": "R-RETRY-SAFE",
+      "rule_ids": [
+        "R-RETRY-SAFE"
+      ],
+      "finding_id": "f368495f7a98",
+      "silenced": false
+    },
+    {
+      "detector": "wasted_time",
+      "severity": "info",
+      "title": "run spent 0s wall-clock; 0s wasted across 1 retried attempts",
+      "run_id": "wf_00000000-c21",
+      "agent_id": null,
+      "evidence": [],
+      "metrics": {
+        "run_seconds": 0.0,
+        "attempt_seconds": 0.0,
+        "wasted_seconds": 0.0,
+        "wasted_tokens": 0
+      },
+      "rule_id": null,
+      "rule_ids": [],
+      "finding_id": "91205af52695",
+      "silenced": false
+    }
+  ],
+  "schema": 3,
+  "disclosure": "local",
+  "rules": [
+    {
+      "rule_id": "R-RETRY-SAFE",
+      "count": 1
+    }
+  ],
+  "verdict": "DEGRADED (INCOMPLETE)",
+  "status": "INCOMPLETE",
+  "stories": [
+    {
+      "agent": "impl:one",
+      "severity": "major",
+      "text": "Restarted 1 time.",
+      "finding_ids": [
+        "f368495f7a98"
+      ]
+    }
+  ],
+  "next": [
+    {
+      "grade": "decide",
+      "text": "rules that would have prevented this",
+      "command": "agent-postmortem rules propose"
+    }
+  ]
+}
+<<<STDERR>>>
+<<<END>>>

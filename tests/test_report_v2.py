@@ -18,7 +18,7 @@ from agent_postmortem import detectors, reader, report
 from agent_postmortem.redact import Redactor
 
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs"
-DEMO_RUN = Path(agent_postmortem.__file__).parent / "demo" / "wf_00000000-d30"
+DEMO_RUN = Path(agent_postmortem.__file__).parent / "demo" / "-home-user-project" / "00000000-0000-4000-8000-000000000000" / "subagents" / "workflows" / "wf_00000000-d30"
 ATTEMPT_FAILED_CAUSES = FIXTURES_ROOT / "attempt_failed_causes"
 CLAIM_CONTRADICTION = FIXTURES_ROOT / "claim_contradiction"
 JOURNAL_STATE_RESOLVED = FIXTURES_ROOT / "journal_state_resolved"
@@ -90,11 +90,15 @@ _DEMO_EXCERPT = "Tests pass. Writing the implementation now."
 
 
 def test_demo_evidence_excerpt_hidden_by_default_and_shown_with_evidence_flag():
+    """N3b P16 (D10): an excerpt prints only with --evidence AND at local or
+    raw; share never prints one, with or without --evidence."""
     run = reader.load_run(DEMO_RUN)
     default_text, _ = _render(run)
-    evidence_text, _ = _render(run, evidence=True)
+    share_evidence_text, _ = _render(run, evidence=True)
+    raw_evidence_text, _ = _render(run, evidence=True, redact=False)
     assert _DEMO_EXCERPT not in default_text
-    assert _DEMO_EXCERPT in evidence_text
+    assert _DEMO_EXCERPT not in share_evidence_text
+    assert _DEMO_EXCERPT in raw_evidence_text
 
 
 # --- info findings hidden by default, shown with --verbose ------------------
@@ -140,6 +144,8 @@ def test_what_to_do_has_at_most_three_tagged_items():
     for name, path, loader in ALL_CASES:
         run = _load(path, loader)
         text, _ = _render(run)
+        if "WHAT TO DO" not in text:  # N8a K2: the heading is omitted with no item
+            continue
         block = text[text.index("WHAT TO DO"):text.index("\n\n", text.index("WHAT TO DO"))]
         item_lines = [
             line for line in block.splitlines()
@@ -208,29 +214,29 @@ _BEFORE_BUG_REPORT = (
     "\n"
     "- agents: 2\n"
     "- attempts: 4\n"
-    "- findings: critical 0, major 4, minor 0, info 1\n"
+    "- findings: critical 0, major 2, minor 2, info 1\n"
     "\n"
     "## Reproduction\n"
-    "project demo, 2 logical agent(s):\n"
+    "project project-1, 2 logical agent(s):\n"
     "- agent-1 (phase phase-1, general-purpose): 2 attempt(s)\n"
     "- agent-2 (phase phase-1, general-purpose): 2 attempt(s)\n"
     "\n"
     "## Evidence\n"
     "From run wf_00000000-d30:\n"
-    "- [major] mislabeled_kill: agent-1 attempt 1 was killed by the runtime after "
+    "- [minor] mislabeled_kill: agent-1 attempt 1 was killed by the runtime after "
     "416s of silence, logged as a user interrupt\n"
-    "  - agent-ac200000000000001.jsonl:4: Tests pass. Writing the implementation now.\n"
-    "  - agent-ac200000000000001.jsonl:5: [Request interrupted by user]\n"
-    "- [major] mislabeled_kill: agent-2 attempt 1 was killed by the runtime after "
+    "  - agent-1.jsonl:4\n"
+    "  - agent-1.jsonl:5 [kill_sentinel]\n"
+    "- [minor] mislabeled_kill: agent-2 attempt 1 was killed by the runtime after "
     "416s of silence, logged as a user interrupt\n"
-    "  - agent-ac200000000000003.jsonl:4: Tests pass. Writing the implementation now.\n"
-    "  - agent-ac200000000000003.jsonl:5: [Request interrupted by user]\n"
+    "  - agent-2.jsonl:4\n"
+    "  - agent-2.jsonl:5 [kill_sentinel]\n"
     "- [major] silent_retry: agent-1 restarted 1 time, 10m wasted\n"
-    "  - agent-ac200000000000001.jsonl:5: [Request interrupted by user]\n"
-    "  - agent-ac200000000000002.jsonl:1: attempt 2 started\n"
+    "  - agent-1.jsonl:5 [kill_sentinel]\n"
+    "  - agent-3.jsonl:1\n"
     "- [major] silent_retry: agent-2 restarted 1 time, 10m wasted\n"
-    "  - agent-ac200000000000003.jsonl:5: [Request interrupted by user]\n"
-    "  - agent-ac200000000000004.jsonl:1: attempt 2 started\n"
+    "  - agent-2.jsonl:5 [kill_sentinel]\n"
+    "  - agent-4.jsonl:1\n"
     "- [info] wasted_time: run spent 55m wall-clock; 20m wasted across 2 retried "
     "attempts\n"
     "\n"
@@ -245,12 +251,16 @@ _BEFORE_BUG_REPORT = (
     "continuing. Never git checkout, restore, or stash a file holding "
     "uncommitted work.\n"
     "\n"
-    "Redacted: paths, ids, emails, account names, agent names. Not redacted: "
-    "evidence lines, which are transcript excerpts. Read them before posting.\n"
+    "Redacted: paths, ids, emails, account names, agent names. Evidence lines are "
+    "pointers and marker codes only; no transcript excerpts are included.\n"
 )
 
 
 def test_bug_report_output_is_byte_identical_to_before_the_unit():
+    """N3b (P10, P16): the one deliberate change since M3a. At share, with no
+    alias book attached (a direct render call), the project and the evidence
+    file names are the book's positional names, and an evidence line is a
+    pointer plus the marker code, never an excerpt; the footer says so."""
     run = reader.load_run(DEMO_RUN)
     findings = detectors.run_detectors(run)
     after = report.render_bug_report(run, findings, Redactor(enabled=True))
@@ -399,9 +409,11 @@ def test_a_single_silenced_detector_reports_singular_count_and_verbose_still_hid
     lines = text.rstrip("\n").splitlines()
     assert lines[-1] == "1 detector silenced by config: silent_retry"
     assert "silent_retry" not in text.replace(lines[-1], "")
-    # The other major detector (mislabeled_kill) was not silenced, so the
-    # verdict is still DEGRADED and its finding still shows under --verbose.
-    assert "DEGRADED" in text.splitlines()[0]
+    # The other detector (mislabeled_kill) was not silenced and its finding
+    # still shows under --verbose. N5b (4.13.4): its runtime kills are minor
+    # now (non-final attempts), so with silent_retry silenced no major is
+    # left and the verdict is CLEAN, not DEGRADED.
+    assert "CLEAN" in text.splitlines()[0]
     assert "mislabeled_kill" in text
 
 
@@ -414,7 +426,7 @@ def test_to_json_marks_silenced_findings_and_computes_verdict_over_shown_only():
     payload = report.to_json(
         run, findings, Redactor(enabled=False), silenced_detectors=DEMO_MAJOR_DETECTORS,
     )
-    assert payload["schema"] == 2
+    assert payload["schema"] == 3
     # Every finding is still exported, silenced or not.
     assert len(payload["findings"]) == len(findings)
     by_detector = {}

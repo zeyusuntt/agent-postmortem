@@ -2,21 +2,32 @@
 
 Always fires, even on a clean run with nothing to report (wasted_seconds and
 wasted_tokens are then zero), so the headline number this tool exists to
-produce is always present. wasted_seconds and wasted_tokens sum only the
-non-final attempts of each logical agent (the ones a retry threw away);
-run_seconds and attempt_seconds cover the whole run.
+produce is always present. wasted_seconds and wasted_tokens sum the attempts that
+returned no result (docs/DESIGN.md 4.3, FA5): every non-final attempt of each
+logical agent (the ones a retry threw away) plus every final attempt whose
+outcome is killed, failed, or superseded; run_seconds and attempt_seconds
+cover the whole run.
 
 A session run has no retries to observe (docs/DESIGN.md 4.7), so its
 metrics are a different, smaller set: run_seconds (the same whole-run span),
 child_seconds (the sum of every subagent's own wall-clock span, not just
-non-final ones -- there is no "non-final" for a session), and child_count
-(how many subagents ran). See docs/DESIGN.md section 4.3.
+non-final ones -- there is no "non-final" for a session), child_count
+(how many subagents ran), and wasted_seconds (the same rule: a killed or
+failed subagent's span). See docs/DESIGN.md section 4.3.
 """
 
 from __future__ import annotations
 
+from .. import severity as severity_rules
 from ..models import Attempt, Finding, Run
-from .base import KINDS_BOTH, Detector, attempt_seconds, format_duration, make_finding_id
+from .base import (
+    KINDS_BOTH,
+    Detector,
+    attempt_seconds,
+    format_duration,
+    make_finding_id,
+    run_wasted_attempts,
+)
 
 
 def _sum_usage(attempts: list[Attempt]) -> int:
@@ -45,7 +56,7 @@ def _run_seconds(run: Run) -> float:
 def _finding(run: Run, title: str, metrics: dict) -> Finding:
     return Finding(
         detector="wasted_time",
-        severity="info",
+        severity=severity_rules.resolve(run, "wasted_time"),
         title=title,
         run_id=run.run_id,
         agent_id=None,
@@ -58,15 +69,20 @@ def _finding(run: Run, title: str, metrics: dict) -> Finding:
 
 def _workflow_finding(run: Run) -> Finding:
     non_final = _non_final_attempts(run)
+    wasted = run_wasted_attempts(run)
     run_seconds = _run_seconds(run)
     total_attempt_seconds = sum(attempt_seconds(attempt) for attempt in run.attempts)
-    wasted_seconds = sum(attempt_seconds(attempt) for attempt in non_final)
-    wasted_tokens = _sum_usage(non_final)
+    wasted_seconds = sum(attempt_seconds(attempt) for attempt in wasted)
+    wasted_tokens = _sum_usage(wasted)
+    final_extra = len(wasted) - len(non_final)
 
     title = (
         f"run spent {format_duration(run_seconds)} wall-clock; "
         f"{format_duration(wasted_seconds)} wasted across {len(non_final)} retried attempts"
     )
+    if final_extra:
+        noun = "attempt" if final_extra == 1 else "attempts"
+        title += f" and {final_extra} final {noun} that ended without a result"
     metrics = {
         "run_seconds": run_seconds,
         "attempt_seconds": total_attempt_seconds,
@@ -80,6 +96,7 @@ def _session_finding(run: Run) -> Finding:
     run_seconds = _run_seconds(run)
     child_seconds = sum(attempt_seconds(attempt) for attempt in run.attempts)
     child_count = len(run.attempts)
+    wasted_seconds = sum(attempt_seconds(attempt) for attempt in run_wasted_attempts(run))
 
     title = (
         f"session ran {format_duration(run_seconds)}; {child_count} subagents "
@@ -89,6 +106,7 @@ def _session_finding(run: Run) -> Finding:
         "run_seconds": run_seconds,
         "child_seconds": child_seconds,
         "child_count": child_count,
+        "wasted_seconds": wasted_seconds,
     }
     return _finding(run, title, metrics)
 

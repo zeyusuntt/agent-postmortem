@@ -169,9 +169,10 @@ def test_session_envelope_child_tool_result_is_not_enveloped_and_has_the_marker(
 def test_session_envelope_codex_write_denied_fires_once_on_the_child_only():
     run = _load("session_envelope")
     findings = codex_write_denied.DETECTOR.run(run)
-    # Two findings (R-CODEX-CONTRACT, R-ASSERT-ARTIFACT), both counting a
-    # single hit: the parent's enveloped quote must not double it.
-    assert len(findings) == 2
+    # One finding for the child (N5b: one per attempt, carrying both rule
+    # ids), counting a single hit: the parent's enveloped quote must not
+    # double it.
+    assert len(findings) == 1
     child_agent_id = run.attempts[0].agent_id
     for finding in findings:
         assert finding.metrics["count"] == 1
@@ -286,17 +287,22 @@ def test_parent_index_keeps_only_task_stops_kill_and_compaction_timestamps(tmp_p
 
 
 def test_parent_index_for_path_caches_by_path(tmp_path):
+    """The process-level cache is keyed by path and returns the same object
+    on a second call (docs/DESIGN.md 4.2); docs/DESIGN.md 4.13.3 (v0.3 N1)
+    replaces the old "scanned once forever" cache with an incremental one
+    that re-validates on every access, so truncating the file is a shrink
+    that rebuilds the same object from zero rather than leaving it stale."""
     parent_path = tmp_path / "parent.jsonl"
     _write_parent_transcript(parent_path)
 
     first = reader.ParentIndex.for_path(parent_path)
-    # Mutate the file after the first scan; a cached second call must not
-    # see the change (it is a process-level cache, scanned once).
+    assert len(first.task_stops) == 1
     parent_path.write_text("", encoding="utf-8")
     second = reader.ParentIndex.for_path(parent_path)
 
     assert second is first
-    assert len(second.task_stops) == 1
+    assert len(second.task_stops) == 0
+    assert second.rebuilds == 1
 
 
 def test_parent_index_on_a_missing_file_is_empty(tmp_path):

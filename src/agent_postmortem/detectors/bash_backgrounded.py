@@ -1,22 +1,26 @@
 """Detects a Bash command the runtime moved to the background after its timeout.
 
-DESIGN.md 4.3: minor severity, fires when a Bash tool_result contains the
-backgrounded-command marker (BASH_BACKGROUNDED in markers.py: two fixed
-fragments of one message, both required). metrics: count only (docs/
-DESIGN.md 5.3's D3: the evidence lines already show the marker line the
-detector fired on; a finding's metrics never carries a second copy of
-transcript-derived free text alongside them). rule_id: R-NO-LONG-BASH.
+DESIGN.md 4.3: minor severity, fires on every anchored, not-in-payload
+'bash_backgrounded' MarkerHit (docs/DESIGN.md 4.13.2: the registry's own
+predicate already requires both BASH_BACKGROUNDED fragments, line1-anchored,
+on a tool_result paired to Bash). metrics: count only (docs/DESIGN.md 5.3's
+D3: the evidence lines already show the marker line the detector fired on;
+a finding's metrics never carries a second copy of transcript-derived free
+text alongside them). rule_id: R-NO-LONG-BASH. Never consults
+Event.read_only_output (docs/DESIGN.md 4.3: a timed-out `cat` is still a
+timed-out command).
 """
 
 from __future__ import annotations
 
-from ..markers import BASH_BACKGROUNDED
+from .. import severity as severity_rules
 from ..models import Attempt, Event, Finding, Run
 from .base import (
     KINDS_BOTH,
     Detector,
+    anchored_marker_hits,
+    event_for_marker_hit,
     evidence_line,
-    is_bash_event,
     make_finding_id,
     tooling_attempts,
 )
@@ -32,18 +36,17 @@ class BashBackgrounded:
     kinds = KINDS_BOTH
 
     def run(self, run: Run) -> list[Finding]:
-        hits: list[tuple[Attempt, int, Event]] = []
+        hits: list[tuple[Attempt, Event]] = []
         for attempt in tooling_attempts(run):
-            for index, event in enumerate(attempt.events):
-                if not is_bash_event(event):
-                    continue
-                if all(marker in event.markers for marker in BASH_BACKGROUNDED):
-                    hits.append((attempt, index, event))
+            for hit in anchored_marker_hits(attempt, ID):
+                event = event_for_marker_hit(attempt, hit)
+                if event is not None:
+                    hits.append((attempt, event))
         if not hits:
             return []
 
         count = len(hits)
-        evidence = [evidence_line(run, event) for _, _, event in hits]
+        evidence = [evidence_line(run, event) for _, event in hits]
         plural = "s" if count != 1 else ""
         title = f"{count} Bash command{plural} timed out and moved to the background"
 
@@ -51,7 +54,7 @@ class BashBackgrounded:
         return [
             Finding(
                 detector=ID,
-                severity=SEVERITY,
+                severity=severity_rules.resolve(run, ID),
                 title=title,
                 run_id=run.run_id,
                 agent_id=agent_id,

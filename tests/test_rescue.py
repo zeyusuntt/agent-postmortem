@@ -22,7 +22,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from agent_postmortem import cli, config, observe, reader, rescue
+from agent_postmortem import cli, config, ledger, observe, reader, rescue
 from agent_postmortem.models import (
     Attempt,
     AttemptFacts,
@@ -31,6 +31,7 @@ from agent_postmortem.models import (
     Run,
 )
 from agent_postmortem.redact import Redactor
+from tests.test_scan_triage import _write_session
 
 RESCUE_PATH = Path(rescue.__file__)
 
@@ -115,15 +116,21 @@ def _write_jsonl(path: Path, lines: list[dict]) -> None:
 
 # --- the shared "killed then completed" workflow fixture --------------------
 #
-# One unit (key v2:impl), two attempts: attempt 1 (a4c0000000000001) is
+# One unit (key v2:impl), two attempts: attempt 1 (a4c00000000000001) is
 # killed mid-edit, having already written two dirty paths and one clean one,
-# and reported one commit; attempt 2 (a4c0000000000002) completes, rewriting
+# and reported one commit; attempt 2 (a4c00000000000002) completes, rewriting
 # the first dirty path (the "later write" case) and reporting a dict result.
 # Lives under a real throwaway git repo so observe.observe_run has something
 # to say. wf_00000000-4c0 -- registered in tests/synthetic-ids.txt.
 
 
-def _build_killed_then_completed(tmp_path: Path):
+def _build_killed_then_completed(tmp_path: Path, shell: bool = False, in_flight: bool = False):
+    """`shell=True` keeps attempt 1's `git commit` Bash call (the COMMITS line's
+    source) and `in_flight=True` its final Edit with no result (the IN FLIGHT line's
+    source). By default the attempt runs no shell command and leaves no write in
+    flight, so (N5c-1) its ledger is complete and its repository group is observed;
+    either one makes the ledger partial and the group refused. A parent transcript
+    with the workflow's launch result places every attempt in its generation."""
     repo = _init_repo(tmp_path / "repo")
     (repo / "tests").mkdir()
     (repo / "src" / "pkg").mkdir(parents=True)
@@ -142,7 +149,7 @@ def _build_killed_then_completed(tmp_path: Path):
     )
     run_dir.mkdir(parents=True)
 
-    a1, a2 = "a4c0000000000001", "a4c0000000000002"
+    a1, a2 = "a4c00000000000001", "a4c00000000000002"
     base = datetime.now(timezone.utc) - timedelta(minutes=10)
 
     journal_lines = [
@@ -167,9 +174,18 @@ def _build_killed_then_completed(tmp_path: Path):
         _tool_result("t2", "ok", _iso(base, 4), a1, repo),
         _assistant_tool("t3", "Edit", {"file_path": path_c}, _iso(base, 5), a1, repo),
         _tool_result("t3", "ok", _iso(base, 6), a1, repo),
-        _assistant_tool("t4", "Bash", {"command": "git commit -am 'wip'"}, _iso(base, 7), a1, repo),
-        _tool_result("t4", "[main 1234567] wip", _iso(base, 8), a1, repo),
-        _assistant_tool("t5", "Edit", {"file_path": path_a}, _iso(base, 9), a1, repo),
+        *(
+            [
+                _assistant_tool(
+                    "t4", "Bash", {"command": "git commit -am 'wip'"}, _iso(base, 7), a1, repo,
+                ),
+                _tool_result("t4", "[main 1234567] wip", _iso(base, 8), a1, repo),
+            ] if shell else []
+        ),
+        *(
+            [_assistant_tool("t5", "Edit", {"file_path": path_a}, _iso(base, 9), a1, repo)]
+            if in_flight else []
+        ),
         _kill(_iso(base, 10), a1, repo),
     ]
     _write_jsonl(run_dir / f"agent-{a1}.jsonl", attempt1)
@@ -181,6 +197,20 @@ def _build_killed_then_completed(tmp_path: Path):
     ]
     _write_jsonl(run_dir / f"agent-{a2}.jsonl", attempt2)
 
+    from tests.test_field_v03 import (
+        _envelope,
+        _notification_entry,
+        _workflow_launch,
+        _workflow_launch_result,
+    )
+
+    _write_jsonl(tmp_path / slug / f"{session}.jsonl", [
+        _workflow_launch("toolu_A", base - timedelta(seconds=6)),
+        _workflow_launch_result(
+            "toolu_A", base - timedelta(seconds=5), "wf_00000000-4c0", "tA",
+        ),
+        _notification_entry(base + timedelta(seconds=60), _envelope("tA", "toolu_A", "completed")),
+    ])
     return run_dir, repo, base
 
 
@@ -203,7 +233,7 @@ def test_packet_shows_dirty_paths_states_and_later_write(tmp_path, monkeypatch):
     _no_config(monkeypatch, tmp_path)
 
     run = reader.load_run(run_dir)
-    observation = observe.observe_run(run)
+    observation = observe.observe_groups(run)
     plan = rescue.build_plan(run, observation, [], config.load_config())
     text = rescue.render_plan_text(run, plan, Redactor(enabled=False))
 
@@ -257,7 +287,12 @@ def test_no_redact_shows_real_paths_and_prompt_text(tmp_path, monkeypatch, capsy
     assert "tests/test_a.py" in out
     assert "src/pkg/b.py" in out
     assert "src/pkg/c.py" in out
-    assert '"Fix the failing tests in tests/test_a.py and ship it."' in out
+    # N3b D10: the prompt is an excerpt, and `rescue plan` has no --evidence
+    # flag, so even raw prints only the pointer and the length (it used to
+    # quote the first 300 characters).
+    assert "Fix the failing tests in tests/test_a.py and ship it." not in out
+    assert "full text: agent-" in out
+    assert "prompt length:" in out
 
 
 def test_reported_dict_shows_allowlisted_claims(tmp_path, monkeypatch, capsys):
@@ -271,7 +306,7 @@ def test_reported_dict_shows_allowlisted_claims(tmp_path, monkeypatch, capsys):
 
 
 def test_commits_line_lists_reported_commit_ids(tmp_path, monkeypatch, capsys):
-    run_dir, repo, _base = _build_killed_then_completed(tmp_path)
+    run_dir, repo, _base = _build_killed_then_completed(tmp_path, shell=True)
     _no_config(monkeypatch, tmp_path)
 
     cli.main(["rescue", "plan", str(run_dir), "--no-redact"])
@@ -280,12 +315,14 @@ def test_commits_line_lists_reported_commit_ids(tmp_path, monkeypatch, capsys):
 
 
 def test_in_flight_line_names_the_tool_and_path(tmp_path, monkeypatch, capsys):
-    run_dir, repo, _base = _build_killed_then_completed(tmp_path)
+    # N5c-1: a write in flight makes the ledger partial, so the group is refused,
+    # no repository root is resolved, and the path prints as the file tool spelled it.
+    run_dir, repo, _base = _build_killed_then_completed(tmp_path, in_flight=True)
     _no_config(monkeypatch, tmp_path)
 
     cli.main(["rescue", "plan", str(run_dir), "--no-redact"])
     out = capsys.readouterr().out
-    assert "IN FLIGHT at the kill: Edit tests/test_a.py (no result recorded)" in out
+    assert f"IN FLIGHT at the kill: Edit {repo / 'tests' / 'test_a.py'} (no result recorded)" in out
 
 
 def test_checks_declared_from_matching_repo_config(tmp_path, monkeypatch, capsys):
@@ -389,9 +426,10 @@ def test_json_allowlist_and_shape(tmp_path, monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
 
     assert set(payload) == {
-        "schema", "run", "nothing_to_rescue", "units", "brief", "exit_code",
+        "schema", "disclosure", "run", "nothing_to_rescue", "groups", "units", "brief",
+        "exit_code",
     }
-    assert payload["schema"] == 2
+    assert payload["schema"] == 3
     assert set(payload["run"]) == {"run_id", "kind", "finished", "possibly_live"}
     assert len(payload["units"]) == 1
     unit = payload["units"][0]
@@ -400,7 +438,12 @@ def test_json_allowlist_and_shape(tmp_path, monkeypatch, capsys):
         "commits", "in_flight", "unknown", "checks", "steps",
     }
     for path_entry in unit["paths"]:
-        assert set(path_entry) == {"path", "state", "reason", "attempts", "later_write_observed"}
+        # N5a-1 (5.3b): observation state and ledger facts are separate fields.
+        assert set(path_entry) == {
+            "path", "group", "observation", "ledger", "attempts", "later_write_observed",
+        }
+        assert set(path_entry["observation"]) == {"state", "reason"}
+        assert isinstance(path_entry["ledger"], list)
         assert path_entry["path"].startswith("path-")
     assert unit["reported"]["type"] == "dict"
     assert "commits" in unit["reported"]["claims"]
@@ -410,7 +453,8 @@ def test_json_no_redact_shows_real_paths(tmp_path, monkeypatch, capsys):
     run_dir, repo, _base = _build_killed_then_completed(tmp_path)
     _no_config(monkeypatch, tmp_path)
 
-    cli.main(["rescue", "plan", str(run_dir), "--json", "--no-redact"])
+    # N5a-1: the task text exists only with --evidence (5.3b).
+    cli.main(["rescue", "plan", str(run_dir), "--json", "--no-redact", "--evidence"])
     payload = json.loads(capsys.readouterr().out)
     unit = payload["units"][0]
     paths = {entry["path"] for entry in unit["paths"]}
@@ -435,26 +479,34 @@ def test_observation_not_checked_gives_exit_4_and_names_the_reason(tmp_path, mon
     # A run that ended more than 72 hours ago: observe.observe_run refuses
     # to start a git process at all (docs/DESIGN.md 4.9 rule 1). Rewrite the
     # kill line's own timestamp far enough in the past.
-    a1 = "a4c0000000000001"
+    a1 = "a4c00000000000001"
     old_ts = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
     lines = (run_dir / f"agent-{a1}.jsonl").read_text(encoding="utf-8").splitlines()
     entries = [json.loads(line) for line in lines]
     for entry in entries:
         entry["timestamp"] = old_ts
     _write_jsonl(run_dir / f"agent-{a1}.jsonl", entries)
-    a2 = "a4c0000000000002"
+    a2 = "a4c00000000000002"
     lines2 = [json.loads(line) for line in (run_dir / f"agent-{a2}.jsonl").read_text(
         encoding="utf-8"
     ).splitlines()]
     for entry in lines2:
         entry["timestamp"] = old_ts
     _write_jsonl(run_dir / f"agent-{a2}.jsonl", lines2)
+    # N5c-1: the parent transcript places every attempt in its generation, so
+    # its entries age with the attempts (a launch result later than an attempt
+    # would leave that attempt unplaceable, and an unplaceable one is refused).
+    parent = tmp_path / "-home-user-project" / "00000000-0000-4000-8000-000000000000.jsonl"
+    parent_entries = [json.loads(line) for line in parent.read_text(encoding="utf-8").splitlines()]
+    for entry in parent_entries:
+        entry["timestamp"] = old_ts
+    _write_jsonl(parent, parent_entries)
 
     code = cli.main(["rescue", "plan", str(run_dir), "--no-redact"])
     out = capsys.readouterr().out
     assert code == 4
     assert "UNKNOWN" in out
-    assert "historical: run older than 72 hours" in out
+    assert "repo state not checked: historical" in out
 
 
 # --- REPORTED variants and possibly-live / nothing-to-rescue, built in ------
@@ -501,7 +553,7 @@ def test_reported_text_result(tmp_path):
     )
     agent = LogicalAgent(key="v2:x", label="impl", phase="", attempts=[killed, completed])
     run = _run([agent])
-    observation = observe.observe_run(run, now=datetime.now(timezone.utc))
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
     plan = rescue.build_plan(run, observation, [], config.load_config())
     text = rescue.render_plan_text(run, plan, Redactor(enabled=False))
     assert "REPORTED  text result, 4321 chars, not kept" in text
@@ -523,7 +575,7 @@ def test_reported_status_claim_hidden_by_default_shown_with_no_redact(tmp_path):
     )
     agent = LogicalAgent(key="v2:x", label="impl", phase="", attempts=[killed, completed])
     run = _run([agent])
-    observation = observe.observe_run(run, now=datetime.now(timezone.utc))
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
     plan = rescue.build_plan(run, observation, [], config.load_config())
 
     redacted_text = rescue.render_plan_text(run, plan, Redactor(enabled=True))
@@ -546,17 +598,22 @@ def test_reported_none_when_last_attempt_was_killed(tmp_path):
     )
     agent = LogicalAgent(key="v2:x", label="impl", phase="", attempts=[killed])
     run = _run([agent])
-    observation = observe.observe_run(run, now=datetime.now(timezone.utc))
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
     plan = rescue.build_plan(run, observation, [], config.load_config())
     text = rescue.render_plan_text(run, plan, Redactor(enabled=False))
     assert "REPORTED  no result event" in text
 
 
-def test_nothing_to_rescue_when_every_attempt_completed(tmp_path):
+def test_nothing_to_rescue_when_every_attempt_completed(tmp_path, monkeypatch):
+    # N8 fix 1, S2: the hand-built attempt has no journal state and no generation, so 4.13.1
+    # counts it at risk; the risk population is stubbed empty to keep this test on its own
+    # clause (a finished run whose every attempt completed)
+    monkeypatch.setattr(ledger, "risk_population", lambda run: [])
+    monkeypatch.setattr(ledger, "risk_population_completeness", lambda run: ("complete", []))
     completed = _attempt("a0000000000000001", "v2:x", 1, "completed")
     agent = LogicalAgent(key="v2:x", label="impl", phase="", attempts=[completed])
     run = _run([agent])
-    observation = observe.observe_run(run, now=datetime.now(timezone.utc))
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
     plan = rescue.build_plan(run, observation, [], config.load_config())
     text = rescue.render_plan_text(run, plan, Redactor(enabled=False))
     assert text.strip() == "NOTHING TO RESCUE: every attempt completed."
@@ -585,7 +642,7 @@ def test_killed_attempt_with_facts_none_counts_as_unknown(tmp_path):
     )
     agent = LogicalAgent(key="v2:x", label="impl", phase="", attempts=[killed])
     run = _run([agent])
-    observation = observe.observe_run(run, now=datetime.now(timezone.utc))
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
     plan = rescue.build_plan(run, observation, [], config.load_config())
     assert plan.exit_code == 4
     assert plan.has_unknown_fact is True
@@ -597,7 +654,7 @@ def test_unfinished_run_with_no_qualifying_unit_prints_nothing_to_rescue_yet(tmp
     completed = _attempt("a0000000000000001", "v2:x", 1, "completed")
     agent = LogicalAgent(key="v2:x", label="impl", phase="", attempts=[completed])
     run = _run([agent], finished=False)
-    observation = observe.observe_run(run, now=datetime.now(timezone.utc))
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
     plan = rescue.build_plan(run, observation, [], config.load_config())
     text = rescue.render_plan_text(run, plan, Redactor(enabled=False))
     assert text.strip() == (
@@ -616,19 +673,57 @@ def test_possibly_live_suppresses_steps_3_to_6_and_the_brief(tmp_path):
     )
     agent = LogicalAgent(key="v2:x", label="impl", phase="", attempts=[killed])
     run = _run([agent], finished=False)
-    observation = observe.observe_run(run, now=datetime.now(timezone.utc))
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
     plan = rescue.build_plan(run, observation, [], config.load_config(), possibly_live=True)
     text = rescue.render_plan_text(run, plan, Redactor(enabled=False))
 
+    # FB3: the live-with-units line names the files and the other agent that may be writing
     assert text.startswith(
-        "POSSIBLY LIVE: do not modify files in this repo. Confirm with the human "
-        "that the run has stopped."
+        "POSSIBLY LIVE: the run may still be running, and another agent may be writing the "
+        "files listed below. Do not modify them until it has stopped; confirm with the human."
     )
     assert "BRIEF FOR A RELAUNCH" not in text
     assert "3. [decide]" not in text
     assert "6. [decide]" not in text
     assert "1. [look]" in text
     assert plan.exit_code == 4
+
+
+# --- N1N2 fix review finding 2: a fresh session reaching rescue plan's -----
+# --- own possibly_live flag (cli.py's _cmd_rescue_plan), never exercised ---
+# before the session-liveness fix (docs/DESIGN.md 4.13.3's Sessions
+# paragraph) made it reachable. render_plan_text already generalizes over
+# any Run: a possibly-live run with no qualifying unit gets only the LIVE
+# line, never the NOTHING TO RESCUE sentence (see
+# test_possibly_live_suppresses_steps_3_to_6_and_the_brief above for the
+# workflow case); this pins that the same thing happens end to end for a
+# session. The review's other half of this finding -- that `rescue status`/
+# build_status also consults is_possibly_live -- does not hold up: cli.py's
+# _cmd_rescue_status (defined just above, before _cmd_demo) never calls
+# report.is_possibly_live, and rescue.build_status takes no possibly_live
+# parameter at all, confirmed by reading both functions, so there is nothing
+# to test or gate there.
+
+
+def test_plan_against_a_fresh_session_reads_possibly_live_and_stays_coherent(
+    tmp_path, monkeypatch, capsys,
+):
+    root = tmp_path / "root"
+    session_path = _write_session(
+        root, "-home-user-rescue-session-fresh", datetime.now(timezone.utc),
+    )
+    _no_config(monkeypatch, tmp_path)
+
+    code = cli.main(["rescue", "plan", str(session_path)])
+    out = capsys.readouterr().out
+
+    assert code == 4
+    # FB3: a live run with no unit gets its own sentence, with no do-not-modify warning
+    assert out.strip() == (
+        "NOTHING TO RESCUE YET: the run may still be running; no attempt has been killed or "
+        "failed so far."
+    )
+    assert "NOTHING TO RESCUE:" not in out
 
 
 # --- privacy: the word "verified" never appears -----------------------------
@@ -674,7 +769,7 @@ def _build_status_fixture(tmp_path: Path):
     run_dir = tmp_path / slug / session / "subagents" / "workflows" / "wf_00000000-4c2"
     run_dir.mkdir(parents=True)
 
-    agent_id = "a4c2000000000001"
+    agent_id = "a4c20000000000001"
     base = datetime.now(timezone.utc) - timedelta(minutes=10)
 
     journal_lines = [
@@ -987,7 +1082,10 @@ def test_status_never_list_git_checkout_is_flagged(tmp_path, monkeypatch, capsys
     code = cli.main(["rescue", "status", str(run_dir), "--no-redact"])
     out = capsys.readouterr().out
     assert "commands matching the NEVER list" in out
-    assert "git checkout" in out
+    # N3b D10, C1: the text prints the matched rule's own spelling at every
+    # level (it printed the 60-character excerpt at raw); the JSON keeps the raw form.
+    assert re.search(r"commands matching the NEVER list: line \d+: git checkout$", out, re.MULTILINE)
+    assert "git checkout --" not in out
     # F3: a NEVER-list match now forces exit 4 regardless of everything else
     # (it used to leave the exit code at 0 when nothing else was wrong).
     assert code == 4
@@ -1022,12 +1120,12 @@ def test_status_json_shape(tmp_path, monkeypatch, capsys):
     cli.main(["rescue", "status", str(run_dir), "--json", "--no-redact"])
     payload = json.loads(capsys.readouterr().out)
     assert set(payload) == {
-        "schema", "run", "units", "not_counted", "never_matches",
+        "schema", "disclosure", "run", "units", "not_counted", "never_matches",
         "transcript_unknown", "exit_code",
     }
     unit = payload["units"][0]
     assert set(unit) == {
-        "agent", "checks_declared", "last_counted_run", "word", "writes_after",
+        "agent", "repo", "checks_declared", "last_counted_run", "word", "writes_after",
         "write_after_check", "cycles",
     }
     assert unit["word"] == "EXIT_0_OBSERVED"
@@ -1058,7 +1156,7 @@ def test_paths_table_keeps_columns_apart_for_a_long_state(tmp_path, monkeypatch,
     attempts column must still be separated from it by whitespace."""
     run_dir, repo, base = _build_killed_then_completed(tmp_path)
     # Add a write outside the work tree to the killed attempt's transcript.
-    a1 = "a4c0000000000001"
+    a1 = "a4c00000000000001"
     lines = (run_dir / f"agent-{a1}.jsonl").read_text(encoding="utf-8").splitlines()
     outside = str(tmp_path / "elsewhere" / "note.md")
     extra = [
@@ -1097,8 +1195,8 @@ def test_status_never_line_uses_only_the_first_word_by_default(tmp_path, monkeyp
     assert never
     assert path_a not in out
     assert "tests/test_a.py" not in out
-    assert "checkout" not in never[0]
-    assert never[0].rstrip().endswith("git")
+    assert "--" not in never[0]
+    assert never[0].rstrip().endswith("git checkout")
 
 
 def test_status_excerpts_are_first_word_by_default_and_full_with_no_redact(
@@ -1116,8 +1214,14 @@ def test_status_excerpts_are_first_word_by_default_and_full_with_no_redact(
 
     cli.main(["rescue", "status", str(run_dir), "--json"])
     payload = json.loads(capsys.readouterr().out)
-    assert payload["never_matches"][0]["excerpt"] == "git"
+    # N5a-1 (5.3b): the fixed category is its own key; no excerpt key at share.
+    assert payload["never_matches"][0]["category"] == "git checkout"
+    assert "excerpt" not in payload["never_matches"][0]
 
     cli.main(["rescue", "status", str(run_dir), "--json", "--no-redact"])
+    raw_payload = json.loads(capsys.readouterr().out)
+    assert "excerpt" not in raw_payload["never_matches"][0]
+
+    cli.main(["rescue", "status", str(run_dir), "--json", "--no-redact", "--evidence"])
     raw_payload = json.loads(capsys.readouterr().out)
     assert raw_payload["never_matches"][0]["excerpt"].startswith("git checkout --")

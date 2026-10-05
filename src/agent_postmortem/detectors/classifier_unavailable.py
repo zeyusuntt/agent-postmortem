@@ -1,22 +1,32 @@
 """Detects the Bash-safety classifier going unavailable in auto mode.
 
-DESIGN.md 4.3: minor severity, fires when a tool_result contains the
-classifier-unavailable marker (CLASSIFIER_UNAVAILABLE in markers.py). Not
-something a prompt or hook can fix, so there is no rule_id. metrics: count.
-Skips a read_only_output event (docs/DESIGN.md 4.3's self-reference rule):
-a Read/Grep/sed/etc. call quoting the outage sentence from a file on disk
-is not the classifier actually going unavailable during this agent's own
-Bash call.
+DESIGN.md 4.3: minor severity, fires on every anchored, not-in-payload
+'classifier_unavailable' MarkerHit (docs/DESIGN.md 4.13.2: the registry's
+own shape restricts this id to a tool_result paired to Bash). Not something
+a prompt or hook can fix, so there is no rule_id. metrics: count. Skips a
+read_only_output event (docs/DESIGN.md 4.3's self-reference rule): a
+Read/Grep/sed/etc. call quoting the outage sentence from a file on disk is
+not the classifier actually going unavailable during this agent's own Bash
+call.
 """
 
 from __future__ import annotations
 
-from ..markers import CLASSIFIER_UNAVAILABLE
+from .. import severity as severity_rules
 from ..models import Event, Finding, Run
-from .base import KINDS_BOTH, Detector, evidence_line, make_finding_id, tooling_attempts
+from .base import (
+    KINDS_BOTH,
+    Detector,
+    anchored_marker_hits,
+    event_for_marker_hit,
+    evidence_line,
+    make_finding_id,
+    tooling_attempts,
+)
 
 ID = "classifier_unavailable"
 SEVERITY = "minor"
+
 
 class ClassifierUnavailable:
     id = ID
@@ -27,15 +37,13 @@ class ClassifierUnavailable:
         hits: list[Event] = []
         agent_id: str | None = None
         for attempt in tooling_attempts(run):
-            for event in attempt.events:
-                if event.kind not in ("tool_result", "attachment"):
+            for hit in anchored_marker_hits(attempt, ID):
+                event = event_for_marker_hit(attempt, hit)
+                if event is None or event.read_only_output:
                     continue
-                if event.read_only_output:
-                    continue
-                if all(marker in event.markers for marker in CLASSIFIER_UNAVAILABLE):
-                    hits.append(event)
-                    if agent_id is None:
-                        agent_id = attempt.agent_id
+                hits.append(event)
+                if agent_id is None:
+                    agent_id = attempt.agent_id
         if not hits:
             return []
 
@@ -47,7 +55,7 @@ class ClassifierUnavailable:
         return [
             Finding(
                 detector=ID,
-                severity=SEVERITY,
+                severity=severity_rules.resolve(run, ID),
                 title=title,
                 run_id=run.run_id,
                 agent_id=agent_id,

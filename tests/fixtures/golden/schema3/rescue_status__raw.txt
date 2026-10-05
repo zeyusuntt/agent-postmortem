@@ -1,0 +1,672 @@
+##### case reader_minimal:wf_a0000000-001
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_a0000000-001"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case reader_minimal:wf_b0000000-002
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_b0000000-002"
+  },
+  "units": [
+    {
+      "agent": "impl:demo",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case reader_minimal:wf_c0000000-003
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_c0000000-003"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case journal_malformed_fields:wf_00000000-af1
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-af1"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case journal_malformed_fields:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "s_82d2d30035"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case hook_session:wf_00000000-710
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-710"
+  },
+  "units": [
+    {
+      "agent": "impl:alpha",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case hook_session:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "s_311deb29a5"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case session_human_interrupt:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "s_aece06acec"
+  },
+  "units": [
+    {
+      "agent": "impl:helper",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case session_parent_stop:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "s_2a74169191"
+  },
+  "units": [
+    {
+      "agent": "impl:fixer",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case redaction_adversarial:wf_00000000-960
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-960"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case attempt_facts:wf_00000000-af0
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-af0"
+  },
+  "units": [
+    {
+      "agent": "impl:killed-edit",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:missing-transcript",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:attempt_failed_causes
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c01"
+  },
+  "units": [
+    {
+      "agent": "impl:usage-session",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:usage-weekly",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:machine-sleep",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:api-error",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:decoy",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:session-prose",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:weekly-prose",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:sleep-prose",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:api-prose",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:usage-session-leading-ws",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:attempt_failed_retry_tail
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c02"
+  },
+  "units": [
+    {
+      "agent": "impl:both-failed",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:still-open",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:clean_run
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c05"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:codex_write_denied
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c06"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:incomplete_journal
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c08"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_resolved
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c0a"
+  },
+  "units": [
+    {
+      "agent": "impl:failed",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:retry",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:killed-retry",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:superseded",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:double-fail",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "impl:failed-sentinel",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_unresolved
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c0b"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_orphan_failed
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c09"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:missing_artifact
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c0c"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:claim_contradiction
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c04"
+  },
+  "units": [
+    {
+      "agent": "impl:failed-attempt",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case synthetic:no_canonical_agent_id
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c20"
+  },
+  "units": [
+    {
+      "agent": "impl:first",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case synthetic:status_flip
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c21"
+  },
+  "units": [
+    {
+      "agent": "impl:one",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>

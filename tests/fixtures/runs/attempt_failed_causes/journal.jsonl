@@ -19,3 +19,5 @@
 {"type":"failed","timestamp":"2026-09-26T10:25:00.000Z","key":"v2:af-sleep-prose","agentId":"af1000000000000a3"}
 {"type":"started","timestamp":"2026-09-26T10:30:00.000Z","key":"v2:af-api-prose","agentId":"af1000000000000a4","label":"impl:api-prose","phase":"Implement"}
 {"type":"failed","timestamp":"2026-09-26T10:35:00.000Z","key":"v2:af-api-prose","agentId":"af1000000000000a4"}
+{"type":"started","timestamp":"2026-09-26T10:40:00.000Z","key":"v2:af-usage-session-leading-ws","agentId":"af100000000000007","label":"impl:usage-session-leading-ws","phase":"Implement"}
+{"type":"failed","timestamp":"2026-09-26T10:45:00.000Z","key":"v2:af-usage-session-leading-ws","agentId":"af100000000000007"}

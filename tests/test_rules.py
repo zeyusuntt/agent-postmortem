@@ -85,12 +85,14 @@ def test_target_kind_matches_the_design_mapping():
 
     assert by_kind["hook"] == {"R-MODEL-ALLOCATION"}
     assert by_kind["project instructions"] == {"R-GIT-CWD"}
+    # N8a K6: R-NO-LONG-BASH moves to the new "agent prompt" kind.
+    assert by_kind["agent prompt"] == {"R-NO-LONG-BASH"}
     assert by_kind["workflow prompt"] == {
-        "R-RETRY-SAFE", "R-CAP-CONCURRENCY", "R-NO-LONG-BASH", "R-SMALL-QUANTUM",
+        "R-RETRY-SAFE", "R-CAP-CONCURRENCY", "R-SMALL-QUANTUM",
         "R-ASSERT-ARTIFACT", "R-SCALAR-SCHEMA", "R-CODEX-CONTRACT",
         "R-MONITOR-RETRIES", "R-USAGE-LIMIT",
     }
-    assert set(by_kind) == {"workflow prompt", "hook", "project instructions"}
+    assert set(by_kind) == {"workflow prompt", "agent prompt", "hook", "project instructions"}
 
 
 def test_render_rule_show_and_rule_to_json_carry_target_kind():

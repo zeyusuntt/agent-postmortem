@@ -1,11 +1,14 @@
 """Smoke tests for the postmortem CLI: right exit codes, right header, valid JSON."""
 
 import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import agent_postmortem
 from agent_postmortem import __version__, rules, state
 from agent_postmortem.cli import _build_parser, _top_detector, main
+from agent_postmortem.detectors import codex_write_denied
 from agent_postmortem.models import Finding
 
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs" / "reader_minimal"
@@ -17,7 +20,7 @@ MAIN_RUN = (
     / "workflows"
     / "wf_b0000000-002"
 )
-DEMO_RUN = Path(agent_postmortem.__file__).parent / "demo" / "wf_00000000-d30"
+DEMO_RUN = Path(agent_postmortem.__file__).parent / "demo" / "-home-user-project" / "00000000-0000-4000-8000-000000000000" / "subagents" / "workflows" / "wf_00000000-d30"
 
 
 def test_run_on_fixture_path_exits_four_and_prints_run_header(capsys):
@@ -58,6 +61,9 @@ def _write_config(tmp_path: Path, text: str) -> Path:
 def test_run_exits_one_with_a_clear_message_when_off_names_a_critical_detector(
     tmp_path, monkeypatch, capsys,
 ):
+    # N5b (4.13.4): no shipped detector is critical any more, so the refusal
+    # is exercised by a detector that declares it.
+    monkeypatch.setattr(codex_write_denied.DETECTOR, "severity_default", "critical")
     config_path = _write_config(tmp_path, '[detectors]\noff = ["codex_write_denied"]\n')
     monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(config_path))
     code = main(["run", str(MAIN_RUN)])
@@ -164,6 +170,17 @@ def test_run_with_ambiguous_prefix_exits_one_and_lists_candidates(tmp_path, caps
     code = main(["run", "wf_dup", "--root", str(tmp_path)])
     captured = capsys.readouterr()
     assert code == 1
+    assert "matches more than one run" in captured.err
+    # N3b P13: at share a candidate is listed by its id only when it has a
+    # run id's shape (wf_ plus 8 hex, dash, 3 hex); these two directory names
+    # do not, so they are spans (value-N), never echoed. The canonical case is
+    # in tests/test_n3b_handler_errors.py.
+    assert "wf_dup00000" not in captured.err
+    assert "value-2" in captured.err
+
+    code = main(["run", "wf_dup", "--root", str(tmp_path), "--raw"])
+    captured = capsys.readouterr()
+    assert code == 1
     assert "wf_dup00000-001" in captured.err
     assert "wf_dup00000-002" in captured.err
 
@@ -220,7 +237,7 @@ def test_rules_json_flag_emits_valid_json(tmp_path, capsys):
     captured = capsys.readouterr()
     assert code == 0, captured.err
     payload = json.loads(captured.out)
-    assert payload["schema"] == 2
+    assert payload["schema"] == 3
     assert any(row["rule_id"] == "R-RETRY-SAFE" for row in payload["rules"])
 
 
@@ -243,7 +260,8 @@ def test_rules_no_runs_error_is_redacted_by_default_and_raw_with_no_redact(capsy
     captured = capsys.readouterr()
     assert code == 2
     assert str(Path.home()) not in captured.err
-    assert "~" in captured.err
+    # N3b P13: the root is a span (it was "~/.../name" before).
+    assert "path-1" in captured.err
 
     code = main(["rules", "--root", str(missing_root), "--no-redact"])
     captured = capsys.readouterr()
@@ -272,7 +290,8 @@ def test_apply_dry_run_diff_is_redacted_by_default_and_raw_with_no_redact(capsys
     assert code == 0, captured.err
     assert not target.exists()
     assert str(Path.home()) not in captured.out
-    assert "~" in captured.out
+    # N3b P18: at share the target is path-N (it was "~/.../name" before).
+    assert "path-1" in captured.out
 
     code = main(["apply", "R-RETRY-SAFE", "--target", str(target), "--no-redact"])
     captured = capsys.readouterr()
@@ -354,7 +373,11 @@ def test_apply_error_message_is_redacted_by_default_and_raw_with_no_redact(tmp_p
     captured = capsys.readouterr()
     assert code == 1
     assert session_id not in captured.err
-    assert "uuid:0000" in captured.err
+    # N3b P18: at share an apply error is a fixed sentence naming the target
+    # as path-N; the exception text (which may carry a path or target bytes)
+    # is no longer echoed, so the redacted form "uuid:0000" is gone as well.
+    assert "uuid:0000" not in captured.err
+    assert "path-1" in captured.err
 
     code = main(["apply", "R-GIT-CWD", "--target", str(target), "--no-redact"])
     captured = capsys.readouterr()
@@ -425,6 +448,29 @@ def test_scan_wasted_hours_reflects_the_wasted_time_metric(capsys):
     assert payload["totals"]["workflow"]["wasted_hours"] > 0.0
 
 
+
+def _write_failed_notification(root: Path, wf_id: str) -> None:
+    """A parent transcript whose Workflow launch ends in a `failed`
+    notification (docs/DESIGN.md 4.13.3), beside the 00000000-... session
+    directory the tests above use."""
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_field_v03 import (
+        _envelope,
+        _notification_entry,
+        _workflow_launch,
+        _workflow_launch_result,
+        _write_jsonl,
+    )
+
+    base = datetime(2026, 9, 1, 9, 59, tzinfo=timezone.utc)
+    _write_jsonl(root / "-home-user-project" / "00000000-0000-4000-8000-000000000000.jsonl", [
+        _workflow_launch("toolu_A", base),
+        _workflow_launch_result("toolu_A", base + timedelta(seconds=1), wf_id, "tA"),
+        _notification_entry(base + timedelta(minutes=2), _envelope("tA", "toolu_A", "failed")),
+    ])
+
+
 def test_scan_exits_three_when_any_run_is_failed(tmp_path, capsys):
     """docs/DESIGN.md 4.6/4.7: scan's exit code must reflect the worst
     verdict across the fleet, the same as 'run' does for a single run
@@ -443,6 +489,11 @@ def test_scan_exits_three_when_any_run_is_failed(tmp_path, capsys):
         '"timestamp":"2026-09-01T10:00:00Z"}\n',
         encoding="utf-8",
     )
+    # N5b (4.6, 4.13.4): FAILED is reached through the run's own lifecycle
+    # terminal (no detector is critical any more, and a missing artifact is
+    # info), so the harness reports this workflow failed in the parent
+    # transcript.
+    _write_failed_notification(tmp_path, "wf_00000000-930")
     code = main(["scan", "--root", str(tmp_path)])
     captured = capsys.readouterr()
     assert code == 3, captured.err
@@ -481,7 +532,14 @@ def test_scan_shows_dash_for_a_clean_runs_top_detector(tmp_path, capsys):
     unit M3b: a 0-subagent CLEAN session is never a NEEDS ATTENTION
     candidate, so this row only ever shows up in the full --all list.
     """
-    _write_minimal_session(tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000")
+    session_path = _write_minimal_session(
+        tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000",
+    )
+    # the file's own mtime matches its one entry (2026-09-01), as a finished session's would; a
+    # fresh mtime would make the session possibly running, which the --all row now says
+    # (release review of 0.3.0)
+    old = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc).timestamp()
+    os.utime(session_path, (old, old))
 
     code = main(["scan", "--root", str(tmp_path), "--all"])
     captured = capsys.readouterr()
@@ -537,7 +595,7 @@ def test_trend_still_counts_a_detector_silenced_by_config(tmp_path, monkeypatch,
     captured = capsys.readouterr()
     assert code == 0, captured.err
     payload = json.loads(captured.out)
-    assert payload["schema"] == 2
+    assert payload["schema"] == 3
     silent_retry_weeks = payload["weekly_counts"].get("silent_retry", {})
     assert sum(silent_retry_weeks.values()) == 1
 
@@ -743,7 +801,9 @@ def test_scan_marks_an_unfinished_workflow_row_unfinished(tmp_path, capsys):
     payload = json.loads(captured.out)
     rows_by_kind = {row["kind"]: row for row in payload["rows"]}
     assert rows_by_kind["workflow"]["finished"] is False
-    assert rows_by_kind["session"]["finished"] is True
+    # docs/DESIGN.md 4.13.3 (v0.3, N2, D11): a session's own Run.finished is
+    # null, not true -- it has no lifecycle model to report at all.
+    assert rows_by_kind["session"]["finished"] is None
 
 
 def test_run_on_an_unfinished_workflow_still_computes_and_prints_findings(tmp_path, capsys):
@@ -771,17 +831,23 @@ def test_run_on_an_unfinished_workflow_still_computes_and_prints_findings(tmp_pa
     )
     code = main(["run", str(workflow_dir)])
     captured = capsys.readouterr()
-    # missing_artifact fires (critical): the message names a path that was
-    # never actually created -- exactly the kind of real finding the old
-    # short-circuit hid.
-    assert code == 3, captured.err
+    # missing_artifact fires: the message names a path that was never
+    # actually created -- exactly the kind of real finding the old
+    # short-circuit hid. N5b (D2): it is an info finding now (the check is
+    # made later, so it proves nothing about the end of the run), which
+    # moves the verdict to CLEAN and the exit code to 0; --verbose shows it.
+    assert code == 0, captured.err
     # unit M3a: the header line now continues past the verdict tag with
     # "ended ...", so it is a prefix check, not an exact first-line match;
-    # FINDINGS is gone from the default report (--verbose only) -- the
-    # critical finding now shows up as a run-level story instead.
-    assert captured.out.startswith("RUN wf_00000000-960  FAILED (unfinished)  ")
+    # FINDINGS is gone from the default report (--verbose only).
+    assert captured.out.startswith("RUN wf_00000000-960  CLEAN (unfinished)  ")
     assert "missing_artifact" not in captured.out  # detector id: verbose-only
-    assert "STORIES (1)" in captured.out
+    assert "STORIES (0)" in captured.out
+    assert "2 info findings not shown (--verbose)" in captured.out
+    code = main(["run", str(workflow_dir), "--verbose"])
+    verbose = capsys.readouterr().out
+    assert code == 0
+    assert "; the tool cannot tell whether it existed when the run ended" in verbose
 
 
 def test_run_resolves_a_session_by_a_unique_s_prefix(tmp_path, capsys):

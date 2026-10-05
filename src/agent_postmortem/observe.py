@@ -33,7 +33,8 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from .models import Run
+from . import ledger
+from .models import Attempt, Run
 
 # --- public states (docs/DESIGN.md 4.9) -------------------------------------
 
@@ -57,6 +58,18 @@ _MIN_GIT_VERSION = (2, 36, 0)
 _STALE_AFTER = timedelta(hours=72)
 
 _SUBPROCESS_TIMEOUT = 10
+
+# The closed list of group-level reasons (docs/DESIGN.md 4.9, N5c-1; plan S6).
+REASON_REFUSED = "refused"
+REASON_HISTORICAL = "historical"
+REASON_NOT_GIT = "not a git repository"
+REASON_GIT_UNAVAILABLE = "git unavailable"
+REASON_GUARD = "guard refused"
+REASON_OUTSIDE = "outside the work tree"
+GROUP_REASONS = (
+    REASON_REFUSED, REASON_HISTORICAL, REASON_NOT_GIT, REASON_GIT_UNAVAILABLE, REASON_GUARD,
+    REASON_OUTSIDE,
+)
 
 
 @dataclass
@@ -449,3 +462,254 @@ def observe_run(run: Run, now: datetime | None = None) -> RepoObservation:
         checked=True, reason=None, repo_root=toplevel, head=head,
         git_version=git_version, paths=paths,
     )
+
+
+# =============================================================================
+# Per-repository observation (docs/DESIGN.md 4.9, N5c-1; plan S5 and S6)
+# =============================================================================
+
+_PATH_EFFECTS = frozenset({"observed", "claimed_target", "attempted"})
+
+
+@dataclass
+class GroupObservation:
+    """One repository group of a run (docs/DESIGN.md 4.9, N5c-1). `repo` is the
+    candidate repository (None for the unknown group); `refused` is true for a
+    group a partial ledger contributes to and for the unknown group; `checked`
+    is true only when `git status` actually ran. `reason` is one of GROUP_REASONS
+    for a group that was not checked, else None. `repo_root`, `head`, and
+    `git_version` are internal (never exported). `paths` holds a PathObservation
+    per observed path (the absolute ledger path), only for a checked group;
+    `unobserved_paths` is every ledger path no process looked at. `attempts` is
+    the internal list of attempt references (`main`, `attempts[<i>]`)."""
+
+    repo: str | None
+    refused: bool
+    checked: bool
+    reason: str | None
+    repo_root: str | None = None
+    head: str | None = None
+    git_version: str | None = None
+    paths: dict[str, PathObservation] = field(default_factory=dict)
+    unobserved_paths: list[str] = field(default_factory=list)
+    attempts: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RunObservation:
+    """The result of observe_groups(): the ordered group list, named
+    repositories in sorted candidate order, then the unknown group."""
+
+    groups: list[GroupObservation] = field(default_factory=list)
+
+    @property
+    def checked(self) -> bool:
+        return any(group.checked for group in self.groups)
+
+    @property
+    def repo_root(self) -> str | None:
+        """The first checked group's toplevel: the one repository root the
+        disclosure context knows at `local` (docs/DESIGN.md 4.13.5, D-n)."""
+        for group in self.groups:
+            if group.checked and group.repo_root:
+                return group.repo_root
+        return None
+
+
+def _entry_paths(attempt: Attempt) -> set[str]:
+    built = attempt.ledger
+    if built is None:
+        return set()
+    return {
+        entry.path for entry in built.entries
+        if entry.path is not None and entry.effect in _PATH_EFFECTS
+    }
+
+
+def _later_write(run: Run, writers: list[Attempt], path: str) -> bool:
+    """True when an attempt of the same key with a higher ordinal than one of the
+    path's writers also recorded the path (rule 8, on the ledger)."""
+    for writer in writers:
+        if writer.key is None:
+            continue
+        for other in run.attempts:
+            if (
+                other.key == writer.key and other.ordinal > writer.ordinal
+                and path in _entry_paths(other)
+            ):
+                return True
+    return False
+
+
+def _path_observation(
+    run: Run, members: list[Attempt], path: str, state: str,
+) -> PathObservation:
+    writers = [attempt for attempt in members if path in _entry_paths(attempt)]
+    attempts = [
+        {
+            "agent_id": "main" if attempt is run.main else attempt.agent_id,
+            "ordinal": attempt.ordinal,
+        }
+        for attempt in writers
+    ]
+    return PathObservation(
+        state=state, later_write_observed=_later_write(run, writers, path), attempts=attempts,
+    )
+
+
+class _GitSession:
+    """The one absolute git path, the scrubbed environment, and the version
+    guard, resolved lazily and once for a whole run (docs/DESIGN.md 4.9 rules 4
+    and 5). `ready()` is None when git can be used, else the closed reason."""
+
+    def __init__(self) -> None:
+        self._resolved = False
+        self._reason: str | None = None
+        self.git_path: str | None = None
+        self.env: dict[str, str] = {}
+        self.version: str | None = None
+
+    def ready(self) -> str | None:
+        if self._resolved:
+            return self._reason
+        self._resolved = True
+        git_path = shutil.which("git")
+        if git_path is None:
+            self._reason = REASON_GIT_UNAVAILABLE
+            return self._reason
+        self.git_path = git_path
+        self.env = _build_env()
+        result = _run_git(git_path, ["--version"], self.env)
+        self.version = (
+            result.stdout.strip() if result is not None and result.returncode == 0 else None
+        )
+        parsed = _parse_git_version(self.version)
+        if parsed is None or parsed < _MIN_GIT_VERSION:
+            self._reason = REASON_GIT_UNAVAILABLE
+        return self._reason
+
+
+def _unchecked(
+    repo: str | None, group, reason: str, *, refused: bool, session: "_GitSession | None" = None,
+    repo_root: str | None = None, head: str | None = None,
+) -> GroupObservation:
+    return GroupObservation(
+        repo=repo, refused=refused, checked=False, reason=reason, repo_root=repo_root,
+        head=head, git_version=session.version if session is not None else None,
+        paths={}, unobserved_paths=sorted(group.paths), attempts=list(group.attempts),
+    )
+
+
+def _observe_named_group(
+    run: Run, repo: str, group, members: list[Attempt], session: _GitSession, stale: bool,
+) -> GroupObservation:
+    """The guarded 4.9 sequence for one named repository group that is not
+    refused. Every failure is an unchecked group with a closed reason; nothing
+    raises."""
+    if stale:
+        return _unchecked(repo, group, REASON_HISTORICAL, refused=False)
+    if not os.path.isdir(repo):
+        return _unchecked(repo, group, REASON_NOT_GIT, refused=False)
+    if session.ready() is not None:
+        return _unchecked(repo, group, REASON_GIT_UNAVAILABLE, refused=False)
+    git_path, env = session.git_path, session.env
+    assert git_path is not None
+    toplevel_result = _run_git(git_path, ["-C", repo, "rev-parse", "--show-toplevel"], env)
+    if toplevel_result is None or toplevel_result.returncode != 0:
+        return _unchecked(repo, group, REASON_NOT_GIT, refused=False, session=session)
+    toplevel = toplevel_result.stdout.strip()
+    if not toplevel:
+        return _unchecked(repo, group, REASON_NOT_GIT, refused=False, session=session)
+    head_result = _run_git(git_path, ["-C", repo, "rev-parse", "HEAD"], env)
+    if head_result is None or head_result.returncode != 0:
+        return _unchecked(
+            repo, group, REASON_GUARD, refused=False, session=session, repo_root=toplevel,
+        )
+    head = head_result.stdout.strip()
+
+    # Rule 6, containment: only a path inside the toplevel ever reaches git.
+    prefix = toplevel.rstrip(os.sep) + os.sep
+    contained: list[tuple[str, str]] = []
+    outside: list[str] = []
+    for path in sorted(group.paths):
+        norm = os.path.normpath(path)
+        if norm.startswith(prefix):
+            contained.append((path, norm[len(prefix):]))
+        else:
+            outside.append(path)
+    if not contained:
+        return _unchecked(
+            repo, group, REASON_OUTSIDE, refused=False, session=session,
+            repo_root=toplevel, head=head,
+        )
+
+    # The filter-driver guard is the call immediately before `status`.
+    filter_result = _run_git(
+        git_path, ["-C", repo, "config", "--get-regexp", _FILTER_CONFIG_PATTERN], env,
+    )
+    if filter_result is None or filter_result.returncode != 1:
+        return _unchecked(
+            repo, group, REASON_GUARD, refused=False, session=session,
+            repo_root=toplevel, head=head,
+        )
+    status_result = _run_git(
+        git_path,
+        [
+            "-C", repo, "--no-optional-locks", "-c", "core.fsmonitor=false", "status",
+            "--porcelain=v2", "-z", "--no-renames", "--ignore-submodules=all", "--",
+            *[rel for _path, rel in contained],
+        ],
+        env,
+    )
+    if status_result is None or status_result.returncode != 0:
+        return _unchecked(
+            repo, group, REASON_GUARD, refused=False, session=session,
+            repo_root=toplevel, head=head,
+        )
+    dirty = _parse_porcelain_v2(status_result.stdout)
+    paths: dict[str, PathObservation] = {}
+    for path, rel in contained:
+        if rel in dirty:
+            state = DIRTY_NOW
+        else:
+            state = CLEAN_NOW if os.path.exists(os.path.join(toplevel, rel)) else MISSING_NOW
+        paths[path] = _path_observation(run, members, path, state)
+    return GroupObservation(
+        repo=repo, refused=False, checked=True, reason=None, repo_root=toplevel, head=head,
+        git_version=session.version, paths=paths, unobserved_paths=outside,
+        attempts=list(group.attempts),
+    )
+
+
+def observe_groups(
+    run: Run, now: datetime | None = None, groups: "ledger.RepoGroups | None" = None,
+) -> RunObservation:
+    """docs/DESIGN.md 4.9 (N5c-1), plan S5 and S6. Read-only. The repository
+    groups are partitioned before any process starts (`ledger.group_by_repo`, a
+    pure function); a refused group and the unknown group start no process at
+    all; a group that is not refused runs the guarded sequence with only its own
+    ledger paths. No exception escapes: every failure is an unchecked group with
+    a reason from GROUP_REASONS."""
+    now = now if now is not None else datetime.now(timezone.utc)
+    grouped = groups if groups is not None else ledger.group_by_repo(run)
+    ended = run.ended_at
+    if ended is not None and ended.tzinfo is None:
+        ended = ended.replace(tzinfo=timezone.utc)
+    stale = ended is not None and (now - ended) > _STALE_AFTER
+
+    by_ref: dict[str, Attempt] = {}
+    for attempt in ([run.main] if run.main is not None else []) + list(run.attempts):
+        by_ref[ledger.attempt_refs(run)[id(attempt)]] = attempt
+    session = _GitSession()
+
+    result: list[GroupObservation] = []
+    for repo, group in grouped.repos.items():
+        if group.refused:
+            result.append(_unchecked(repo, group, REASON_REFUSED, refused=True))
+            continue
+        members = [by_ref[ref] for ref in group.attempts if ref in by_ref]
+        result.append(_observe_named_group(run, repo, group, members, session, stale))
+    unknown = grouped.unknown
+    if unknown.attempts or unknown.paths:
+        result.append(_unchecked(None, unknown, REASON_REFUSED, refused=True))
+    return RunObservation(result)

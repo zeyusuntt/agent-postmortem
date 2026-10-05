@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent_postmortem import config
+from agent_postmortem.detectors import codex_write_denied
 from agent_postmortem.models import Finding
 
 
@@ -114,6 +115,9 @@ def test_unknown_id_alongside_a_known_one_only_the_known_one_is_silenced(tmp_pat
 
 
 def test_critical_detector_id_is_never_silenced_and_is_reported_separately(tmp_path, monkeypatch):
+    # N5b (4.13.4): no shipped detector is critical any more (critical is
+    # reserved), so the rule is exercised by a detector that declares it.
+    monkeypatch.setattr(codex_write_denied.DETECTOR, "severity_default", "critical")
     path = _write(tmp_path, '[detectors]\noff = ["codex_write_denied"]\n')
     monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(path))
     cfg = config.load_config()
@@ -124,12 +128,16 @@ def test_critical_detector_id_is_never_silenced_and_is_reported_separately(tmp_p
     assert cfg.warnings == []
 
 
-def test_missing_artifact_is_also_a_critical_detector_and_cannot_be_silenced(tmp_path, monkeypatch):
+def test_missing_artifact_is_no_longer_critical_and_can_be_silenced(tmp_path, monkeypatch):
+    # N5b (4.13.4, D2): missing_artifact is info now, so naming it in
+    # [detectors].off is an ordinary silencing, not a refusal. No shipped
+    # detector is critical.
     path = _write(tmp_path, '[detectors]\noff = ["missing_artifact"]\n')
     monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(path))
     cfg = config.load_config()
-    assert cfg.detectors_off == frozenset()
-    assert cfg.critical_rejected == ("missing_artifact",)
+    assert cfg.detectors_off == frozenset({"missing_artifact"})
+    assert cfg.critical_rejected == ()
+    assert config._critical_detector_ids() == frozenset()
 
 
 def test_off_not_a_list_warns_and_silences_nothing(tmp_path, monkeypatch):

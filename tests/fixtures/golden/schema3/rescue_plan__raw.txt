@@ -1,0 +1,2193 @@
+##### case reader_minimal:wf_a0000000-001
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_a0000000-001",
+    "kind": "workflow",
+    "finished": false,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": true,
+  "groups": [],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case reader_minimal:wf_b0000000-002
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_b0000000-002",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [
+    {
+      "group": 0,
+      "repo": "/home/user/project",
+      "refused": true,
+      "checked": false,
+      "reason": "refused",
+      "paths": {},
+      "unobserved_paths": []
+    }
+  ],
+  "units": [
+    {
+      "agent": "impl:demo",
+      "phase": "Implement",
+      "attempts": 2,
+      "end": "completed",
+      "task": {
+        "pointer": "agent-a1111111111111111.jsonl:1",
+        "length": 49
+      },
+      "reported": {
+        "type": "text",
+        "text_length": 9
+      },
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [
+      {
+        "agent": "impl:demo",
+        "ordinal": 1,
+        "time": "10:05Z",
+        "silence_seconds": 180.0
+      }
+    ],
+    "failed": [],
+    "already_exists": {
+      "paths": [],
+      "commits": []
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case reader_minimal:wf_c0000000-003
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_c0000000-003",
+    "kind": "workflow",
+    "finished": false,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": true,
+  "groups": [],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case journal_malformed_fields:wf_00000000-af1
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-af1",
+    "kind": "workflow",
+    "finished": false,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": true,
+  "groups": [],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case journal_malformed_fields:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "s_82d2d30035",
+    "kind": "session",
+    "finished": null,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": true,
+  "groups": [],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case hook_session:wf_00000000-710
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-710",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [
+    {
+      "group": 0,
+      "repo": "/home/user/project",
+      "refused": true,
+      "checked": false,
+      "reason": "refused",
+      "paths": {},
+      "unobserved_paths": []
+    }
+  ],
+  "units": [
+    {
+      "agent": "impl:alpha",
+      "phase": "Implement",
+      "attempts": 2,
+      "end": "completed",
+      "task": {
+        "pointer": "agent-ae100000000000001.jsonl:1",
+        "length": 27
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [
+      {
+        "agent": "impl:alpha",
+        "ordinal": 1,
+        "time": "10:05Z",
+        "silence_seconds": 294.0
+      }
+    ],
+    "failed": [],
+    "already_exists": {
+      "paths": [],
+      "commits": []
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case hook_session:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "s_311deb29a5",
+    "kind": "session",
+    "finished": null,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": true,
+  "groups": [],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case session_human_interrupt:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "s_aece06acec",
+    "kind": "session",
+    "finished": null,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [
+    {
+      "agent": "impl:helper",
+      "phase": null,
+      "attempts": 1,
+      "end": "interrupted",
+      "task": {
+        "pointer": "agent-acc00000000000001.jsonl:1",
+        "length": 51
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [
+      {
+        "agent": "impl:helper",
+        "ordinal": 1,
+        "time": "09:03Z",
+        "silence_seconds": 170.0
+      }
+    ],
+    "failed": [],
+    "already_exists": {
+      "paths": [],
+      "commits": []
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case session_parent_stop:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "s_2a74169191",
+    "kind": "session",
+    "finished": null,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [
+    {
+      "agent": "impl:fixer",
+      "phase": null,
+      "attempts": 1,
+      "end": "stopped by parent",
+      "task": {
+        "pointer": "agent-acb00000000000001.jsonl:1",
+        "length": 47
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [
+      {
+        "agent": "impl:fixer",
+        "ordinal": 1,
+        "time": "09:02Z",
+        "silence_seconds": 110.0
+      }
+    ],
+    "failed": [],
+    "already_exists": {
+      "paths": [],
+      "commits": []
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case redaction_adversarial:wf_00000000-960
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-960",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case attempt_facts:wf_00000000-af0
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-af0",
+    "kind": "workflow",
+    "finished": false,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [
+    {
+      "group": 0,
+      "repo": "/home/user/project",
+      "refused": true,
+      "checked": false,
+      "reason": "refused",
+      "paths": {},
+      "unobserved_paths": [
+        "/tmp/agent-postmortem-fixture/attempt_facts/completed-inflight/pending2.md",
+        "/tmp/agent-postmortem-fixture/attempt_facts/edit-ok/notes.md",
+        "/tmp/agent-postmortem-fixture/attempt_facts/killed/pending.md",
+        "/tmp/agent-postmortem-fixture/attempt_facts/long-path/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/agent-postmortem-fixture/attempt_facts/no-ts/file.md",
+        "/tmp/agent-postmortem-fixture/attempt_facts/write-error/output.txt"
+      ]
+    }
+  ],
+  "units": [
+    {
+      "agent": "impl:killed-edit",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "killed",
+      "task": {
+        "pointer": "agent-af200000000000003.jsonl:1",
+        "length": 22
+      },
+      "reported": null,
+      "paths": [
+        {
+          "path": "/tmp/agent-postmortem-fixture/attempt_facts/killed/pending.md",
+          "group": 0,
+          "observation": null,
+          "ledger": [
+            {
+              "attempt": 1,
+              "effect": "attempted",
+              "basis": "tool_result",
+              "completion": "no_result",
+              "line": "agent-af200000000000003.jsonl:2"
+            }
+          ],
+          "attempts": [
+            1
+          ],
+          "later_write_observed": false
+        }
+      ],
+      "commits": [],
+      "in_flight": [
+        {
+          "tool": "Edit",
+          "path": "/tmp/agent-postmortem-fixture/attempt_facts/killed/pending.md"
+        }
+      ],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short -- /tmp/agent-postmortem-fixture/attempt_facts/killed/pending.md"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff -- /tmp/agent-postmortem-fixture/attempt_facts/killed/pending.md"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:missing-transcript",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": null,
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused",
+        "UNKNOWN facts: transcript missing"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [
+      {
+        "agent": "impl:killed-edit",
+        "ordinal": 1,
+        "time": "11:00Z",
+        "silence_seconds": 5.0
+      }
+    ],
+    "failed": [
+      {
+        "agent": "impl:missing-transcript",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      }
+    ],
+    "already_exists": {
+      "paths": [
+        "/tmp/agent-postmortem-fixture/attempt_facts/edit-ok/notes.md",
+        "/tmp/agent-postmortem-fixture/attempt_facts/long-path/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/agent-postmortem-fixture/attempt_facts/no-ts/file.md"
+      ],
+      "commits": [
+        "abc1234"
+      ]
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:attempt_failed_causes
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c01",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [
+    {
+      "agent": "impl:usage-session",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-af100000000000001.jsonl:1",
+        "length": 38
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:usage-weekly",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-af100000000000002.jsonl:1",
+        "length": 37
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:machine-sleep",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-af100000000000003.jsonl:1",
+        "length": 38
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:api-error",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-af100000000000004.jsonl:1",
+        "length": 34
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:decoy",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-af100000000000005.jsonl:1",
+        "length": 73
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:session-prose",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-af1000000000000a1.jsonl:1",
+        "length": 38
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:weekly-prose",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-af1000000000000a2.jsonl:1",
+        "length": 37
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:sleep-prose",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-af1000000000000a3.jsonl:1",
+        "length": 36
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:api-prose",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-af1000000000000a4.jsonl:1",
+        "length": 34
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:usage-session-leading-ws",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-af100000000000007.jsonl:1",
+        "length": 49
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [],
+    "failed": [
+      {
+        "agent": "impl:usage-session",
+        "cause": "usage_limit_session",
+        "retry_now": "no",
+        "reset_time": "2pm"
+      },
+      {
+        "agent": "impl:usage-weekly",
+        "cause": "usage_limit_weekly",
+        "retry_now": "no",
+        "reset_time": "Monday 9am"
+      },
+      {
+        "agent": "impl:machine-sleep",
+        "cause": "machine_sleep",
+        "retry_now": "yes",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:api-error",
+        "cause": "api_error",
+        "retry_now": "yes",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:decoy",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:session-prose",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:weekly-prose",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:sleep-prose",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:api-prose",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:usage-session-leading-ws",
+        "cause": "usage_limit_session",
+        "retry_now": "no",
+        "reset_time": "2pm"
+      }
+    ],
+    "already_exists": {
+      "paths": [],
+      "commits": []
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:attempt_failed_retry_tail
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c02",
+    "kind": "workflow",
+    "finished": false,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [
+    {
+      "agent": "impl:both-failed",
+      "phase": "Implement",
+      "attempts": 2,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-afa10000000000001.jsonl:1",
+        "length": 37
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:still-open",
+      "phase": "Implement",
+      "attempts": 2,
+      "end": "unknown",
+      "task": {
+        "pointer": "agent-afb10000000000001.jsonl:1",
+        "length": 36
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [],
+    "failed": [
+      {
+        "agent": "impl:both-failed",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:both-failed",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:still-open",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      }
+    ],
+    "already_exists": {
+      "paths": [],
+      "commits": []
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:clean_run
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c05",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [
+    {
+      "group": 0,
+      "repo": "/home/user/project",
+      "refused": true,
+      "checked": false,
+      "reason": "refused",
+      "paths": {},
+      "unobserved_paths": []
+    }
+  ],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:codex_write_denied
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c06",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [
+    {
+      "group": 0,
+      "repo": "/home/user/project",
+      "refused": true,
+      "checked": false,
+      "reason": "refused",
+      "paths": {},
+      "unobserved_paths": []
+    }
+  ],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:incomplete_journal
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c08",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_resolved
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c0a",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [
+    {
+      "agent": "impl:failed",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-ad300000000000001.jsonl:1",
+        "length": 32
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:retry",
+      "phase": "Implement",
+      "attempts": 2,
+      "end": "completed",
+      "task": {
+        "pointer": "agent-ad400000000000001.jsonl:1",
+        "length": 42
+      },
+      "reported": {
+        "type": "dict",
+        "claims": {
+          "ok": true
+        }
+      },
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:killed-retry",
+      "phase": "Implement",
+      "attempts": 2,
+      "end": "completed",
+      "task": {
+        "pointer": "agent-ad500000000000001.jsonl:1",
+        "length": 38
+      },
+      "reported": {
+        "type": "dict",
+        "claims": {
+          "ok": true
+        }
+      },
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:superseded",
+      "phase": "Implement",
+      "attempts": 2,
+      "end": "completed",
+      "task": {
+        "pointer": "agent-ad600000000000001.jsonl:1",
+        "length": 36
+      },
+      "reported": {
+        "type": "dict",
+        "claims": {
+          "ok": true
+        }
+      },
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:double-fail",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-ad700000000000001.jsonl:1",
+        "length": 37
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    },
+    {
+      "agent": "impl:failed-sentinel",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": {
+        "pointer": "agent-ad800000000000001.jsonl:1",
+        "length": 46
+      },
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [
+      {
+        "agent": "impl:killed-retry",
+        "ordinal": 1,
+        "time": "09:40Z",
+        "silence_seconds": 595.0
+      }
+    ],
+    "failed": [
+      {
+        "agent": "impl:failed",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:retry",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:double-fail",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      },
+      {
+        "agent": "impl:failed-sentinel",
+        "cause": "interrupted",
+        "retry_now": "unknown",
+        "reset_time": null
+      }
+    ],
+    "already_exists": {
+      "paths": [],
+      "commits": []
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_unresolved
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c0b",
+    "kind": "workflow",
+    "finished": false,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": true,
+  "groups": [],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_orphan_failed
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c09",
+    "kind": "workflow",
+    "finished": false,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": true,
+  "groups": [],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:missing_artifact
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c0c",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [],
+  "brief": null,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:claim_contradiction
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c04",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [
+    {
+      "agent": "impl:failed-attempt",
+      "phase": "Implement",
+      "attempts": 1,
+      "end": "failed",
+      "task": null,
+      "reported": null,
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused",
+        "UNKNOWN facts: transcript missing"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [],
+    "failed": [
+      {
+        "agent": "impl:failed-attempt",
+        "cause": "unattributed",
+        "retry_now": "unknown",
+        "reset_time": null
+      }
+    ],
+    "already_exists": {
+      "paths": [],
+      "commits": []
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case synthetic:no_canonical_agent_id
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c20",
+    "kind": "workflow",
+    "finished": false,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [
+    {
+      "agent": "impl:first",
+      "phase": "Implement",
+      "attempts": 2,
+      "end": "completed",
+      "task": null,
+      "reported": {
+        "type": "dict",
+        "claims": {
+          "ok": true
+        }
+      },
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused",
+        "UNKNOWN facts: transcript missing"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [],
+    "failed": [],
+    "already_exists": {
+      "paths": [],
+      "commits": []
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case synthetic:status_flip
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "run": {
+    "run_id": "wf_00000000-c21",
+    "kind": "workflow",
+    "finished": true,
+    "possibly_live": false
+  },
+  "nothing_to_rescue": false,
+  "groups": [],
+  "units": [
+    {
+      "agent": "impl:one",
+      "phase": "Implement",
+      "attempts": 2,
+      "end": "completed",
+      "task": null,
+      "reported": {
+        "type": "dict",
+        "claims": {
+          "ok": true
+        }
+      },
+      "paths": [],
+      "commits": [],
+      "in_flight": [],
+      "unknown": [
+        "whose content is in the dirty paths; whether the task's goal was reached; what remains of the task",
+        "refused",
+        "UNKNOWN facts: transcript missing"
+      ],
+      "checks": [],
+      "steps": [
+        {
+          "grade": "look",
+          "text": "git status",
+          "command": "git status --short"
+        },
+        {
+          "grade": "look",
+          "text": "git diff",
+          "command": "git diff"
+        },
+        {
+          "grade": "decide",
+          "text": "declare a check first",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "keep, fix, or set aside each dirty path. A passing check is evidence, not a decision.",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "commit, after reading the diff",
+          "command": null
+        },
+        {
+          "grade": "decide",
+          "text": "relaunch the remaining work",
+          "command": null
+        }
+      ]
+    }
+  ],
+  "brief": {
+    "killed": [],
+    "failed": [],
+    "already_exists": {
+      "paths": [],
+      "commits": []
+    }
+  },
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>

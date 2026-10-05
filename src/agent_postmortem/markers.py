@@ -7,7 +7,21 @@ disk carries it, the test that builds the event in memory) and the Claude
 Code version range it was observed on. No comment here names a real run id;
 DESIGN.md 3 requires that every marker comment cite a fixture case, or, when
 none carries the string yet, the in-memory test that does, instead.
+
+docs/DESIGN.md 4.13.2 (v0.3, N1): REGISTRY below is the marker provenance
+table -- one MarkerSpec per canonical id, with its producer, the permitted
+shape(s) reader.py evaluates it against, the candidacy fragments (the
+constants above, or a dedicated candidate function for the one regex-based
+id), and the anchored predicate. reader.py builds Attempt.marker_hits from
+this; detectors import canonical ids from here, never fragments, and never
+read Event.markers (kept only for compatibility, 4.13.2).
 """
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Callable
 
 # A Workflow subagent transcript has no human in it. When the runtime kills an
 # attempt it appends a user-role message starting with this prefix (observed
@@ -59,9 +73,11 @@ BASH_TIMEOUT = (
 BASH_TIMEOUT_EXIT_CODE = 143
 
 # A tool_result wrapping a tool-input validation failure. Observed as
-# "InputValidationError: Read was called with input that could not be parsed
-# as JSON." on Claude Code 2.1.251 to 2.1.280, and the same prefix for other
-# tools. No fixture on disk carries this marker; it is exercised by the
+# "<tool_use_error>InputValidationError: Read was called with input that
+# could not be parsed as JSON." on Claude Code 2.1.251 to 2.1.280, and the
+# same wrapper/prefix for other tools (docs/DESIGN.md 4.13.2's registry
+# anchors on the full "<tool_use_error>InputValidationError:" prefix, on
+# line1). No fixture on disk carries this marker; it is exercised by the
 # in-memory run tests/test_detectors_tooling.py builds for tool_json_error.
 TOOL_INPUT_INVALID = ("InputValidationError",)
 
@@ -70,8 +86,10 @@ TOOL_INPUT_INVALID = ("InputValidationError",)
 # validation failure, "Output does not match required schema: root: must have
 # required property '...'", carried by tests/fixtures/runs/structured_output_corrupt
 # (agent-ac400000000000001.jsonl, line 3); and an unparsable payload,
-# "InputValidationError: StructuredOutput was called with input that could
-# not be parsed as JSON.", which no fixture on disk carries.
+# "<tool_use_error>InputValidationError: StructuredOutput was called with
+# input that could not be parsed as JSON." (docs/DESIGN.md 4.13.2's registry
+# anchors this form on the same wrapper/prefix as tool_input_invalid), which
+# no fixture on disk carries.
 STRUCTURED_OUTPUT_MISMATCH = (
     "does not match required schema",
     "could not be parsed as JSON",
@@ -146,3 +164,245 @@ MACHINE_SLEEP = ("API Error: Your computer went to sleep",)
 # events. Carried by tests/fixtures/runs/attempt_failed_causes
 # (agent-af100000000000004.jsonl, last line).
 API_ERROR = ("API Error: Server error mid-response",)
+
+
+# === Marker provenance registry (docs/DESIGN.md 4.13.2, v0.3 N1) ===========
+#
+# Shape tags: which kind of block reader.py may evaluate a given id against.
+# A block whose shape is not in an id's `shapes` is never even a candidate
+# for that id (docs/DESIGN.md 4.13.2: "A shape that is not listed for an id
+# is never a hit for it").
+SHAPE_USER_ENTRY = "user_entry"  # the whole flattened text of a user entry
+SHAPE_TOOL_RESULT_BASH = "tool_result_bash"  # a tool_result paired to Bash
+SHAPE_TOOL_RESULT_BASH_CODEX = "tool_result_bash_codex"  # ...whose command
+# runs codex as a program (docs/DESIGN.md 4.3)
+SHAPE_TOOL_RESULT_ANY_EXCEPT_STRUCTURED_OUTPUT = "tool_result_any_except_structured_output"
+SHAPE_TOOL_RESULT_STRUCTURED_OUTPUT = "tool_result_structured_output"
+SHAPE_ASSISTANT_CODEX_ATTEMPT = "assistant_codex_attempt"  # an assistant
+# entry's whole text, only when the attempt also has a Bash call running
+# codex as a program somewhere
+SHAPE_FINAL_ASSISTANT_ENTRY = "final_assistant_entry"  # the attempt's own
+# last transcript entry, only when that entry is an assistant entry
+
+
+def _lines(text: str) -> tuple[str, str]:
+    """line1, line2 of flattened text (docs/DESIGN.md 4.13.2): the text up
+    to the first newline, and the line after it (or '' when there is none)."""
+    parts = text.split("\n", 2)
+    line1 = parts[0] if parts else ""
+    line2 = parts[1] if len(parts) > 1 else ""
+    return line1, line2
+
+
+_EXIT_CODE_LINE_RE = re.compile(r"Exit code [0-9]+")
+
+
+def _predicate_kill_sentinel(text: str, shape: str) -> bool:
+    return text.rstrip(" \t\r\n") in KILL_SENTINEL_VARIANTS
+
+
+def _predicate_bash_backgrounded(text: str, shape: str) -> bool:
+    line1, _line2 = _lines(text)
+    return line1.startswith("Command did not complete within its ") and (
+        "moved to the background" in line1
+    )
+
+
+def _predicate_bash_timeout(text: str, shape: str) -> bool:
+    line1, line2 = _lines(text)
+    return line1 == "Exit code 143" and line2.startswith("Command timed out after")
+
+
+def _predicate_tool_input_invalid(text: str, shape: str) -> bool:
+    line1, _line2 = _lines(text)
+    return line1.startswith("<tool_use_error>InputValidationError:")
+
+
+def _predicate_structured_output_mismatch(text: str, shape: str) -> bool:
+    line1, _line2 = _lines(text)
+    if line1.startswith("Output does not match required schema"):
+        return True
+    return line1.startswith("<tool_use_error>InputValidationError:") and (
+        "could not be parsed as JSON" in line1
+    )
+
+
+def _predicate_classifier_unavailable(text: str, shape: str) -> bool:
+    line1, _line2 = _lines(text)
+    return "is temporarily unavailable" in line1 and "cannot determine the safety of Bash" in line1
+
+
+def _predicate_git_not_repo(text: str, shape: str) -> bool:
+    line1, line2 = _lines(text)
+    if line1.startswith("fatal: not a git repository"):
+        return True
+    return bool(_EXIT_CODE_LINE_RE.fullmatch(line1)) and line2.startswith(
+        "fatal: not a git repository"
+    )
+
+
+def _predicate_sandbox_write_denied(text: str, shape: str) -> bool:
+    lines = text.split("\n")
+    if any(
+        line.startswith("[codex]") and ("WRITE_DENIED" in line or "read-only sandbox" in line)
+        for line in lines
+    ):
+        return True
+    if shape == SHAPE_TOOL_RESULT_BASH_CODEX:
+        line1 = lines[0] if lines else ""
+        return line1.startswith("WRITE_DENIED")
+    return False
+
+
+_SHELL_GUARD_COMPILED_RE = re.compile(SHELL_GUARD_BLOCK_REGEX)
+
+
+def _predicate_shell_guard_block(text: str, shape: str) -> bool:
+    return any(_SHELL_GUARD_COMPILED_RE.match(line) for line in text.split("\n"))
+
+
+def _candidate_shell_guard_block(text: str) -> bool:
+    return bool(_SHELL_GUARD_COMPILED_RE.search(text))
+
+
+def _make_startswith_predicate(fragment: str) -> Callable[[str, str], bool]:
+    def _predicate(text: str, shape: str, _fragment: str = fragment) -> bool:
+        return text.startswith(_fragment)
+
+    return _predicate
+
+
+# codex run as a program: the first word of a command segment (start of the
+# command, or after ";", "&", "|", "(", or a newline), optionally
+# path-qualified, followed by whitespace or end; or the codex-companion
+# script named anywhere. Shared by the reader (to decide the
+# tool_result_bash_codex / assistant_codex_attempt shapes) and, previously,
+# detectors/codex_write_denied.py's own copy (docs/DESIGN.md 4.3).
+_CODEX_PROGRAM_RE = re.compile(r"(^|[;&|(\n])\s*(\S*/)?codex(\s|$)|codex-companion\.mjs")
+
+
+def runs_codex_program(command: str | None) -> bool:
+    """Whether a Bash command runs codex as a program (docs/DESIGN.md 4.3):
+    the first word of a command segment names codex (optionally
+    path-qualified), or the command names codex-companion.mjs anywhere. A
+    command that only mentions "codex" inside data (a heredoc body, a file
+    name) does not match."""
+    if not isinstance(command, str) or not command:
+        return False
+    return bool(_CODEX_PROGRAM_RE.search(command.lower()))
+
+
+@dataclass(frozen=True)
+class MarkerSpec:
+    """One row of the marker provenance registry (docs/DESIGN.md 4.13.2)."""
+
+    id: str
+    producer: str
+    shapes: tuple[str, ...]
+    fragments: tuple[str, ...]  # candidacy fragments; () when is_candidate is set
+    predicate: Callable[[str, str], bool]  # (flattened_text, matched_shape) -> anchored?
+    is_candidate: Callable[[str], bool] | None = None
+
+    def candidate(self, text: str) -> bool:
+        if self.is_candidate is not None:
+            return self.is_candidate(text)
+        return any(fragment in text for fragment in self.fragments)
+
+
+REGISTRY: dict[str, MarkerSpec] = {
+    spec.id: spec
+    for spec in (
+        MarkerSpec(
+            id="kill_sentinel",
+            producer="harness_user",
+            shapes=(SHAPE_USER_ENTRY,),
+            fragments=(KILL_SENTINEL_PREFIX,),
+            predicate=_predicate_kill_sentinel,
+        ),
+        MarkerSpec(
+            id="bash_backgrounded",
+            producer="harness_tool_notice",
+            shapes=(SHAPE_TOOL_RESULT_BASH,),
+            fragments=BASH_BACKGROUNDED,
+            predicate=_predicate_bash_backgrounded,
+        ),
+        MarkerSpec(
+            id="bash_timeout",
+            producer="harness_tool_notice",
+            shapes=(SHAPE_TOOL_RESULT_BASH,),
+            fragments=BASH_TIMEOUT,
+            predicate=_predicate_bash_timeout,
+        ),
+        MarkerSpec(
+            id="tool_input_invalid",
+            producer="harness_tool_notice",
+            shapes=(SHAPE_TOOL_RESULT_ANY_EXCEPT_STRUCTURED_OUTPUT,),
+            fragments=TOOL_INPUT_INVALID,
+            predicate=_predicate_tool_input_invalid,
+        ),
+        MarkerSpec(
+            id="structured_output_mismatch",
+            producer="harness_tool_notice",
+            shapes=(SHAPE_TOOL_RESULT_STRUCTURED_OUTPUT,),
+            fragments=STRUCTURED_OUTPUT_MISMATCH,
+            predicate=_predicate_structured_output_mismatch,
+        ),
+        MarkerSpec(
+            id="classifier_unavailable",
+            producer="harness_tool_notice",
+            shapes=(SHAPE_TOOL_RESULT_BASH,),
+            fragments=CLASSIFIER_UNAVAILABLE,
+            predicate=_predicate_classifier_unavailable,
+        ),
+        MarkerSpec(
+            id="git_not_repo",
+            producer="command_output",
+            shapes=(SHAPE_TOOL_RESULT_BASH,),
+            fragments=GIT_NOT_REPO,
+            predicate=_predicate_git_not_repo,
+        ),
+        MarkerSpec(
+            id="sandbox_write_denied",
+            producer="codex_companion",
+            shapes=(SHAPE_TOOL_RESULT_BASH_CODEX, SHAPE_ASSISTANT_CODEX_ATTEMPT),
+            fragments=SANDBOX_WRITE_DENIED,
+            predicate=_predicate_sandbox_write_denied,
+        ),
+        MarkerSpec(
+            id="shell_guard_block",
+            producer="codex_companion",
+            shapes=(SHAPE_TOOL_RESULT_BASH_CODEX,),
+            fragments=(),
+            is_candidate=_candidate_shell_guard_block,
+            predicate=_predicate_shell_guard_block,
+        ),
+        MarkerSpec(
+            id="usage_limit_session",
+            producer="runtime_assistant",
+            shapes=(SHAPE_FINAL_ASSISTANT_ENTRY,),
+            fragments=USAGE_LIMIT_SESSION,
+            predicate=_make_startswith_predicate(USAGE_LIMIT_SESSION[0]),
+        ),
+        MarkerSpec(
+            id="usage_limit_weekly",
+            producer="runtime_assistant",
+            shapes=(SHAPE_FINAL_ASSISTANT_ENTRY,),
+            fragments=USAGE_LIMIT_WEEKLY,
+            predicate=_make_startswith_predicate(USAGE_LIMIT_WEEKLY[0]),
+        ),
+        MarkerSpec(
+            id="machine_sleep",
+            producer="runtime_assistant",
+            shapes=(SHAPE_FINAL_ASSISTANT_ENTRY,),
+            fragments=MACHINE_SLEEP,
+            predicate=_make_startswith_predicate(MACHINE_SLEEP[0]),
+        ),
+        MarkerSpec(
+            id="api_error",
+            producer="runtime_assistant",
+            shapes=(SHAPE_FINAL_ASSISTANT_ENTRY,),
+            fragments=API_ERROR,
+            predicate=_make_startswith_predicate(API_ERROR[0]),
+        ),
+    )
+}

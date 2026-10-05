@@ -18,7 +18,7 @@ import json
 import re
 from pathlib import Path
 
-from agent_postmortem import reader
+from agent_postmortem import markers, reader
 from agent_postmortem.detectors import (
     bash_backgrounded,
     bash_timeout,
@@ -29,13 +29,14 @@ from agent_postmortem.detectors import (
     structured_output_failure,
     tool_json_error,
 )
+from agent_postmortem.detectors.base import preceding_bash_command
 from agent_postmortem.markers import (
     CLASSIFIER_UNAVAILABLE,
     GIT_NOT_REPO,
     SANDBOX_WRITE_DENIED,
     TOOL_INPUT_INVALID,
 )
-from agent_postmortem.models import Attempt, Event, LogicalAgent, Run
+from agent_postmortem.models import Attempt, Event, LogicalAgent, MarkerHit, Run
 
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs"
 CLEAN_RUN = FIXTURES_ROOT / "clean_run"
@@ -69,6 +70,64 @@ def _assert_evidence_format(evidence: list[str], expected_file: str) -> None:
         assert len(match.group("excerpt")) <= 160
 
 
+def _marker_hits_for_events(attempt: Attempt) -> list[MarkerHit]:
+    """Mirrors reader.py's own marker-hit construction (docs/DESIGN.md
+    4.13.2) for an Attempt whose events were built directly by this file's
+    helpers rather than through reader.load_run(). Every row's text here is
+    already under the 400-char excerpt limit, so Event.text stands in for
+    the full untruncated text reader.py would otherwise flatten. Only the
+    three event kinds these helpers ever build (tool_result, user,
+    assistant) are considered; a bare 'attachment' or 'tool_use' row is
+    never a permitted shape for any marker id (docs/DESIGN.md 4.13.2) and
+    contributes nothing, matching reader.py exactly."""
+    events = attempt.events
+    attempt_has_codex_bash = any(
+        event.kind == "tool_use" and event.tool_name == "Bash"
+        and markers.runs_codex_program(_tool_use_command(event))
+        for event in events
+    )
+    final_assistant_line = (
+        events[-1].line_no if events and events[-1].kind == "assistant" else None
+    )
+
+    hits: list[MarkerHit] = []
+    for index, event in enumerate(events):
+        if event.kind == "tool_result":
+            command = preceding_bash_command(attempt, index)
+            is_codex_bash = event.tool_name == "Bash" and markers.runs_codex_program(command)
+            shapes = reader._tool_result_shapes(event.tool_name, is_codex_bash)
+            hits.extend(reader._marker_hits_for_text(
+                event.text, shapes, event_line=event.line_no,
+                tool_use_id=event.tool_use_id, result_line=event.line_no,
+            ))
+        elif event.kind == "user":
+            hits.extend(reader._marker_hits_for_text(
+                event.text, {markers.SHAPE_USER_ENTRY},
+                event_line=event.line_no, tool_use_id=None, result_line=None,
+            ))
+        elif event.kind == "assistant":
+            shapes: set[str] = set()
+            if attempt_has_codex_bash:
+                shapes.add(markers.SHAPE_ASSISTANT_CODEX_ATTEMPT)
+            if event.line_no == final_assistant_line:
+                shapes.add(markers.SHAPE_FINAL_ASSISTANT_ENTRY)
+            if shapes:
+                hits.extend(reader._marker_hits_for_text(
+                    event.text, shapes,
+                    event_line=event.line_no, tool_use_id=None, result_line=None,
+                ))
+    return hits
+
+
+def _tool_use_command(event: Event) -> str:
+    try:
+        data = json.loads(event.text)
+    except (json.JSONDecodeError, TypeError):
+        return event.text
+    command = data.get("command") if isinstance(data, dict) else None
+    return command if isinstance(command, str) else event.text
+
+
 def _build_run(run_id: str, agent_id: str, event_rows: list[dict]) -> Run:
     """A one-attempt, in-memory Run mirroring reader.load_run()'s shape.
 
@@ -96,6 +155,7 @@ def _build_run(run_id: str, agent_id: str, event_rows: list[dict]) -> Run:
             # than retyping which marker fragments matched.
             markers=reader._scan_markers(row["text"]),
             read_only_output=row.get("read_only_output", False),
+            tool_use_id=(f"t{index}" if row.get("kind", "tool_result") == "tool_result" else None),
         )
         for index, row in enumerate(event_rows, start=1)
     ]
@@ -114,6 +174,7 @@ def _build_run(run_id: str, agent_id: str, event_rows: list[dict]) -> Run:
         outcome="completed",
         usage={},
     )
+    attempt.marker_hits = _marker_hits_for_events(attempt)
     agent = LogicalAgent(key=attempt.key, label=attempt.label, phase=attempt.phase, attempts=[attempt])
     return Run(
         run_id=run_id,
@@ -197,7 +258,10 @@ def test_bash_timeout_ignores_an_unrelated_attachment_mentioning_command():
 
 
 def _tool_json_error_run() -> Run:
-    text = f"{TOOL_INPUT_INVALID[0]}: Read was called with input that could not be parsed as JSON."
+    # docs/DESIGN.md 4.13.2's registry anchors tool_input_invalid on the
+    # runtime's own wrapper tag, not the bare fragment: line1 must start
+    # with "<tool_use_error>InputValidationError:".
+    text = f"<tool_use_error>{TOOL_INPUT_INVALID[0]}: Read was called with input that could not be parsed as JSON."
     return _build_run(
         "wf_00000000-710",
         "a7100000000000001",
@@ -231,7 +295,9 @@ def test_structured_output_failure_fires_once_on_schema_mismatch():
     assert len(findings) == 1
     finding = findings[0]
     assert finding.detector == "structured_output_failure"
-    assert finding.severity == "major"
+    # N5b: the fixture's attempt was closed with a journal result, so the
+    # mismatch was recovered from (4.13.4: recovered yes is minor).
+    assert finding.severity == "minor"
     assert finding.rule_id == "R-SCALAR-SCHEMA"
     assert finding.metrics["count"] == 1
     assert "1 StructuredOutput call" in finding.title
@@ -257,24 +323,31 @@ def test_structured_output_failure_does_not_fire_on_clean_run():
 # --- codex_write_denied -------------------------------------------------
 
 
-def test_codex_write_denied_yields_two_findings_with_the_contract_and_artifact_rules():
+def test_codex_write_denied_yields_one_minor_finding_per_attempt_carrying_both_rule_ids():
+    # N5b (4.13.4): one finding per attempt, always minor, rule_ids exactly
+    # [R-CODEX-CONTRACT, R-ASSERT-ARTIFACT] (was: two findings per run, critical).
     run = _load(CODEX_WRITE_DENIED)
     findings = codex_write_denied.DETECTOR.run(run)
     assert len(findings) == 2
-    rule_ids = {finding.rule_id for finding in findings}
-    assert rule_ids == {"R-CODEX-CONTRACT", "R-ASSERT-ARTIFACT"}
+    assert {finding.agent_id for finding in findings} == {
+        "ac500000000000001", "ac500000000000002",
+    }
     for finding in findings:
         assert finding.detector == "codex_write_denied"
-        assert finding.severity == "critical"
-        assert finding.metrics["count"] == 2
-        assert finding.metrics["marker"] == ["sandbox_write_denied", "shell_guard_block"]
-        assert len(finding.evidence) == 2
+        assert finding.severity == "minor"
+        assert finding.rule_ids == ("R-CODEX-CONTRACT", "R-ASSERT-ARTIFACT")
+        assert finding.rule_id == "R-CODEX-CONTRACT"
+        assert finding.metrics["count"] == 1
+        assert len(finding.evidence) == 1
+    assert sorted(finding.metrics["marker"][0] for finding in findings) == [
+        "sandbox_write_denied", "shell_guard_block",
+    ]
 
 
 def test_codex_write_denied_evidence_points_at_both_markers():
     run = _load(CODEX_WRITE_DENIED)
     findings = codex_write_denied.DETECTOR.run(run)
-    evidence = findings[0].evidence
+    evidence = [line for finding in findings for line in finding.evidence]
     assert any("WRITE_DENIED" in line for line in evidence)
     assert any("blocked in workspace" in line for line in evidence)
     for line in evidence:
@@ -323,6 +396,11 @@ def test_codex_write_denied_ignores_assistant_prose_that_quotes_the_marker():
 
 
 def test_codex_write_denied_fires_on_assistant_text_echoing_the_companion():
+    """docs/DESIGN.md 4.13.2: sandbox_write_denied's assistant-text shape
+    only ever anchors on an attempt that also has a Bash call running codex
+    as a program somewhere in it (a companion echo never appears in an
+    attempt that invoked no codex program), so this fixture carries one --
+    its own result is innocuous and must not itself produce a second hit."""
     text = (
         "[codex] Starting Codex task\n"
         f"[codex] {SANDBOX_WRITE_DENIED[0]}: patch rejected: writing outside of the project"
@@ -330,9 +408,13 @@ def test_codex_write_denied_fires_on_assistant_text_echoing_the_companion():
     run = _build_run(
         "wf_00000000-750",
         "a7500000000000001",
-        [{"kind": "assistant", "text": text}],
+        [
+            {"kind": "tool_use", "tool_name": "Bash", "text": '{"command": "codex exec --full-auto apply"}'},
+            {"kind": "tool_result", "tool_name": "Bash", "text": "patch applied"},
+            {"kind": "assistant", "text": text},
+        ],
     )
-    assert len(codex_write_denied.DETECTOR.run(run)) == 2
+    assert len(codex_write_denied.DETECTOR.run(run)) == 1  # one finding per attempt (N5b)
 
 
 # --- classifier_unavailable -------------------------------------------------
@@ -424,7 +506,8 @@ def test_git_cwd_mismatch_ignores_an_unrelated_attachment_mentioning_command():
 
 def test_missing_artifact_covers_both_the_present_and_absent_path():
     """fixtures/README.md: missing-report.md is never created and must fire
-    critical; present-report.md is created here before scanning and must not
+    fire (an info finding since N5b: the check is made now, D2);
+    present-report.md is created here before scanning and must not
     fire. The file (and any directory this test created) is removed in the
     finally block, so /tmp is left exactly as it was found.
     """
@@ -443,10 +526,13 @@ def test_missing_artifact_covers_both_the_present_and_absent_path():
 
         finding = findings[0]
         assert finding.detector == "missing_artifact"
-        assert finding.severity == "critical"
+        assert finding.severity == "info"  # N5b: absent now, never "critical" (D2)
         assert finding.rule_id == "R-ASSERT-ARTIFACT"
         assert finding.metrics["verified"] is True
         assert "missing-report.md" in finding.title
+        assert finding.title.endswith(
+            "is absent now; the tool cannot tell whether it existed when the run ended"
+        )
         _assert_evidence_format(finding.evidence, "agent-ac600000000000001.jsonl")
     finally:
         present_path.unlink()
@@ -468,7 +554,9 @@ def test_missing_artifact_reports_unverified_info_outside_home_or_tmp():
     assert finding.severity == "info"
     assert finding.rule_id == "R-ASSERT-ARTIFACT"
     assert finding.metrics["verified"] is False
-    assert "unverified" in finding.title
+    # N5b: the title is the one D2 sentence whatever the path's root; the
+    # `verified` metric still says it is outside home and /tmp.
+    assert "is absent now" in finding.title
 
 
 def test_missing_artifact_does_not_fire_on_clean_run():
@@ -522,7 +610,7 @@ def test_missing_artifact_tolerates_a_gettempdir_failure(monkeypatch):
     )
     findings = missing_artifact.DETECTOR.run(run)
     assert len(findings) == 1
-    assert findings[0].severity == "critical"
+    assert findings[0].severity == "info"  # N5b: never "critical" (D2)
     assert findings[0].metrics["verified"] is True
 
 
@@ -551,6 +639,7 @@ def _build_session_run(run_id: str, main_agent_id: str, event_rows: list[dict]) 
             is_error=row.get("is_error", False),
             usage={},
             markers=reader._scan_markers(row["text"]),
+            tool_use_id=(f"t{index}" if row.get("kind", "tool_result") == "tool_result" else None),
         )
         for index, row in enumerate(event_rows, start=1)
     ]
@@ -569,6 +658,7 @@ def _build_session_run(run_id: str, main_agent_id: str, event_rows: list[dict]) 
         outcome="completed",
         usage={},
     )
+    main.marker_hits = _marker_hits_for_events(main)
     return Run(
         run_id=run_id,
         kind="session",
@@ -610,7 +700,8 @@ def test_bash_timeout_fires_on_a_session_main_thread_event():
 
 
 def test_tool_json_error_fires_on_a_session_main_thread_event():
-    text = f"{TOOL_INPUT_INVALID[0]}: Read was called with input that could not be parsed as JSON."
+    # docs/DESIGN.md 4.13.2: anchored on the runtime's own wrapper tag.
+    text = f"<tool_use_error>{TOOL_INPUT_INVALID[0]}: Read was called with input that could not be parsed as JSON."
     run = _build_session_run(
         "s_session-main-tool-json",
         "a7930000000000001",
@@ -650,7 +741,7 @@ def test_codex_write_denied_fires_on_a_session_main_thread_event():
         ],
     )
     findings = codex_write_denied.DETECTOR.run(run)
-    assert len(findings) == 2
+    assert len(findings) == 1  # one finding per attempt (N5b)
     assert {finding.agent_id for finding in findings} == {"a7950000000000001"}
 
 
@@ -719,7 +810,7 @@ def test_self_reference_fixture_fires_codex_write_denied_only_on_the_real_comman
     is a user event, which codex_write_denied never scans."""
     run = _load(SELF_REFERENCE)
     findings = codex_write_denied.DETECTOR.run(run)
-    assert len(findings) == 2  # the fixed denial+artifact pair, from (c) alone
+    assert len(findings) == 1  # one finding per attempt (N5b), from (c) alone
     for finding in findings:
         assert finding.metrics["count"] == 1
         assert finding.agent_id == "af000000000000003"
@@ -854,17 +945,21 @@ def test_codex_write_denied_fires_on_a_codex_program_and_on_companion_output():
             {"kind": "tool_result", "tool_name": "Bash", "text": text, "is_error": True},
         ],
     )
-    assert len(codex_write_denied.DETECTOR.run(program)) == 2
+    assert len(codex_write_denied.DETECTOR.run(program)) == 1  # one finding per attempt (N5b)
     companion = _build_run(
         "wf_00000000-750",
         "a7500000000000001",
         [
             {"kind": "tool_use", "tool_name": "Bash",
              "text": '{"command": "node ~/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/codex-companion.mjs task x"}'},
-            {"kind": "tool_result", "tool_name": "Bash", "text": "[codex] Starting Codex task\n" + text},
+            # docs/DESIGN.md 4.13.2: the companion prefixes every line it
+            # prints with "[codex]"; the anchored predicate needs that
+            # prefix on the SAME line as the marker, not merely somewhere
+            # earlier in the result.
+            {"kind": "tool_result", "tool_name": "Bash", "text": f"[codex] {text}"},
         ],
     )
-    assert len(codex_write_denied.DETECTOR.run(companion)) == 2
+    assert len(codex_write_denied.DETECTOR.run(companion)) == 1  # one finding per attempt (N5b)
 
 
 def test_codex_write_denied_ignores_a_heredoc_that_mentions_codex_as_a_word():
@@ -882,6 +977,13 @@ def test_codex_write_denied_ignores_a_heredoc_that_mentions_codex_as_a_word():
         ],
     )
     assert codex_write_denied.DETECTOR.run(run) == []
+    # docs/DESIGN.md 4.13.2: a real denial's own output starts directly with
+    # WRITE_DENIED (tests/fixtures/runs/codex_write_denied); `text` above
+    # (with its "13300 review.txt ..." line-count preamble) looks exactly
+    # like the file content a command prints, which the anchored predicate
+    # must reject regardless of whether the command itself runs codex, so
+    # the positive cases below use a directly anchored result instead.
+    anchored_text = f"{SANDBOX_WRITE_DENIED[0]}: patch rejected ..."
     for good in ("cd /x && /opt/bin/codex exec apply", "codex apply patch.diff",
                  "node ~/.claude/plugins/x/codex-companion.mjs task"):
         run = _build_run(
@@ -889,7 +991,7 @@ def test_codex_write_denied_ignores_a_heredoc_that_mentions_codex_as_a_word():
             "a7500000000000001",
             [
                 {"kind": "tool_use", "tool_name": "Bash", "text": json.dumps({"command": good})},
-                {"kind": "tool_result", "tool_name": "Bash", "text": text},
+                {"kind": "tool_result", "tool_name": "Bash", "text": anchored_text},
             ],
         )
-        assert len(codex_write_denied.DETECTOR.run(run)) == 2, good
+        assert len(codex_write_denied.DETECTOR.run(run)) == 1, good  # per attempt (N5b)

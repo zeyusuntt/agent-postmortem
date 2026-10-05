@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEMO_DIR = REPO_ROOT / "src" / "agent_postmortem" / "demo" / "wf_00000000-d30"
+DEMO_DIR = REPO_ROOT / "src" / "agent_postmortem" / "demo" / "-home-user-project"
 
 pytestmark = pytest.mark.skipif(shutil.which("uv") is None, reason="uv not installed")
 
@@ -49,6 +49,28 @@ def test_demo_works_imported_straight_from_the_wheel_zip(tmp_path):
     assert result.stdout.startswith("RUN ")
 
 
+PYTHON_3_11 = shutil.which("python3.11")
+
+
+@pytest.mark.skipif(PYTHON_3_11 is None, reason="python3.11 not installed")
+def test_demo_imported_straight_from_the_wheel_zip_on_python_3_11_says_what_to_do(tmp_path):
+    """Codex release review 1: Python 3.11, the oldest supported version, cannot extract a
+    directory with importlib.resources.as_file. Imported from the wheel zip there, the demo exits
+    2 with one line naming the fix, never a traceback or IsADirectoryError."""
+    wheel = _build_wheel(tmp_path)
+    result = subprocess.run(
+        [PYTHON_3_11, "-c",
+         "import sys; sys.path.insert(0, sys.argv[1]); "
+         "from agent_postmortem.cli import main; sys.exit(main(['demo']))",
+         str(wheel)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 2, result.stderr
+    assert result.stdout == ""
+    assert "installed on disk on Python 3.11" in result.stderr
+    assert "Error" not in result.stderr and "Traceback" not in result.stderr
+
+
 def test_installed_wheel_scripts_and_demo_work_from_an_empty_cwd(tmp_path):
     """docs/DESIGN.md 8.1/8.2's D5: a real `uv tool install` of the built
     wheel, isolated under tmp_path -- both console scripts answering
@@ -60,8 +82,11 @@ def test_installed_wheel_scripts_and_demo_work_from_an_empty_cwd(tmp_path):
     with zipfile.ZipFile(wheel) as zf:
         record_name = next(n for n in zf.namelist() if n.endswith(".dist-info/RECORD"))
         record_text = zf.read(record_name).decode("utf-8")
-    for demo_file in DEMO_DIR.iterdir():
-        assert f"agent_postmortem/demo/wf_00000000-d30/{demo_file.name}" in record_text
+    demo_files = [p for p in DEMO_DIR.rglob("*") if p.is_file()]
+    assert len(demo_files) == 10  # the parent transcript, the journal, four attempts and meta files
+    for demo_file in demo_files:
+        packaged = demo_file.relative_to(DEMO_DIR.parent).as_posix()
+        assert f"agent_postmortem/demo/{packaged}" in record_text
     assert "agent_postmortem/hooks/model_allocation_guard.mjs" in record_text
 
     tool_dir = tmp_path / "uv-tool-dir"

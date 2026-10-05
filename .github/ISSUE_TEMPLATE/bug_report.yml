@@ -13,10 +13,11 @@ body:
         agent-postmortem run <id> --bug-report
         ```
 
-        Redacted: paths, ids, emails, account names, agent names. Not
-        redacted: evidence lines, which are transcript excerpts quoted
-        as-is. Read the whole output before posting it here, even though
-        the rest is already redacted.
+        Redacted: paths, ids, emails, account names, agent names. Evidence
+        lines are pointers and marker codes only (no transcript text) at
+        the default level. Do not add `--local`, `--raw`, or `--evidence`
+        for a report you post here. Read the whole output before posting
+        it anyway.
   - type: textarea
     attributes:
       label: What happened
@@ -28,9 +29,9 @@ body:
       label: Bug report output
       description: |
         The output of `agent-postmortem run <id> --bug-report` for the run
-        that shows the problem. Paths, ids, emails, account names, and
-        agent names are already redacted; evidence lines are transcript
-        excerpts and are not. Read it before pasting.
+        that shows the problem, at the default level. Paths, ids, emails,
+        account names, and agent names are already redacted, and evidence
+        lines carry no transcript text. Read it before pasting.
       render: markdown
     validations:
       required: false

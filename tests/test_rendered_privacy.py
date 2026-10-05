@@ -140,7 +140,7 @@ def _build_marker_run(tmp_path: Path, monkeypatch):
     run_dir = tmp_path / slug / session / "subagents" / "workflows" / "wf_00000000-caf"
     run_dir.mkdir(parents=True)
 
-    agent_id = "acaf000000000001"
+    agent_id = "acaf0000000000001"
     base = datetime.now(timezone.utc) - timedelta(minutes=10)
 
     _write_jsonl(
@@ -292,7 +292,7 @@ def test_rescue_plan_hides_the_marker_status_claim_by_default_shows_it_with_no_r
         journal=[], agents=[agent], attempts=[killed, completed], started_at=None, ended_at=None,
         diagnostics=[], finished=True,
     )
-    observation = observe.observe_run(run, now=datetime.now(timezone.utc))
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
     plan = rescue.build_plan(run, observation, [], config.load_config())
 
     redacted_text = rescue.render_plan_text(run, plan, Redactor(enabled=True))

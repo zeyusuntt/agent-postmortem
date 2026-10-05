@@ -42,7 +42,7 @@ def _load_workflow(case: str):
     if case == "silent_retry_kill":
         # Lives in the package now, not under tests/fixtures/ (docs/
         # DESIGN.md 5.4/6).
-        return reader.load_run(Path(agent_postmortem.__file__).parent / "demo" / "wf_00000000-d30")
+        return reader.load_run(Path(agent_postmortem.__file__).parent / "demo" / "-home-user-project" / "00000000-0000-4000-8000-000000000000" / "subagents" / "workflows" / "wf_00000000-d30")
     return reader.load_run(FIXTURES_ROOT / case)
 
 
@@ -115,7 +115,9 @@ def test_runtime_cause_from_silent_retry_kill_carries_the_monitor_rule():
     findings = mislabeled_kill.DETECTOR.run(run)
     assert len(findings) == 2
     for finding in findings:
-        assert finding.severity == "major"
+        # N5b (4.13.4): a runtime kill on a non-final attempt is minor (the
+        # silent_retry finding carries the loss); it was major before.
+        assert finding.severity == "minor"
         assert "killed by the runtime" in finding.title
         assert finding.rule_id == "R-MONITOR-RETRIES"
 
@@ -426,7 +428,7 @@ def test_unattributed_with_silence_none_says_silence_unknown_and_is_info():
     assert finding.rule_id is None
 
 
-def test_runtime_with_silence_none_still_major_and_says_unknown_silence():
+def test_runtime_with_silence_none_on_a_final_attempt_is_info_and_says_unknown_silence():
     attempt = _killed_attempt(datetime(2026, 9, 19, 9, 0, 0, tzinfo=timezone.utc))
     attempt.interrupt.cause = "runtime"
     run = Run(
@@ -437,7 +439,10 @@ def test_runtime_with_silence_none_still_major_and_says_unknown_silence():
     findings = mislabeled_kill.DETECTOR.run(run)
     assert len(findings) == 1
     finding = findings[0]
-    assert finding.severity == "major"
+    # N5b (4.13.4): (runtime, unknown silence, final) is info; the shape is
+    # hand-built (a real runtime kill always has a later attempt), and it
+    # was major before.
+    assert finding.severity == "info"
     assert "unknown silence" in finding.title
     assert finding.metrics["silence_seconds"] is None
     assert finding.rule_id == "R-MONITOR-RETRIES"

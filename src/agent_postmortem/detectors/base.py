@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from typing import Protocol
 
-from ..models import Attempt, Event, Finding, Run
+from ..models import Attempt, Event, Finding, MarkerHit, Run
 
 # docs/DESIGN.md 4.4: how close a parent-transcript TaskStop or kill sentinel
 # has to land to a child's own kill timestamp to count as evidence of that
@@ -102,6 +102,38 @@ def make_finding_id(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
+def anchored_marker_hits(attempt: Attempt, marker: str) -> list[MarkerHit]:
+    """Every MarkerHit on attempt with this canonical id that is anchored
+    and not in_payload (docs/DESIGN.md 4.13.2): the only hits a detector may
+    ever treat as evidence. A detector never reads Event.markers directly
+    (kept only for compatibility); it reads Attempt.marker_hits through this
+    helper instead."""
+    return [
+        hit for hit in attempt.marker_hits
+        if hit.marker == marker and hit.anchored and not hit.in_payload
+    ]
+
+
+def event_for_marker_hit(attempt: Attempt, hit: MarkerHit) -> Event | None:
+    """The Event a MarkerHit was built from (docs/DESIGN.md 4.13.2): matched
+    by (line_no, tool_use_id) for a tool_result shape -- a single user entry
+    can carry more than one tool_result block on the same physical line, so
+    line_no alone cannot disambiguate them -- or by line_no plus kind for a
+    whole-entry shape (kill_sentinel, the final-assistant-entry markers,
+    sandbox_write_denied's assistant form), where the first matching 'user'
+    or 'assistant' event is the one the hit's own entry-level flattening
+    rule reads from (its first text block)."""
+    if hit.tool_use_id is not None:
+        for event in attempt.events:
+            if event.line_no == hit.event_line and event.tool_use_id == hit.tool_use_id:
+                return event
+        return None
+    for event in attempt.events:
+        if event.line_no == hit.event_line and event.kind in ("user", "assistant"):
+            return event
+    return None
+
+
 def is_bash_event(event: Event) -> bool:
     """A tool_result the reader resolved to the Bash tool. A generic
     substring match on an attachment's text (a hook result, not necessarily
@@ -134,6 +166,31 @@ def attempt_seconds(attempt: Attempt) -> float:
     if attempt.first_ts is None or attempt.last_ts is None:
         return 0.0
     return max((attempt.last_ts - attempt.first_ts).total_seconds(), 0.0)
+
+
+# docs/DESIGN.md 4.3 (FA5): the outcomes of an attempt that ended without a result.
+NO_RESULT_OUTCOMES = frozenset({"killed", "failed", "superseded"})
+
+
+def wasted_attempts(attempts: list[Attempt]) -> list[Attempt]:
+    """The attempts of ONE logical agent whose wall-clock is wasted (docs/DESIGN.md
+    4.3, FA5), each once: every attempt but the last (a retry, whatever its
+    outcome) plus the last one when its outcome is killed, failed, or superseded.
+    An open final attempt that may still be running is not counted (its outcome
+    is completed or unknown)."""
+    ordered = sorted(attempts, key=lambda attempt: attempt.ordinal)
+    if not ordered:
+        return []
+    final = ordered[-1]
+    wasted = ordered[:-1]
+    if final.outcome in NO_RESULT_OUTCOMES:
+        wasted.append(final)
+    return wasted
+
+
+def run_wasted_attempts(run: Run) -> list[Attempt]:
+    """wasted_attempts over every logical agent of the run, in agent order."""
+    return [attempt for agent in run.agents for attempt in wasted_attempts(agent.attempts)]
 
 
 def format_duration(seconds: float) -> str:

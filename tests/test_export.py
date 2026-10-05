@@ -17,7 +17,7 @@ from agent_postmortem.redact import Redactor
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs"
 # silent_retry_kill lives in the package now (docs/DESIGN.md 5.4/6).
-SILENT_RETRY_KILL = Path(agent_postmortem.__file__).parent / "demo" / "wf_00000000-d30"
+SILENT_RETRY_KILL = Path(agent_postmortem.__file__).parent / "demo" / "-home-user-project" / "00000000-0000-4000-8000-000000000000" / "subagents" / "workflows" / "wf_00000000-d30"
 READER_MINIMAL_RUN = (
     FIXTURES_ROOT / "reader_minimal" / "-home-user-project"
     / "00000000-0000-4000-8000-000000000000" / "subagents" / "workflows" / "wf_b0000000-002"
@@ -25,13 +25,13 @@ READER_MINIMAL_RUN = (
 
 RUN_KEYS = {
     "run_id", "kind", "status", "claude_version", "started_at", "ended_at",
-    "counts", "diagnostics", "attempts",
+    "counts", "diagnostics", "attempts", "lifecycle",
 }
 COUNTS_KEYS = {"agents", "attempts", "interrupted"}
 ATTEMPT_KEYS = {
     "agent_id", "key", "label", "phase", "agent_type", "ordinal", "outcome",
     "first_ts", "last_ts", "usage", "event_count", "interrupt", "reported",
-    "facts",
+    "facts", "ledger",
 }
 INTERRUPT_KEYS = {"cause", "silence_seconds"}
 REPORTED_DICT_KEYS = {"type", "keys", "claims"}
@@ -194,11 +194,13 @@ def test_to_json_wraps_export_run_and_adds_rules_verdict_status():
     payload = report.to_json(run, findings, Redactor(enabled=False))
     # unit M3a: stories and next join the top-level payload (docs/DESIGN.md
     # 4.7 rule 9); {run, findings, rules, verdict, status} keep their v0.1
-    # meaning unchanged. unit M3c: schema (docs/DESIGN.md 5.3) is new.
+    # meaning unchanged. unit M3c: schema (docs/DESIGN.md 5.3) is new. N5a-1:
+    # schema 3 adds the disclosure level (5.3b).
     assert set(payload.keys()) == {
-        "schema", "run", "findings", "rules", "verdict", "status", "stories", "next",
+        "schema", "disclosure", "run", "findings", "rules", "verdict", "status", "stories",
+        "next",
     }
-    assert payload["schema"] == 2
+    assert payload["schema"] == 3
     assert set(payload["run"].keys()) == RUN_KEYS
     assert payload["status"] == run.status
 
@@ -234,9 +236,10 @@ def test_reported_report_path_is_redacted_by_default_and_raw_with_no_redact():
     raw, _ = _export(run, Redactor(enabled=False))
 
     report_attempt = next(a for a in run.attempts if a.label == "impl:clean-dict")
-    redacted_reported = next(
-        a["reported"] for a in redacted["run"]["attempts"] if a["agent_id"] == report_attempt.agent_id
-    )
+    # N5a-1: the default level carries an alias, not the raw id, so the attempt
+    # is found by its position in the same-order run.attempts.
+    position = run.attempts.index(report_attempt)
+    redacted_reported = redacted["run"]["attempts"][position]["reported"]
     raw_reported = next(
         a["reported"] for a in raw["run"]["attempts"] if a["agent_id"] == report_attempt.agent_id
     )
@@ -330,7 +333,12 @@ def test_report_path_never_appears_raw_by_default_relative_outside_or_home():
         assert raw not in verbose_text, f"{raw!r} leaked into the verbose text report"
         assert raw not in exported_text, f"{raw!r} leaked into the JSON export"
 
-    by_agent = {a["agent_id"]: a for a in exported["run"]["attempts"]}
+    # N5a-1: keyed by the raw id through the same-order run.attempts (the
+    # exported agent_id is an alias at the default level).
+    by_agent = {
+        attempt.agent_id: shown
+        for attempt, shown in zip(run.attempts, exported["run"]["attempts"])
+    }
     relative_pseudo = by_agent[attempt_relative.agent_id]["reported"]["claims"]["report_path"]
     outside_pseudo = by_agent[attempt_outside.agent_id]["reported"]["claims"]["report_path"]
     home_pseudo = by_agent[attempt_home.agent_id]["reported"]["claims"]["report_path"]

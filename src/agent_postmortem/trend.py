@@ -92,7 +92,9 @@ def weekly_counts(
             finding.detector for finding in findings
             if run.kind in kinds_by_detector.get(finding.detector, ())
         }
-        for detector_id in applicable_detectors:
+        # Sorted: set iteration order changes with the hash seed, and the
+        # insertion order here is the key order `trend --json` prints.
+        for detector_id in sorted(applicable_detectors):
             row = counts.setdefault(detector_id, {week: 0 for week in week_keys})
             row[week_key] += 1
 
@@ -265,6 +267,7 @@ def review_to_json(rows: list[dict], redactor: Redactor | None = None) -> dict:
     removing = [row["rule_id"] for row in rows if _rule_not_improved(row["before"], row["after"])]
     return {
         "schema": SCHEMA_VERSION,
+        "disclosure": redactor.level,
         "reviews": [
             {
                 "rule_id": row["rule_id"],
@@ -298,6 +301,12 @@ def _display_target(target: str | None, redactor: Redactor) -> str:
     target = target or ""
     if not redactor.enabled or not target:
         return target
+    if redactor.level == "local":
+        # N3b P19: the one path function. trend makes no observation, so
+        # there is no repository root (D-n): a path inside home prints as
+        # ~/.../<basename>, any other (and any relative one, which has no
+        # base to be placed against) as path-N. Never absolute.
+        return redactor.names.path(target)
     pseudonym = redactor.names.target(target)
     basename = PurePosixPath(target).name or target
     return f"{pseudonym} ({basename})"
@@ -312,8 +321,9 @@ def render_trend_text(
     # docs/DESIGN.md 5.2/5.3: default to redaction on; raw output is an
     # explicit opt-out (Redactor(enabled=False)), never the fallback.
     redactor = redactor or Redactor(enabled=True)
-    # docs/DESIGN.md 5.1: a fresh Pseudonyms map for this render.
-    redactor.names = Pseudonyms(enabled=redactor.enabled)
+    # docs/DESIGN.md 5.1: a fresh Pseudonyms map for this render (at local,
+    # the one with the P19 path function attached).
+    redactor.fresh_names(detailed=True)
     lines = [f"WEEKLY DETECTOR COUNTS (last {weeks} weeks)"]
     if not weekly:
         lines.append("(no findings in this window)")
@@ -360,17 +370,21 @@ def to_json(
     # docs/DESIGN.md 5.1: a fresh Pseudonyms map for this render, and 5.1's
     # 'target-N (basename)' representation matches the text renderer's.
     redactor = redactor or Redactor(enabled=True)
-    redactor.names = Pseudonyms(enabled=redactor.enabled)
+    # At local the same path function trend's text uses (N3b P19), so a target
+    # prints as ~/.../name or path-N, never absolute.
+    redactor.fresh_names(detailed=True)
     before_after_rows = [
         {**row, "target": _display_target(row["target"], redactor)} for row in before_after_rows
     ]
-    # docs/DESIGN.md 5.3: schema 2. trend never filters a silenced detector
+    # docs/DESIGN.md 5.3b: schema 3 (`weeks` stays the requested count, an int).
+    # trend never filters a silenced detector
     # out of weekly_counts or before_after -- docs/DESIGN.md 4.10: "a
     # silenced detector still runs ... and still counts in trend" -- so this
     # is the one JSON command whose payload shape and population are both
     # completely unchanged by this unit apart from the new top-level key.
     return {
         "schema": SCHEMA_VERSION,
+        "disclosure": redactor.level,
         "weeks": weeks,
         "weekly_counts": weekly,
         "before_after": before_after_rows,

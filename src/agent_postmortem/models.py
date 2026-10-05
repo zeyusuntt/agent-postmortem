@@ -10,6 +10,49 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # the classifier is pure; models only names its result type
+    from .commands import CallClass
+
+
+class KeyedDiagnostic(str):
+    """A reader diagnostic that would quote a journal key (N3b P10b, D-h).
+
+    Its plain string is the safe form, which names the journal line instead
+    of the key (`key@<line>`); a sink that does nothing special therefore
+    can never print a key. `.raw` carries the exact text v0.2 printed, for
+    the raw sinks only (raw text and raw JSON ask for it explicitly through
+    raw_diagnostic, before any Redactor call). A journal key is arbitrary
+    text a run's author chose, and a valid-shaped one (`v2:` plus 64 hex)
+    can embed a real agent id, so no other sink may read `.raw`."""
+
+    raw: str
+
+    def __new__(cls, safe: str, raw: str) -> "KeyedDiagnostic":
+        obj = super().__new__(cls, safe)
+        obj.raw = raw
+        return obj
+
+
+class QualityNote(str):
+    """A reader diagnostic that is only a data-quality note (docs/DESIGN.md
+    4.13.1, A2): it cannot hide an attempt, a tool call, or a launch, so it
+    stays in `Run.diagnostics` and never reaches a `Run.discovery` list. The
+    reader tags the note where it raises it; nothing matches message text."""
+
+
+def discovery_part(diagnostics) -> list[str]:
+    """The diagnostics of `diagnostics` that belong in a discovery list: every
+    one that is not a QualityNote, in order."""
+    return [item for item in diagnostics if not isinstance(item, QualityNote)]
+
+
+def raw_diagnostic(diagnostic: str) -> str:
+    """The raw form of a diagnostic for a raw sink: a KeyedDiagnostic's
+    `.raw`, any other diagnostic unchanged. Call it only where the level is
+    raw."""
+    return diagnostic.raw if isinstance(diagnostic, KeyedDiagnostic) else str(diagnostic)
 
 
 def _path_str(value: Path | None) -> str | None:
@@ -55,6 +98,14 @@ class Event:
     # bash_backgrounded and bash_timeout never consult this field: a
     # timed-out `cat` is still a timed-out command.
     read_only_output: bool = False
+    # The tool_result block's own tool_use_id (docs/DESIGN.md 4.13.2, v0.3
+    # N1): set only for a tool_result-kind Event, None otherwise. Reader-
+    # internal plumbing, not a documented v0.1/v0.2 field: it exists so a
+    # MarkerHit (which carries tool_use_id but no text of its own) can be
+    # matched back to the exact Event it was built from even when a single
+    # user entry carries more than one tool_result block on the same
+    # line_no (two parallel tool calls whose results arrive together).
+    tool_use_id: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -73,6 +124,36 @@ class Event:
             "markers": sorted(self.markers),
             "envelope": self.envelope,
             "read_only_output": self.read_only_output,
+            "tool_use_id": self.tool_use_id,
+        }
+
+
+@dataclass
+class MarkerHit:
+    """One typed marker hit (docs/DESIGN.md 4.1, 4.13.2, v0.3 N1), built by
+    the reader from the marker provenance registry (markers.REGISTRY) while
+    parsing an attempt's own transcript. Every field here is part of the
+    binding model contract; detectors consume a hit only when `anchored and
+    not in_payload`."""
+
+    marker: str  # canonical id from markers.REGISTRY
+    producer: str  # 'harness_user' | 'harness_tool_notice' | 'command_output'
+    # | 'runtime_assistant' | 'codex_companion'
+    event_line: int  # physical line of the entry carrying the marker
+    tool_use_id: str | None  # set for every tool_result shape; None otherwise
+    result_line: int | None  # equals event_line for a tool_result shape; None otherwise
+    anchored: bool  # the registry predicate held at its anchor
+    in_payload: bool  # the text matched only outside the anchor (never evidence)
+
+    def to_dict(self) -> dict:
+        return {
+            "marker": self.marker,
+            "producer": self.producer,
+            "event_line": self.event_line,
+            "tool_use_id": self.tool_use_id,
+            "result_line": self.result_line,
+            "anchored": self.anchored,
+            "in_payload": self.in_payload,
         }
 
 
@@ -128,7 +209,7 @@ class ToolCall:
     # from the parsed tool_use input (never the excerpt): at most 1024
     # chars, else None. None for every other tool.
     path: str | None = None
-    # Bash's own command, exact. Longer than 2048 chars: None here, with
+    # Bash's or Monitor's own command, exact. Longer than 2048 chars: None here, with
     # command_sha256 set instead so a long command is never silently
     # truncated into something that reads like a different, shorter one.
     command: str | None = None
@@ -146,8 +227,10 @@ class ToolCall:
     # Only when the result states one in the runtime's own form -- the same
     # parsing the reader already does for Event.exit_code.
     exit_code: int | None = None
-    # For a Bash call whose command contains 'git commit': every match of
-    # reader._COMMIT_ID_RE on the FULL result text, at most 20.
+    # For a Bash call that is a commit call under docs/DESIGN.md 4.13.1's
+    # commit grammar (C-9, amended by A1) and completed_ok or
+    # completed_error: the last k line-start summary matches of the FULL
+    # result text (commands.commit_ids), at most 20.
     commit_ids: tuple[str, ...] = ()
     # docs/DESIGN.md 4.2's v0.2 reader changes (F5 hardening): set on every
     # ToolCall sharing a tool_use_id with at least one other ToolCall in the
@@ -157,6 +240,24 @@ class ToolCall:
     # is_error/exit_code/backgrounded fields can never be trusted, whichever
     # one of the duplicates happened to receive them.
     ambiguous: bool = False
+    # docs/DESIGN.md 4.1 (v0.3, N4b-1), reader-private and never in schema 2:
+    # the tool_use input's own `run_in_background` value for a Bash or Monitor
+    # call, exactly as written (None when absent and for every other tool).
+    run_in_background: object = None
+    # A MultiEdit call's input `file_path` (at most 1024 chars, else None).
+    # Kept apart from `path` so schema-2 paths_written, in_flight, and rescue
+    # (which read `path`) never change.
+    multiedit_path: str | None = None
+    # The 4.13.1 classification of this call (commands.classify_call),
+    # computed from the FULL command while streaming (C-11) and with the
+    # anchored bash_backgrounded hit of its result; None for every tool
+    # outside rows 2 to 6 of the truth table.
+    classification: "CallClass | None" = None
+    # Reader-private (never in to_dict, out of equality and repr): why `path`
+    # (or `multiedit_path`) is None for a file tool -- 'missing' (absent or not
+    # a string) or 'truncated' (over 1,024 characters); None otherwise. The
+    # ledger (4.13.1) turns it into `unexpected_entry_shape` or `truncated_field`.
+    _path_state: str | None = field(default=None, compare=False, repr=False)
 
     @property
     def completion(self) -> str:
@@ -198,6 +299,11 @@ class ToolCall:
             "commit_ids": list(self.commit_ids),
             "ambiguous": self.ambiguous,
             "completion": self.completion,
+            "run_in_background": self.run_in_background,
+            "multiedit_path": self.multiedit_path,
+            "classification": (
+                self.classification.to_dict() if self.classification is not None else None
+            ),
         }
 
 
@@ -229,16 +335,66 @@ class AttemptFacts:
     background_unfinished: int
     last_tool: str | None
     seconds_since_last_tool_at_end: float | None
+    # (field milestone F, FA6) shell CALLS with completion completed_ok that ran a
+    # commit command (commands.commit_command_ran, quiet forms included) and yielded
+    # no commit id; FACTS_UNKNOWN when the facts are unknown, never a false 0. Default
+    # 0 for a hand-built fact.
+    commit_commands_without_id: "int | str" = 0
 
     def to_dict(self) -> dict:
         return {
             "paths_written": self.paths_written,
             "in_flight": self.in_flight,
             "commits": self.commits,
+            "commit_commands_without_id": self.commit_commands_without_id,
             "cwds": self.cwds,
             "background_unfinished": self.background_unfinished,
             "last_tool": self.last_tool,
             "seconds_since_last_tool_at_end": self.seconds_since_last_tool_at_end,
+        }
+
+
+@dataclass
+class LedgerEntry:
+    """One (tool call, target) entry of an attempt's write ledger (docs/DESIGN.md
+    4.1, 4.13.1). The five-valued fields are closed enums; `path` and `repo` are
+    None when the call names none (`repo` is a lexical candidate, never a
+    trusted location); `line` is `<transcript file name>:<line>`."""
+
+    effect: str  # 'observed' | 'claimed_target' | 'attempted' | 'possible'
+    basis: str  # 'tool_result' | 'command_grammar' | 'delegation' | 'opaque_command'
+    # | 'background_process' | 'unknown_tool'
+    completion: str  # 'success' | 'error' | 'no_result' | 'ambiguous'
+    path: str | None
+    repo: str | None
+    line: str
+
+    def to_dict(self) -> dict:
+        return {
+            "effect": self.effect,
+            "basis": self.basis,
+            "completion": self.completion,
+            "path": self.path,
+            "repo": self.repo,
+            "line": self.line,
+        }
+
+
+@dataclass
+class Ledger:
+    """Attempt.ledger's own shape (docs/DESIGN.md 4.1, 4.13.1): the entries in
+    tool-use order, 'complete' only when there is no partial reason, and the
+    closed partial-reason codes in the fixed order of 4.13.1."""
+
+    entries: list[LedgerEntry]
+    completeness: str  # 'complete' | 'partial'
+    reasons: list[str]  # [] when complete
+
+    def to_dict(self) -> dict:
+        return {
+            "entries": [entry.to_dict() for entry in self.entries],
+            "completeness": self.completeness,
+            "reasons": list(self.reasons),
         }
 
 
@@ -299,6 +455,43 @@ class Attempt:
     # AttemptFacts, with the fields that could not be established set to
     # FACTS_UNKNOWN (models.py).
     facts: "AttemptFacts | None" = None
+    # (docs/DESIGN.md 4.13.2, v0.3 N1) every typed marker hit built while
+    # parsing this attempt's own transcript, in the order encountered. []
+    # when the attempt carries none; never None -- a transcript that exists
+    # but could not be read still produces [], the same way `facts` still
+    # produces a FACTS_UNKNOWN record rather than being silently absent,
+    # except a MarkerHit is built per event, not derived from a whole-
+    # transcript read, so there is nothing to mark UNKNOWN here.
+    marker_hits: list["MarkerHit"] = field(default_factory=list)
+    # docs/DESIGN.md 4.1 (v0.3, N4b-1): the journal state machine's own
+    # closure of this attempt -- 'open' | 'completed' | 'failed' |
+    # 'superseded' for a workflow attempt with a journal key; None for a
+    # session main thread, a session subagent, and a workflow attempt with no
+    # journal key. Separate from `outcome` (a superseded attempt whose
+    # transcript ends in the kill sentinel has outcome 'killed').
+    journal_state: str | None = None
+    # docs/DESIGN.md 4.1 (v0.3, N4b-2): this attempt's write ledger. The reader
+    # always sets it once a run is assembled (never None from N4 on; a
+    # transcript that is missing or unreadable gives a partial ledger with no
+    # entries); a hand-built Attempt may leave it None.
+    ledger: "Ledger | None" = None
+    # docs/DESIGN.md 4.1 (v0.3, N5c-1, S11): a typed private field, None for a
+    # workflow attempt and the session main thread; for a session subagent,
+    # whether it returned a result to its parent (reader._LaunchLog.child_returned).
+    # Never in to_dict, never exported.
+    returned_to_parent: bool | None = None
+    # Reader-internal (never in to_dict): what reading this attempt's transcript
+    # saw that the ledger's reasons need (ledger.TranscriptState); None for a
+    # hand-built attempt.
+    _transcript_state: object = field(default=None, compare=False, repr=False)
+    # Reader-internal (never in to_dict): the launches and results a session
+    # main transcript recorded while it streamed, for Run.discovery's launch
+    # reconciliation (reader._LaunchLog); None for every other attempt.
+    _launch_log: object = field(default=None, compare=False, repr=False)
+    # docs/DESIGN.md 4.13.6 (v0.3, N6): every top-level non-empty string `cwd` on a JSON
+    # object line of this attempt's own transcript, first-seen order, deduplicated. Feeds
+    # `--here` (reader.run_cwd_set); internal only, in no to_dict, JSON, or rendering.
+    entry_cwds: tuple[str, ...] = field(default=(), compare=False, repr=False)
 
     def to_dict(self) -> dict:
         return {
@@ -320,6 +513,9 @@ class Attempt:
             "reported_line": self.reported_line,
             "tool_calls": [call.to_dict() for call in self.tool_calls],
             "facts": self.facts.to_dict() if self.facts is not None else None,
+            "marker_hits": [hit.to_dict() for hit in self.marker_hits],
+            "journal_state": self.journal_state,
+            "ledger": self.ledger.to_dict() if self.ledger is not None else None,
         }
 
 
@@ -339,6 +535,57 @@ class LogicalAgent:
         }
 
 
+# R2-4: the launch-evidence diagnostics a parent index builds (reader.ParentIndex._rebuild_
+# generations); a run whose Run.discovery['parent'] holds one has a launch that was found and
+# not used, which is not the same as no launch record.
+LAUNCH_DIAGNOSTIC_PREFIXES = (
+    "ambiguous launch", "launch without result", "rejected launch result",
+    "malformed launch result",
+)
+
+
+@dataclass
+class Lifecycle:
+    """Run.lifecycle for a workflow run (docs/DESIGN.md 4.1, 4.13.3, v0.3
+    N2); always None for a session (sessions carry no Workflow launch and no
+    generation to pair, D11)."""
+
+    terminal: str  # 'completed' | 'failed' | 'stopped' | 'journal_resolved'
+    # | 'unknown' | 'none'
+    source: str | None  # 'notification' | 'task_stop' | 'launch_result' | 'journal'
+    # | 'conflict' | 'unrecognized_status' | 'incomplete_generation'
+    # | 'parent_unavailable' | 'ambiguous_launch'; None exactly when terminal
+    # is 'none'
+    activity: str  # 'recent' | 'stale' | 'unknown' (stat failed)
+    generations: int  # >= 0; 0 for a run with no associated launch
+    diagnostics: list[str]  # [] when none fired
+    # Internal only (N1N2 review finding 2, fixed after cross-model review):
+    # not one of the five public fields docs/DESIGN.md 4.1/5.3b document for
+    # Lifecycle, so it is excluded from equality/repr (never breaks a test
+    # or caller that compares/prints a Lifecycle built without naming it)
+    # and from to_dict() below. The parent-transcript line that decided
+    # `terminal`, captured in the exact same snapshot that produced this
+    # Lifecycle -- reader.lifecycle_terminal_line(run) reads it back so
+    # workflow_failed cites the evidence that actually decided the stored
+    # terminal, never a fresh re-query that could now see a newer generation
+    # appended to the parent transcript after this Lifecycle was computed.
+    _terminal_line: int | None = field(default=None, compare=False, repr=False)
+    # (v0.3, N4b-1) every Generation of this run in the same parent-index
+    # snapshot that produced this Lifecycle, so a later reader of generation
+    # facts (result_ts) never needs a second parent read. Internal like
+    # _terminal_line: out of equality, repr, and to_dict().
+    _generations: list = field(default_factory=list, compare=False, repr=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "terminal": self.terminal,
+            "source": self.source,
+            "activity": self.activity,
+            "generations": self.generations,
+            "diagnostics": self.diagnostics,
+        }
+
+
 @dataclass
 class Run:
     run_id: str
@@ -355,13 +602,29 @@ class Run:
     ended_at: datetime | None
     diagnostics: list[str]
     status: str = field(default="COMPLETE", kw_only=True)  # 'COMPLETE' | 'INCOMPLETE' (4.6)
-    # docs/DESIGN.md 7.4's D8: whether this run has actually finished, not
-    # merely whether it was fully readable. A workflow is finished when its
-    # journal has a 'result' for every 'started' key; a session is always
-    # finished (there is no journal-level "still running" signal for one).
-    # Defaults to True so a Run built directly in a test, without setting
-    # this, is never mistaken for "still running".
-    finished: bool = field(default=True, kw_only=True)
+    # docs/DESIGN.md 7.4's D8 (redefined by v0.3 N2, 4.13.3): whether this run
+    # has actually finished. For a workflow, derived from Lifecycle.terminal:
+    # true for 'completed'/'failed'/'stopped'/'journal_resolved', false for
+    # 'unknown'/'none'. None for a session (there is no lifecycle model to
+    # report, D11). Defaults to True so a Run built directly in a test,
+    # without setting this, is never mistaken for "still running".
+    finished: bool | None = field(default=True, kw_only=True)
+    # (v0.3, N2, 4.13.3) None for a session; never None for a workflow run
+    # once N2 lands.
+    lifecycle: Lifecycle | None = field(default=None, kw_only=True)
+    # (v0.3, N4b-1, 4.13.1) exactly the keys journal, parent, transcripts,
+    # meta; each holds the diagnostics that source reported, in order; []
+    # means that source was clean. Independent of `diagnostics` and `status`.
+    discovery: dict = field(
+        default_factory=lambda: {"journal": [], "parent": [], "transcripts": [], "meta": []},
+        kw_only=True,
+    )
+    # (v0.3, N4b-2, 4.13.1) 'complete' | 'partial' once the reader has assembled
+    # the run (None only on a hand-built Run), and the closed reason codes
+    # ('unassignable_attempt', 'discovery_incomplete', in that order; [] when
+    # complete). Private: in to_dict(), never in export_run().
+    risk_population_completeness: str | None = field(default=None, kw_only=True)
+    risk_population_completeness_reasons: list = field(default_factory=list, kw_only=True)
 
     def to_dict(self) -> dict:
         return {
@@ -380,7 +643,31 @@ class Run:
             "diagnostics": self.diagnostics,
             "status": self.status,
             "finished": self.finished,
+            "lifecycle": self.lifecycle.to_dict() if self.lifecycle is not None else None,
+            "discovery": {key: list(value) for key, value in self.discovery.items()},
+            "risk_population_completeness": self.risk_population_completeness,
+            "risk_population_completeness_reasons": list(
+                self.risk_population_completeness_reasons
+            ),
         }
+
+
+@dataclass(frozen=True)
+class TitleParts:
+    """A finding title that names a path, as parts (docs/DESIGN.md 4.13.4, 5.1; F fix 7, W7-2):
+    a fixed `template` holding exactly one `{path}` placeholder and the `path` value. A renderer
+    formats the template once, with the path rendered by the level's path function, and does not
+    scan the result, so the path is never in-band for the free-text scanner to rediscover (a
+    backquote, a space or an operator inside it cannot change where it ends)."""
+
+    template: str
+    path: str
+
+    def raw(self) -> str:
+        """The sentence with the real path (what `raw` prints). One substitution of the first
+        placeholder: a path that holds the text `{path}` is data, never a second placeholder."""
+        head, _sep, tail = self.template.partition("{path}")
+        return head + self.path + tail
 
 
 @dataclass
@@ -408,6 +695,10 @@ class Finding:
     # Defaults to '' for a Finding built directly in a test rather than by a
     # detector; every detector module sets a real one.
     finding_id: str = ""
+    # F fix 7 (W7-2, docs/DESIGN.md 4.13.4): set by a detector whose title names a path. `title`
+    # then holds the same sentence with the real path (`title_parts.raw()`); a renderer uses the
+    # parts, never `title`, at share and local.
+    title_parts: TitleParts | None = None
 
     def __post_init__(self) -> None:
         if not self.rule_ids:
@@ -428,4 +719,54 @@ class Finding:
             "rule_id": self.rule_id,
             "rule_ids": list(self.rule_ids),
             "finding_id": self.finding_id,
+        }
+
+
+@dataclass
+class Generation:
+    """One Workflow launch associated with an inspected run (docs/DESIGN.md
+    4.1, 4.13.3, v0.3 N1), built by reader.ParentIndex from the parent
+    transcript's own Workflow tool_use/tool_result pairs."""
+
+    launch_line: int  # the Workflow tool_use's own physical line
+    tool_use_id: str  # that tool_use's own 'id'
+    resume_from: str | None  # its input.resumeFromRunId, when a string
+    result_line: int | None  # the unique matching tool_result line; None for
+    # a result-less resume (incomplete generation)
+    run_id: str  # the inspected run id this generation belongs to
+    task_id: str | None  # toolUseResult.taskId; None when incomplete
+    launch_status: str | None  # toolUseResult.status as written
+    # ('async_launched' on every launch observed so far); None when incomplete
+    terminal: str | None  # 'completed' | 'failed' | 'stopped' | 'unknown' | None
+    terminal_source: str | None  # 'notification' | 'task_stop' | 'launch_result'
+    # | 'conflict' | 'unrecognized_status' | 'incomplete_generation';
+    # None when terminal is None
+    terminal_line: int | None  # the accepted notification, TaskStop, or launch
+    # result line that set terminal; None otherwise
+    diagnostics: list[str]  # each names the physical lines involved
+    # (v0.3, N4b-1) the parsed timestamp of the launch result line, taken from
+    # the same parent-index snapshot that produced the lifecycle; None when
+    # there is no result line, it has no timestamp, or it does not parse.
+    result_ts: datetime | None = None
+    # (field milestone F, FA2) the parsed timestamp of the assistant entry that
+    # holds the Workflow tool_use block (launch_line), from the same snapshot;
+    # None when the entry has no timestamp or it does not parse. Generation
+    # assignment (ledger.generation_of) keys on it, not on result_ts.
+    launch_ts: datetime | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "launch_line": self.launch_line,
+            "tool_use_id": self.tool_use_id,
+            "resume_from": self.resume_from,
+            "result_line": self.result_line,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "launch_status": self.launch_status,
+            "terminal": self.terminal,
+            "terminal_source": self.terminal_source,
+            "terminal_line": self.terminal_line,
+            "diagnostics": self.diagnostics,
+            "result_ts": _iso(self.result_ts),
+            "launch_ts": _iso(self.launch_ts),
         }

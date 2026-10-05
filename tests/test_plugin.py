@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shutil
+import signal
 import stat
 import subprocess
 import time
@@ -66,17 +68,17 @@ def test_plugin_version_equals_package_version():
     assert plugin["version"] == package_version
 
 
-def test_pyproject_plugin_and_package_versions_are_all_0_2_0():
+def test_pyproject_plugin_and_package_versions_are_all_0_3_0():
     """docs/DESIGN.md 7.1's D1: the literal, not just mutual equality --
     a version bump that only kept two of the three in sync would still
     pass a pure-equality check."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert pyproject["project"]["version"] == "0.2.0"
+    assert pyproject["project"]["version"] == "0.3.0"
     plugin = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
-    assert plugin["version"] == "0.2.0"
+    assert plugin["version"] == "0.3.0"
     import agent_postmortem
 
-    assert agent_postmortem.__version__ == "0.2.0"
+    assert agent_postmortem.__version__ == "0.3.0"
 
 
 def test_pyproject_declares_agent_postmortem_as_primary_and_postmortem_as_alias():
@@ -184,12 +186,15 @@ def test_rescue_skill_md_has_the_expected_frontmatter():
 # protocol, one required phrase per step so a rewrite of the skill's wording
 # cannot silently drop a step's own substance.
 _RESCUE_SKILL_STEP_PHRASES = (
-    ("1", ("rescue plan", "--no-redact", "POSSIBLY LIVE")),
+    # N3c (docs/DESIGN.md 4.13.5, D-o): the packet comes from
+    # `rescue plan --local --evidence`, never --no-redact
+    # (tests/test_field_v03_more.py pins that absence).
+    ("1", ("rescue plan", "--local --evidence", "POSSIBLY LIVE")),
     ("2", ("diff",)),
     ("3", ("declared check", "Bash", "ask")),
     ("4", ("2 cycles",)),
     ("5", ("checkout", "restore", "reset", "stash", "clean", "cp")),
-    ("6", ("rescue status", "commit", "relaunch")),
+    ("6", ("agent-postmortem rescue status <run-id> --local", "commit", "relaunch")),
     ("7", ("instruction file", "CLAUDE.md")),
 )
 
@@ -261,7 +266,8 @@ def _write_fake_cli(bin_dir: Path, name: str, script: str) -> Path:
 
 
 def _run_run_sh(event: str, *, path_entries: list[str], plugin_data: Path, stdin: str = "{}",
-                 extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+                 extra_env: dict[str, str] | None = None,
+                 timeout: float = 15) -> subprocess.CompletedProcess:
     env = {
         "PATH": ":".join([*path_entries, SAFE_SYSTEM_PATH]),
         "CLAUDE_PLUGIN_DATA": str(plugin_data),
@@ -275,7 +281,7 @@ def _run_run_sh(event: str, *, path_entries: list[str], plugin_data: Path, stdin
         env=env,
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=timeout,
     )
 
 
@@ -504,81 +510,90 @@ def test_run_sh_suppresses_a_plain_text_stack_trace(tmp_path):
 
 # --- run.sh: deadlines and process-group kills, docs/DESIGN.md 7.2's D3/D4 --
 
-_FAKE_CLI_SLOW_CAPABILITIES = r"""#!/usr/bin/env bash
-if [ "$1" = "hook" ] && [ "$2" = "capabilities" ]; then
-  sleep 3
-  printf '{"protocol": 1, "version": "0.1.0"}\n'
+def _fake_cli_that_hangs(marker_dir: Path, *, hang_in: str) -> str:
+    """A fake CLI that records `started`, sleeps 60s, then records `finished`.
+
+    hang_in="capabilities" hangs the PATH probe; hang_in="main" answers the
+    probe at once and hangs the real hook call. `finished` is written only if
+    the 60s sleep ran to its end, so its absence proves a deadline kill."""
+    hang = f"""
+  echo started > "{marker_dir}/started"
+  sleep 60
+  echo finished > "{marker_dir}/finished"
+"""
+    if hang_in == "capabilities":
+        return f"""#!/usr/bin/env bash
+if [ "$1" = "hook" ] && [ "$2" = "capabilities" ]; then{hang}  printf '{{"protocol": 1, "version": "0.1.0"}}\\n'
   exit 0
 fi
 cat >/dev/null
-printf '{"systemMessage": "should never run"}\n'
+printf '{{"systemMessage": "should never run"}}\\n'
 exit 0
 """
-
-
-def test_run_sh_probe_gives_up_after_two_seconds(tmp_path):
-    bin_dir = tmp_path / "bin"
-    _write_fake_cli(bin_dir, "agent-postmortem", _FAKE_CLI_SLOW_CAPABILITIES)
-    plugin_data = tmp_path / "plugin-data"
-
-    started = time.monotonic()
-    result = _run_run_sh("check", path_entries=[str(bin_dir)], plugin_data=plugin_data, stdin="{}")
-    elapsed = time.monotonic() - started
-
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ""
-    # The probe's own 2s deadline, not the fake's full sleep (docs/
-    # DESIGN.md 12's D-B: 3s here, just past the deadline -- long enough to
-    # prove the kill actually fired, not the old 10s that only padded the
-    # suite's wall time without testing anything more).
-    assert elapsed < 6, f"took {elapsed:.1f}s; the 2s probe deadline did not fire"
-    assert "CLI not found" in result.stdout
-
-
-_FAKE_CLI_SLEEPS_PAST_A_SHORT_DEADLINE = r"""#!/usr/bin/env bash
-if [ "$1" = "hook" ] && [ "$2" = "capabilities" ]; then
-  printf '{"protocol": 1, "version": "0.1.0"}\n'
-  exit 0
-fi
-cat >/dev/null
-sleep 2
-printf '{"systemMessage": "should never print"}\n'
-"""
-
-
-def test_run_sh_honors_the_hook_deadline_override_env_var(tmp_path):
-    """docs/DESIGN.md 7.2's D3/12's D-B: AGENT_POSTMORTEM_HOOK_DEADLINE_SECONDS,
-    when set, replaces the event's own built-in deadline (8/18/80s) -- this
-    is what lets a test exercise the real deadline-kill path in about a
-    second instead of a fake sleeping past the full 8s default, the other
-    real contributor (with the orphan-reaping test below) to the suite
-    going from 8s to 26s."""
-    bin_dir = tmp_path / "bin"
-    _write_fake_cli(bin_dir, "agent-postmortem", _FAKE_CLI_SLEEPS_PAST_A_SHORT_DEADLINE)
-    plugin_data = tmp_path / "plugin-data"
-
-    started = time.monotonic()
-    result = _run_run_sh(
-        "check", path_entries=[str(bin_dir)], plugin_data=plugin_data, stdin="{}",
-        extra_env={"AGENT_POSTMORTEM_HOOK_DEADLINE_SECONDS": "1"},
-    )
-    elapsed = time.monotonic() - started
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == ""  # killed before it could print anything
-    assert elapsed < 2.0, f"took {elapsed:.1f}s; the 1s override deadline did not fire"
-
-
-_ORPHAN_MARKER = "sleep 987654"
-_FAKE_CLI_FORKS_ORPHAN = f"""#!/usr/bin/env bash
+    return f"""#!/usr/bin/env bash
 if [ "$1" = "hook" ] && [ "$2" = "capabilities" ]; then
   printf '{{"protocol": 1, "version": "0.1.0"}}\\n'
   exit 0
 fi
-cat >/dev/null
-{_ORPHAN_MARKER} &
-sleep 2
+cat >/dev/null{hang}printf '{{"systemMessage": "should never print"}}\\n'
 """
+
+
+def test_run_sh_probe_gives_up_after_two_seconds(tmp_path):
+    """The probe's own 2s deadline killed the hanging probe: the fake started,
+    never reached the end of its 60s sleep, and run.sh fell through to the
+    'CLI not found' hint. A deadline that never fires cannot pass: run.sh
+    would still be waiting on the 60s sleep when the 30s subprocess ceiling
+    (half the child's own runtime, so load cannot trip it) expires."""
+    bin_dir = tmp_path / "bin"
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    _write_fake_cli(bin_dir, "agent-postmortem", _fake_cli_that_hangs(markers, hang_in="capabilities"))
+    plugin_data = tmp_path / "plugin-data"
+
+    result = _run_run_sh(
+        "check", path_entries=[str(bin_dir)], plugin_data=plugin_data, stdin="{}", timeout=30
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert (markers / "started").exists(), "the probe never ran the fake"
+    assert not (markers / "finished").exists(), "the probe was not killed before its sleep ended"
+    assert "CLI not found" in result.stdout
+
+
+def test_run_sh_honors_the_hook_deadline_override_env_var(tmp_path):
+    """docs/DESIGN.md 7.2's D3/12's D-B: AGENT_POSTMORTEM_HOOK_DEADLINE_SECONDS,
+    when set, replaces the event's own built-in deadline (8/18/80s). With a
+    1s override and a CLI that would sleep 60s, run.sh returns with empty
+    stdout, the fake started but never finished, and the 30s ceiling is far
+    below the child's 60s runtime, so only a deadline that fired lets it pass."""
+    bin_dir = tmp_path / "bin"
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    _write_fake_cli(bin_dir, "agent-postmortem", _fake_cli_that_hangs(markers, hang_in="main"))
+    plugin_data = tmp_path / "plugin-data"
+
+    result = _run_run_sh(
+        "check", path_entries=[str(bin_dir)], plugin_data=plugin_data, stdin="{}",
+        extra_env={"AGENT_POSTMORTEM_HOOK_DEADLINE_SECONDS": "1"}, timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""  # killed before it could print anything
+    assert (markers / "started").exists(), "the real hook call never ran the fake"
+    assert not (markers / "finished").exists(), "the child was not killed before its sleep ended"
+
+
+def _processes_with_command(command: str) -> list[int]:
+    """Pids whose full command line equals `command` exactly (not a substring)."""
+    out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
+    pids = []
+    for line in out.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        if cmd.strip() == command:
+            pids.append(int(pid))
+    return pids
 
 
 def test_run_sh_deadline_kill_reaps_a_backgrounded_child_too(tmp_path):
@@ -586,26 +601,51 @@ def test_run_sh_deadline_kill_reaps_a_backgrounded_child_too(tmp_path):
     process group, not just the one pid run.sh launched, or a CLI that
     backgrounds a subprocess of its own leaves it running as an orphan
     after run.sh has already exited. The deadline is overridden to 1s
-    (docs/DESIGN.md 12's D-B) so this exercises the same real kill path as
-    the default 8s check deadline without the suite waiting out 8s of real
-    sleep for it."""
+    (docs/DESIGN.md 12's D-B). The orphan is a `sleep` with a duration unique
+    to this run, so no other process on the machine can match it: the test
+    proves the orphan existed (its pid file, command line equal to the
+    marker), that run.sh returned empty after killing the group, and that no
+    process with exactly that command line is left. The finally block kills
+    only processes with exactly this run's marker."""
+    marker = f"sleep 9876{random.randint(1000, 999999)}"
+    orphan_pid_file = tmp_path / "orphan.pid"
+    fake = f"""#!/usr/bin/env bash
+if [ "$1" = "hook" ] && [ "$2" = "capabilities" ]; then
+  printf '{{"protocol": 1, "version": "0.1.0"}}\\n'
+  exit 0
+fi
+cat >/dev/null
+{marker} &
+echo $! > "{orphan_pid_file}"
+sleep 60
+"""
     bin_dir = tmp_path / "bin"
-    _write_fake_cli(bin_dir, "agent-postmortem", _FAKE_CLI_FORKS_ORPHAN)
+    _write_fake_cli(bin_dir, "agent-postmortem", fake)
     plugin_data = tmp_path / "plugin-data"
 
-    result = _run_run_sh(
-        "check", path_entries=[str(bin_dir)], plugin_data=plugin_data, stdin="{}",
-        extra_env={"AGENT_POSTMORTEM_HOOK_DEADLINE_SECONDS": "1"},
-    )
+    try:
+        result = _run_run_sh(
+            "check", path_entries=[str(bin_dir)], plugin_data=plugin_data, stdin="{}",
+            extra_env={"AGENT_POSTMORTEM_HOOK_DEADLINE_SECONDS": "1"}, timeout=30,
+        )
 
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ""
-    assert result.stdout == ""
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+        assert result.stdout == ""
+        assert orphan_pid_file.exists(), "the fake never backgrounded its child"
 
-    time.sleep(0.5)  # a short grace window for the kill to finish reaping
-    survivors = subprocess.run(["pgrep", "-f", _ORPHAN_MARKER], capture_output=True, text=True)
-    assert survivors.returncode != 0, f"orphan(s) survived: {survivors.stdout!r}"
-    subprocess.run(["pkill", "-9", "-f", _ORPHAN_MARKER], capture_output=True)  # best-effort cleanup
+        deadline = time.monotonic() + 10  # grace window for the kill to finish reaping
+        survivors = _processes_with_command(marker)
+        while survivors and time.monotonic() < deadline:
+            time.sleep(0.2)
+            survivors = _processes_with_command(marker)
+        assert not survivors, f"orphan(s) survived the deadline kill: {survivors}"
+    finally:
+        for pid in _processes_with_command(marker):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 # --- run.sh: unwritable data dir, docs/DESIGN.md 7.2's D6 -------------------

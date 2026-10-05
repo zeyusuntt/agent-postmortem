@@ -37,8 +37,9 @@ raises, the hook prints nothing and exits 0.
 
 ## The one network action
 
-On `SessionStart`, if no protocol-compatible `agent-postmortem` CLI resolves
-from the plugin's own data directory or your `PATH`, and
+On `SessionStart`, if the plugin has not installed a CLI into its own data
+directory and no `agent-postmortem` on your `PATH` passes its protocol check
+(`agent-postmortem hook capabilities` answers protocol 1), and
 [`uv`](https://docs.astral.sh/uv/) is on your `PATH`, the plugin installs
 the version pinned in the plugin manifest, retrying at most once every 24
 hours on failure, and writes what happened to a log file instead of your

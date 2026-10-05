@@ -184,7 +184,7 @@ def test_review_to_json_shape_and_consider_removing_list():
     rows = trend.review_rows(adopted, runs, weeks=4)
     payload = trend.review_to_json(rows)
 
-    assert payload["schema"] == 2
+    assert payload["schema"] == 3
     assert payload["consider_removing"] == ["R-GIT-CWD"]
     entry = payload["reviews"][0]
     assert entry["rule_id"] == "R-GIT-CWD"
@@ -327,7 +327,7 @@ def test_cli_review_json_shape(tmp_path, capsys, monkeypatch):
 
     assert code == 0, captured.err
     payload = json.loads(captured.out)
-    assert payload["schema"] == 2
+    assert payload["schema"] == 3
     assert payload["reviews"][0]["rule_id"] == "R-GIT-CWD"
     # No "after" run at all here (0 runs on that side): not enough evidence
     # either way, so never flagged (docs/DESIGN.md 9).

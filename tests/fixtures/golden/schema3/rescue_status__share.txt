@@ -1,0 +1,672 @@
+##### case reader_minimal:wf_a0000000-001
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_a0000000-001"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case reader_minimal:wf_b0000000-002
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_b0000000-002"
+  },
+  "units": [
+    {
+      "agent": "agent-1",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case reader_minimal:wf_c0000000-003
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_c0000000-003"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case journal_malformed_fields:wf_00000000-af1
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-af1"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case journal_malformed_fields:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "s_82d2d30035"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case hook_session:wf_00000000-710
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-710"
+  },
+  "units": [
+    {
+      "agent": "agent-1",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case hook_session:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "s_311deb29a5"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case session_human_interrupt:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "s_aece06acec"
+  },
+  "units": [
+    {
+      "agent": "agent-1",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case session_parent_stop:session
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "s_2a74169191"
+  },
+  "units": [
+    {
+      "agent": "agent-1",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": false,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case redaction_adversarial:wf_00000000-960
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-960"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case attempt_facts:wf_00000000-af0
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-af0"
+  },
+  "units": [
+    {
+      "agent": "agent-3",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-11",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:attempt_failed_causes
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c01"
+  },
+  "units": [
+    {
+      "agent": "agent-1",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-2",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-3",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-4",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-5",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-7",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-8",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-9",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-10",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-11",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:attempt_failed_retry_tail
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c02"
+  },
+  "units": [
+    {
+      "agent": "agent-1",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-2",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:clean_run
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c05"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:codex_write_denied
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c06"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:incomplete_journal
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c08"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_resolved
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c0a"
+  },
+  "units": [
+    {
+      "agent": "agent-2",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-3",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-4",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-5",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-6",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    },
+    {
+      "agent": "agent-7",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_unresolved
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c0b"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:journal_state_orphan_failed
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c09"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:missing_artifact
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c0c"
+  },
+  "units": [],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case bare:claim_contradiction
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c04"
+  },
+  "units": [
+    {
+      "agent": "agent-11",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case synthetic:no_canonical_agent_id
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c20"
+  },
+  "units": [
+    {
+      "agent": "agent-4",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>
+##### case synthetic:status_flip
+exit=4
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "run": {
+    "run_id": "wf_00000000-c21"
+  },
+  "units": [
+    {
+      "agent": "agent-2",
+      "repo": null,
+      "checks_declared": 0,
+      "last_counted_run": null,
+      "word": "NOT_OBSERVED",
+      "writes_after": 0,
+      "write_after_check": false,
+      "cycles": 0
+    }
+  ],
+  "not_counted": [],
+  "never_matches": [],
+  "transcript_unknown": true,
+  "exit_code": 4
+}
+<<<STDERR>>>
+<<<END>>>

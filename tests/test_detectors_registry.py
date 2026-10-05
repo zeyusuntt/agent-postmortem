@@ -11,7 +11,7 @@ from pathlib import Path
 
 from agent_postmortem import detectors
 from agent_postmortem.detectors import all_detectors, run_detectors
-from agent_postmortem.models import Attempt, LogicalAgent, Run
+from agent_postmortem.models import Attempt, Lifecycle, LogicalAgent, Run
 
 
 def _workflow_run() -> Run:
@@ -80,11 +80,40 @@ def test_claim_contradiction_is_workflow_only():
     assert claim_contradiction.kinds == frozenset({"workflow"})
 
 
+def test_workflow_failed_is_workflow_only():
+    """docs/DESIGN.md 4.13.3 (v0.3 N2): a session carries no Workflow launch
+    and no Run.lifecycle at all (D11), so workflow_failed never applies to
+    one. A Run built directly (Run.lifecycle defaults to None) must not
+    crash the detector either -- it simply finds nothing to report."""
+    workflow_failed = next(d for d in all_detectors() if d.id == "workflow_failed")
+    assert workflow_failed.kinds == frozenset({"workflow"})
+    assert workflow_failed.run(_workflow_run()) == []
+
+
+def test_workflow_failed_finding_names_no_rule_id():
+    """docs/DESIGN.md 4.13.3: workflow_failed's own paragraph ends 'No rule
+    id (section 9 names none for it)' -- unlike every rule-backed detector,
+    its one Finding must carry rule_id None and rule_ids () rather than
+    silently defaulting to whatever Finding.__post_init__ would otherwise
+    synthesize for a detector that does name one."""
+    run = _workflow_run()
+    run.lifecycle = Lifecycle(
+        terminal="failed", source="notification", activity="stale",
+        generations=1, diagnostics=[],
+    )
+    workflow_failed = next(d for d in all_detectors() if d.id == "workflow_failed")
+    findings = workflow_failed.run(run)
+    assert len(findings) == 1
+    assert findings[0].rule_id is None
+    assert findings[0].rule_ids == ()
+
+
 def test_every_other_detector_applies_to_both_kinds():
     # claim_contradiction joins silent_retry and attempt_failed here (unit
     # M1c): it reads Attempt.reported, which only a workflow journal's
-    # 'result' event ever populates.
-    workflow_only = {"silent_retry", "attempt_failed", "claim_contradiction"}
+    # 'result' event ever populates. workflow_failed joins them in v0.3 N2:
+    # a session carries no Workflow launch and no Run.lifecycle at all (D11).
+    workflow_only = {"silent_retry", "attempt_failed", "claim_contradiction", "workflow_failed"}
     for detector in all_detectors():
         if detector.id in workflow_only:
             continue

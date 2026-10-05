@@ -424,7 +424,7 @@ def test_attempt_facts_dataclass_to_dict_round_trips():
 ATTEMPT_KEYS_WITH_FACTS = {
     "agent_id", "key", "label", "phase", "agent_type", "ordinal", "outcome",
     "first_ts", "last_ts", "usage", "event_count", "interrupt", "reported",
-    "facts",
+    "facts", "ledger",
 }
 
 
@@ -464,9 +464,10 @@ def test_json_export_paths_are_redacted_by_default_and_raw_with_no_redact(run):
     redacted = _export(run, Redactor(enabled=True))
     raw = _export(run, Redactor(enabled=False))
 
-    redacted_edit = next(
-        a for a in redacted["run"]["attempts"] if a["agent_id"] == "af200000000000001"
-    )
+    # N5a-1: the default level carries an alias, not the raw id, so the same
+    # attempt is found by its position in the (same-order) raw export.
+    raw_ids = [a["agent_id"] for a in raw["run"]["attempts"]]
+    redacted_edit = redacted["run"]["attempts"][raw_ids.index("af200000000000001")]
     raw_edit = next(a for a in raw["run"]["attempts"] if a["agent_id"] == "af200000000000001")
 
     raw_path = raw_edit["facts"]["paths_written"][0]
@@ -478,9 +479,7 @@ def test_json_export_paths_are_redacted_by_default_and_raw_with_no_redact(run):
     killed_attempt = next(
         a for a in raw["run"]["attempts"] if a["agent_id"] == "af200000000000003"
     )
-    redacted_killed = next(
-        a for a in redacted["run"]["attempts"] if a["agent_id"] == "af200000000000003"
-    )
+    redacted_killed = redacted["run"]["attempts"][raw_ids.index("af200000000000003")]
     assert killed_attempt["facts"]["in_flight"][0]["path"] == (
         "/tmp/agent-postmortem-fixture/attempt_facts/killed/pending.md"
     )
@@ -490,9 +489,8 @@ def test_json_export_paths_are_redacted_by_default_and_raw_with_no_redact(run):
 def test_json_export_cwds_are_redacted_by_default(run):
     """F4: facts.cwds is also registered through the path-N pseudonym."""
     redacted = _export(run, Redactor(enabled=True))
-    redacted_attempt = next(
-        a for a in redacted["run"]["attempts"] if a["agent_id"] == "af200000000000009"
-    )
+    raw_ids = [a.agent_id for a in run.attempts]
+    redacted_attempt = redacted["run"]["attempts"][raw_ids.index("af200000000000009")]
     for cwd in redacted_attempt["facts"]["cwds"]:
         assert cwd.startswith("path-")
     assert "/home/user/project" not in str(redacted_attempt["facts"]["cwds"])
@@ -505,8 +503,9 @@ def test_json_export_facts_path_and_observation_path_share_one_pseudonym(run):
     from agent_postmortem import observe
 
     raw_path = "/tmp/agent-postmortem-fixture/attempt_facts/edit-ok/notes.md"
-    fake_observation = observe.RepoObservation(
-        checked=True, reason=None, repo_root="/tmp/agent-postmortem-fixture/attempt_facts",
+    fake_observation = observe.RunObservation([observe.GroupObservation(
+        repo="/tmp/agent-postmortem-fixture/attempt_facts", refused=False, checked=True,
+        reason=None, repo_root="/tmp/agent-postmortem-fixture/attempt_facts",
         head=None, git_version=None,
         paths={
             raw_path: observe.PathObservation(
@@ -514,17 +513,16 @@ def test_json_export_facts_path_and_observation_path_share_one_pseudonym(run):
                 attempts=[{"agent_id": "af200000000000001", "ordinal": 1}],
             )
         },
-    )
+    )])
     from agent_postmortem import detectors
 
     findings = detectors.run_detectors(run)
     redactor = Redactor(enabled=True)
     exported = report.export_run(run, findings, redactor, observation=fake_observation)
-    edit_attempt = next(
-        a for a in exported["run"]["attempts"] if a["agent_id"] == "af200000000000001"
-    )
+    raw_ids = [a.agent_id for a in run.attempts]
+    edit_attempt = exported["run"]["attempts"][raw_ids.index("af200000000000001")]
     facts_pseudo = edit_attempt["facts"]["paths_written"][0]
-    observation_pseudo = next(iter(exported["observation"]["paths"]))
+    observation_pseudo = next(iter(exported["observation"]["groups"][0]["paths"]))
     assert facts_pseudo.startswith("path-")
     assert facts_pseudo == observation_pseudo
 

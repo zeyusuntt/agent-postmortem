@@ -5,7 +5,7 @@ Both commands are read-only and stateless. Neither writes a file, runs a
 check, or touches git beyond what `observe.py` already does. The main
 Claude session or the human performs every action (`.reviews/proposals/
 2026-09-v0.2-guided-rescue.md` section 3): this module only reads
-transcripts, observes repo state through `observe.observe_run`, and prints
+transcripts, observes repo state through `observe.observe_groups`, and prints
 facts. Per R8, it never claims to have confirmed something by running it --
 it reports what it observed and names what it could not.
 
@@ -26,12 +26,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import commands, ledger, observe, reader, report
 from . import config as config_module
-from . import observe, reader, report
-from .models import FACTS_UNKNOWN, Attempt, Finding, LogicalAgent, Run
+from .models import FACTS_UNKNOWN, Attempt, Finding, LedgerEntry, LogicalAgent, Run
 from .redact import Redactor
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # docs/DESIGN.md 4.9: the same outcomes observe.py's own candidate-path rule
 # uses -- a unit of work is one whose attempts include at least one of these.
@@ -41,7 +41,7 @@ _RISK_OUTCOMES = frozenset({"killed", "failed", "superseded"})
 # these, and `rescue status` flags one found in the transcript after the run
 # ended.
 _NEVER_SUBCOMMANDS = ("checkout", "restore", "reset", "stash", "clean")
-_NEVER_LIST_RE = re.compile(r"\bgit\s+(?:" + "|".join(_NEVER_SUBCOMMANDS) + r")\b")
+_NEVER_LIST_RE = re.compile(r"\bgit\s+(" + "|".join(_NEVER_SUBCOMMANDS) + r")\b")
 
 # docs/DESIGN.md 4.11 (F3 hardening): whether a Bash command run after the
 # last counted check is PROVEN read-only, for rescue's own "did this session
@@ -96,6 +96,20 @@ class PathRow:
     state_reason: str | None
     attempt_ordinals: list[int]
     later_write: bool
+    # docs/DESIGN.md 5.3b, 4.13.11: one (attempt ordinal, ledger entry) pair per
+    # ledger entry that names this path, in attempt order, nothing collapsed.
+    ledger: list[tuple[int, LedgerEntry]] = field(default_factory=list)
+    # docs/DESIGN.md 5.3b (N5c-1): the index of the observation group that lists
+    # this path (None when none does), the path's own observation (None when its
+    # group was refused, unknown, or not checked, or the path lay outside the
+    # toplevel), and whether the path still needs a person to look at it because
+    # its group was never checked.
+    group: int | None = None
+    observation: "observe.PathObservation | None" = None
+    unchecked: bool = False
+    # docs/DESIGN.md 4.11 (N5 fix 1, C3): the normalized absolute target the row is keyed by
+    # (with `group`); None for a hand-built row.
+    target: str | None = None
 
 
 @dataclass
@@ -131,6 +145,13 @@ class UnitPlan:
     # transcript at all) -- distinct from the checked/reason UNKNOWN line
     # below, which is about the repo observation, not the transcript.
     facts_unknown: bool = False
+    # docs/DESIGN.md 4.11 (N5c-2, plan S7): the declared `[[repos]]` roots that own
+    # this unit's paths (lexically, in order of first appearance) and their declared
+    # checks, in that order. Never taken from an observation.
+    repos: list[str] = field(default_factory=list)
+    declared_checks: list[str] = field(default_factory=list)
+    # docs/DESIGN.md 4.11 (N5 fix 1, S1): see `_unit_unknown_group`.
+    unknown_group: bool = False
 
 
 @dataclass
@@ -152,7 +173,6 @@ class RescuePlan:
     checked: bool
     observation_reason: str | None
     repo_root: str | None
-    declared_checks: list[str]
     config_warnings: list[str]
     killed_brief: list[dict]
     failed_brief: list[dict]
@@ -160,6 +180,18 @@ class RescuePlan:
     already_exists_commits: list[str]
     has_unknown_fact: bool
     exit_code: int = 0
+    # N8 fix 1, S2: with no unit, the size of the risk population when it is not empty or not
+    # complete on a finished all-completed run (the sentence names it); None otherwise.
+    unchecked_attempts: int | None = None
+    # N3b P19: display string -> the raw spelling it came from, so local can
+    # place a repo-relative key by its original path.
+    already_exists_sources: dict[str, str] = field(default_factory=dict)
+    # docs/DESIGN.md 4.9, 5.3b (N5c-1): the run's observation, whose groups the
+    # JSON export lists and whose indexes the path rows name.
+    observation: "observe.RunObservation | None" = None
+    # docs/DESIGN.md 4.11 (N8b, K4.2): true only for a workflow run in which two attempts of
+    # different keys overlapped in time; the relaunch brief's fan-out caveat prints only then.
+    fan_out_overlap: bool = False
 
 
 # --- building the packet ------------------------------------------------------
@@ -193,23 +225,114 @@ def qualifying_units(run: Run) -> list[LogicalAgent]:
     return [unit for unit in run.agents if _unit_risk_attempts(unit)]
 
 
-def _unit_candidate_paths(unit: LogicalAgent) -> tuple[list[str], dict[str, list[Attempt]]]:
-    """(order, writers): the same shape observe.py's own _candidate_paths
-    builds, scoped to this one unit's risk attempts."""
-    order: list[str] = []
-    writers: dict[str, list[Attempt]] = {}
-    for attempt in _unit_risk_attempts(unit):
+@dataclass
+class _Contribution:
+    """One way a unit's killed, failed, or superseded attempt names a path (N5 fix 1, C3 and
+    S1): from its facts (a file tool's `paths_written` or `in_flight`, with the spelling the call
+    used) or from a ledger entry (any tool the ledger gives a path). `target` is the normalized
+    absolute path (the raw spelling itself when nothing places a relative one); `repo` is the
+    call's candidate repository, the group key the ledger gives it."""
+
+    attempt: Attempt
+    target: str
+    raw: str | None
+    repo: str | None
+    entry: LedgerEntry | None = None
+
+
+_PATH_EFFECTS = ("observed", "claimed_target", "attempted")
+
+
+def _unit_contributions(unit: LogicalAgent) -> list[_Contribution]:
+    """Every path contribution of the unit's risk attempts: the facts paths of all attempts
+    first (the same union `observe.py`'s own rule 2 computes, scoped to this one unit), then
+    every ledger entry path (so a MultiEdit or a path named in a shell command has a row)."""
+    found: list[_Contribution] = []
+    attempts = _unit_risk_attempts(unit)
+    for attempt in attempts:
         written, in_flight = _facts_lists(attempt.facts)
-        seen_this_attempt: set[str] = set()
-        for raw_path in list(written) + _in_flight_paths(in_flight):
-            if raw_path in seen_this_attempt:
+        seen: set[str] = set()
+        for raw in list(written) + _in_flight_paths(in_flight):
+            if raw in seen:
                 continue
-            seen_this_attempt.add(raw_path)
-            if raw_path not in writers:
-                writers[raw_path] = []
-                order.append(raw_path)
-            writers[raw_path].append(attempt)
-    return order, writers
+            seen.add(raw)
+            placed = False
+            for call in attempt.tool_calls:
+                if call.path != raw:
+                    continue
+                cwd = call.cwd if isinstance(call.cwd, str) and call.cwd.startswith("/") else None
+                base = commands.normalize_path(cwd) if cwd is not None else None
+                resolved = commands.resolve_target(base, raw)
+                if resolved is not None and resolved[0] is not None:
+                    found.append(_Contribution(attempt, resolved[0], raw, base))
+                    placed = True
+            if not placed:
+                target = commands.normalize_path(raw) if raw.startswith("/") else raw
+                found.append(_Contribution(attempt, target, raw, None))
+    for attempt in sorted(attempts, key=lambda item: item.ordinal):
+        if attempt.ledger is None:
+            continue
+        for entry in attempt.ledger.entries:
+            if entry.path is not None and entry.effect in _PATH_EFFECTS:
+                found.append(_Contribution(attempt, entry.path, None, entry.repo, entry))
+    return found
+
+
+def _unit_targets(unit: LogicalAgent) -> dict[str, list[_Contribution]]:
+    """target -> its contributions, targets in first-seen order (facts paths first)."""
+    targets: dict[str, list[_Contribution]] = {}
+    for contribution in _unit_contributions(unit):
+        targets.setdefault(contribution.target, []).append(contribution)
+    return targets
+
+
+def _listed_spellings(unit: LogicalAgent) -> list[str]:
+    """The spellings the status text may need to pseudonymize, first seen first: the raw
+    spelling a facts path used, else the target of a ledger-only path."""
+    listed: list[str] = []
+    for contribution in _unit_contributions(unit):
+        spelling = contribution.raw if contribution.raw is not None else contribution.target
+        if spelling not in listed:
+            listed.append(spelling)
+    return listed
+
+
+@dataclass
+class _RowSpec:
+    """One future path row: a target, the observation group that lists it (None when no group
+    does), and the contributions that belong to that group."""
+
+    target: str
+    index: int | None
+    group: "observe.GroupObservation | None"
+    contributions: list[_Contribution]
+
+
+def _row_specs(unit: LogicalAgent, observation) -> list[_RowSpec]:
+    """Rows keyed by (normalized absolute target, group), never by the raw spelling (C3). A
+    contribution goes to the listing group whose candidate repository it names, else to the
+    first listing group; a group that lists the target but holds none of this unit's
+    contributions gets no row."""
+    specs: list[_RowSpec] = []
+    for target, contributions in _unit_targets(unit).items():
+        listing = [
+            (index, group) for index, group in enumerate(observation.groups)
+            if target in group.paths or target in group.unobserved_paths
+        ]
+        if not listing:
+            specs.append(_RowSpec(target, None, None, contributions))
+            continue
+        assigned: dict[int, list[_Contribution]] = {index: [] for index, _group in listing}
+        for contribution in contributions:
+            home = next(
+                (index for index, group in listing if group.repo == contribution.repo),
+                listing[0][0],
+            )
+            assigned[home].append(contribution)
+        for index, group in listing:
+            if assigned[index]:
+                specs.append(_RowSpec(target, index, group, assigned[index]))
+    return specs
 
 
 def _display_key(raw_path: str, cwd: str | None, repo_root: str | None) -> str:
@@ -228,30 +351,140 @@ def _display_key(raw_path: str, cwd: str | None, repo_root: str | None) -> str:
     return raw_path
 
 
+# --- declared repositories (docs/DESIGN.md 4.11, N5c-2, plan S7) -----------------------
+
+
+def declared_roots(cfg: config_module.Config) -> dict[str, list[str]]:
+    """The `[[repos]]` roots of the configuration, lexically normalized, never resolved
+    through git, each with its declared checks (the first table wins for a duplicated
+    root, which `duplicate_roots` reports as a configuration error)."""
+    roots: dict[str, list[str]] = {}
+    for repo in cfg.repos:
+        roots.setdefault(commands.normalize_path(repo.path), list(repo.checks))
+    return roots
+
+
+def duplicate_roots(cfg: config_module.Config) -> list[str]:
+    """Normalized roots that two or more `[[repos]]` tables name, in order of first repeat."""
+    seen: set[str] = set()
+    repeated: list[str] = []
+    for repo in cfg.repos:
+        root = commands.normalize_path(repo.path)
+        if root in seen and root not in repeated:
+            repeated.append(root)
+        seen.add(root)
+    return repeated
+
+
+def _owner(path: str | None, roots) -> str | None:
+    """The longest declared root that contains `path` component-wise (`/work/repo2` is not
+    inside `/work/repo`), or None. Pure string logic; both must be absolute."""
+    if not isinstance(path, str) or not path.startswith("/"):
+        return None
+    best: str | None = None
+    for root in roots:
+        if not root.startswith("/"):
+            continue
+        try:
+            inside = os.path.commonpath([root, path]) == root
+        except ValueError:
+            inside = False
+        if inside and (best is None or len(root) > len(best)):
+            best = root
+    return best
+
+
+def _target_owners(specs: list[_RowSpec], roots) -> dict[str, list[str]]:
+    """target -> the declared roots that own it: the owner of the target itself, and when it
+    has none, the owner of the candidate repository of each group that lists it (a candidate
+    repository belongs to the longest declared root too)."""
+    owners: dict[str, list[str]] = {}
+    for spec in specs:
+        found = owners.setdefault(spec.target, [])
+        root = _owner(spec.target, roots)
+        if root is None and spec.group is not None and spec.group.repo is not None:
+            root = _owner(commands.normalize_path(spec.group.repo), roots)
+        if root is not None and root not in found:
+            found.append(root)
+    return owners
+
+
+def _unit_repos(owners: dict[str, list[str]]) -> list[str]:
+    repos: list[str] = []
+    for roots_of_target in owners.values():
+        for root in roots_of_target:
+            if root not in repos:
+                repos.append(root)
+    return repos
+
+
+def _path_ledger(unit: LogicalAgent, raw_path: str) -> list[tuple[int, LedgerEntry]]:
+    """The ledger entries of the unit's killed, failed, or superseded attempts
+    that name `raw_path`, as (ordinal, entry) in attempt order. The facts keep
+    the path as the file tool spelled it; the ledger keeps it normalized
+    against the call's working directory (4.13.1), so each call that wrote
+    `raw_path` contributes its own normalized spelling to match on."""
+    pairs: list[tuple[int, LedgerEntry]] = []
+    for attempt in sorted(_unit_risk_attempts(unit), key=lambda item: item.ordinal):
+        if attempt.ledger is None:
+            continue
+        spellings: set[str] = set()
+        for call in attempt.tool_calls:
+            if call.path != raw_path:
+                continue
+            cwd = call.cwd if isinstance(call.cwd, str) and call.cwd.startswith("/") else None
+            base = commands.normalize_path(cwd) if cwd is not None else None
+            resolved = commands.resolve_target(base, raw_path)
+            if resolved is not None and resolved[0] is not None:
+                spellings.add(resolved[0])
+        if not spellings:
+            continue
+        pairs.extend(
+            (attempt.ordinal, entry) for entry in attempt.ledger.entries
+            if entry.path in spellings
+        )
+    return pairs
+
+
 def _unit_path_rows(
     run: Run, unit: LogicalAgent, observation, global_cwd: str | None,
 ) -> list[PathRow]:
-    order, writers = _unit_candidate_paths(unit)
     rows: list[PathRow] = []
-    for raw_path in order:
-        writer_attempts = writers[raw_path]
+    for spec in _row_specs(unit, observation):
+        writer_attempts: list[Attempt] = []
+        for contribution in spec.contributions:
+            if not any(contribution.attempt is seen for seen in writer_attempts):
+                writer_attempts.append(contribution.attempt)
         ordinals = sorted({attempt.ordinal for attempt in writer_attempts})
-        later = observe._later_write_observed(run, writer_attempts, raw_path)
-        if observation.checked:
-            display = _display_key(raw_path, global_cwd, observation.repo_root)
-            path_obs = observation.paths.get(display)
-            if path_obs is None:
-                display = raw_path
-                path_obs = observation.paths.get(raw_path)
+        raws = [c.raw for c in spec.contributions if c.raw is not None]
+        raw_path = raws[0] if raws else spec.target
+        later = observe._later_write(run, writer_attempts, spec.target) or any(
+            observe._later_write_observed(run, writer_attempts, raw) for raw in raws
+        )
+        path_obs = None
+        unchecked = False
+        display = raw_path
+        if spec.group is None:
+            state, reason = observe.UNKNOWN, "not found in the observation"
+        else:
+            group = spec.group
+            path_obs = group.paths.get(spec.target)
             if path_obs is not None:
                 state, reason = path_obs.state, path_obs.reason
+                if group.repo_root:
+                    display = spec.target[len(group.repo_root.rstrip(os.sep)) + 1:]
             else:
-                state, reason = observe.UNKNOWN, "not found in the observation"
-        else:
-            display, state, reason = raw_path, observe.UNKNOWN, observation.reason
+                state = observe.UNKNOWN
+                reason = group.reason if not group.checked else observe.REASON_OUTSIDE
+                unchecked = not group.checked
+        ledger_pairs = sorted(
+            ((c.attempt.ordinal, c.entry) for c in spec.contributions if c.entry is not None),
+            key=lambda pair: pair[0],
+        )
         rows.append(PathRow(
             raw_path=raw_path, display_key=display, state=state, state_reason=reason,
-            attempt_ordinals=ordinals, later_write=later,
+            attempt_ordinals=ordinals, later_write=later, ledger=ledger_pairs,
+            group=spec.index, observation=path_obs, unchecked=unchecked, target=spec.target,
         ))
     return rows
 
@@ -364,9 +597,30 @@ def _unit_task(unit: LogicalAgent) -> TaskInfo | None:
     )
 
 
-def _unit_plan(run: Run, unit: LogicalAgent, observation, global_cwd: str | None) -> UnitPlan:
+def _unit_unknown_group(run: Run, unit: LogicalAgent, observation) -> bool:
+    """docs/DESIGN.md 4.11 (N5 fix 1, S1): one of the unit's risk attempts sits in a refused
+    or unknown group, or in a group with unobserved paths, so what the unit wrote is not fully
+    seen (a shell write, an attempt with no recorded path)."""
+    refs = ledger.attempt_refs(run)
+    mine = {refs[id(attempt)] for attempt in _unit_risk_attempts(unit) if id(attempt) in refs}
+    return any(
+        (group.refused or group.unobserved_paths) and mine.intersection(group.attempts)
+        for group in observation.groups
+    )
+
+
+def _unit_plan(
+    run: Run, unit: LogicalAgent, observation, global_cwd: str | None,
+    roots: dict[str, list[str]],
+) -> UnitPlan:
     attempts_sorted = sorted(unit.attempts, key=lambda attempt: attempt.ordinal)
     last_attempt = attempts_sorted[-1]
+    repos = _unit_repos(_target_owners(_row_specs(unit, observation), roots))
+    declared_checks: list[str] = []
+    for root in repos:
+        for check in roots[root]:
+            if check not in declared_checks:
+                declared_checks.append(check)
     return UnitPlan(
         key=unit.key,
         label=unit.label,
@@ -382,6 +636,9 @@ def _unit_plan(run: Run, unit: LogicalAgent, observation, global_cwd: str | None
         ),
         agent_ids=[attempt.agent_id for attempt in unit.attempts],
         facts_unknown=any(a.facts is None for a in _unit_risk_attempts(unit)),
+        repos=repos,
+        declared_checks=declared_checks,
+        unknown_group=_unit_unknown_group(run, unit, observation),
     )
 
 
@@ -425,17 +682,25 @@ def _failed_brief_rows(run: Run, findings: list[Finding]) -> list[dict]:
     return rows
 
 
+_CONFIRMED_WRITE_EFFECTS = frozenset({"observed"})
+
+
 def _already_exists(run: Run) -> tuple[list[str], list[str]]:
+    """The brief's `already exists` (docs/DESIGN.md 4.11, 4.13.8, K4.4): confirmed writes only,
+    every attempt's ledger paths of effect `observed` plus `facts.paths_written`. A
+    `claimed_target` or `attempted` path never enters it, because neither effect proves that a
+    write happened. Commit ids are the summary-shaped ones the facts carry."""
     paths: list[str] = []
     commits: list[str] = []
     for attempt in run.attempts:
+        for path in ledger.attempt_ledger_paths(
+            attempt, _CONFIRMED_WRITE_EFFECTS, include_facts_written=True,
+        ):
+            if path not in paths:
+                paths.append(path)
         facts = attempt.facts
         if facts is None:
             continue
-        written = facts.paths_written if isinstance(facts.paths_written, list) else []
-        for path in written:
-            if path not in paths:
-                paths.append(path)
         commit_ids = facts.commits if isinstance(facts.commits, list) else []
         for commit_id in commit_ids:
             if commit_id not in commits:
@@ -443,25 +708,97 @@ def _already_exists(run: Run) -> tuple[list[str], list[str]]:
     return paths, commits
 
 
+def _fan_out_overlap(run: Run) -> bool:
+    """docs/DESIGN.md 4.11 (K4.2): a workflow run in which two attempts of different keys
+    overlapped in time. Both attempts need a known first and last timestamp and the closed
+    intervals must intersect; an unknown timestamp never triggers it."""
+    if run.kind != "workflow":
+        return False
+    timed = [
+        (attempt.key, attempt.first_ts, attempt.last_ts)
+        for attempt in run.attempts
+        if attempt.key is not None and attempt.first_ts is not None
+        and attempt.last_ts is not None
+    ]
+    for index, (key_a, first_a, last_a) in enumerate(timed):
+        for key_b, first_b, last_b in timed[index + 1:]:
+            if key_a != key_b and first_a <= last_b and first_b <= last_a:
+                return True
+    return False
+
+
+def empty_unit_state(run: Run) -> tuple[str, int]:
+    """docs/DESIGN.md 4.11 (F6 hardening, N8b K4.3, N8 fix 1 S2): what a run with no unit may say.
+    ('ok', 0): a FINISHED run whose every attempt's own outcome is `completed` AND whose 4.13.1
+    risk population is empty and complete, so "every attempt completed" is the whole truth.
+    ('risk', n): the same finished all-completed run, but the risk population has `n` attempts
+    or is not complete, so WORK AT RISK may still hold unchecked work. ('yet', 0): everything
+    else. One rule for the sentence and the exit status of both `rescue plan` and `rescue
+    status`."""
+    if run.finished is not True or not all(a.outcome == "completed" for a in run.attempts):
+        return "yet", 0
+    population = ledger.risk_population(run)
+    completeness = run.risk_population_completeness
+    if completeness is None:
+        completeness = ledger.risk_population_completeness(run)[0]
+    if population or completeness != "complete":
+        return "risk", len(population)
+    return "ok", 0
+
+
+def nothing_to_rescue_ok(run: Run) -> bool:
+    """True exactly when `empty_unit_state` is 'ok': the one predicate for the cheerful
+    sentence and the exit 0 of both `rescue plan` and `rescue status` (K4.3, S2)."""
+    return empty_unit_state(run)[0] == "ok"
+
+
+def _unchecked_sentence(count: int, run_id: str) -> str:
+    if count == 0:  # N8 fix 2, R2-1: an empty but incomplete population has no exact count
+        return (
+            "NO KILLED OR FAILED ATTEMPT: the tool could not establish which attempts were at "
+            f"risk; see WORK AT RISK in agent-postmortem run {run_id}."
+        )
+    return (
+        f"NO KILLED OR FAILED ATTEMPT: {count} attempt(s) may still hold unchecked work; "
+        f"see WORK AT RISK in agent-postmortem run {run_id}."
+    )
+
+
+def _lifecycle_unknown(run: Run) -> bool:
+    """docs/DESIGN.md 4.13.3: the run's lifecycle terminal is `unknown` (a session has no
+    lifecycle, so never)."""
+    return run.lifecycle is not None and run.lifecycle.terminal == "unknown"
+
+
+def _observation_reason(observation) -> str | None:
+    """Why the repo state was not checked, for the plan's one-line note: the
+    first distinct reason of a group that was not checked, or the fixed sentence
+    when there is no group at all; None when some group was checked."""
+    if observation.checked:
+        return None
+    for group in observation.groups:
+        if group.reason:
+            return group.reason
+    return "no paths written by a killed or failed attempt"
+
+
 def build_plan(
     run: Run, observation, findings: list[Finding], cfg: config_module.Config, *,
     possibly_live: bool = False,
 ) -> RescuePlan:
     """The full decision packet's raw facts (docs/DESIGN.md 4.11). `observation`
-    is always observe.observe_run(run) -- the caller runs it once and passes
-    it in so a test can also pass a hand-built one. `possibly_live` is
+    is always observe.observe_groups(run) (N5c-1) -- the caller runs it once and
+    passes it in so a test can also pass a hand-built one. `possibly_live` is
     computed by the caller (report.is_possibly_live), since it needs a file
     stat this module has no business doing on its own."""
     units_raw = qualifying_units(run)
     global_cwd = observe._discover_cwd(run) if observation.checked else None
-    units = [_unit_plan(run, unit, observation, global_cwd) for unit in units_raw]
-
-    declared_checks: list[str] = []
-    if observation.checked and observation.repo_root:
-        declared_checks = config_module.checks_for_repo(cfg, observation.repo_root)
+    roots = declared_roots(cfg)
+    units = [_unit_plan(run, unit, observation, global_cwd, roots) for unit in units_raw]
 
     already_raw_paths, already_commits = _already_exists(run)
     already_paths: list[str] = []
+    already_sources: dict[str, str] = {}
     for raw_path in already_raw_paths:
         if observation.checked:
             display = _display_key(raw_path, global_cwd, observation.repo_root)
@@ -469,24 +806,30 @@ def build_plan(
             display = raw_path
         if display not in already_paths:
             already_paths.append(display)
+            already_sources[display] = raw_path
     has_unknown = (not observation.checked) or any(
         row.state == observe.UNKNOWN for unit in units for row in unit.paths
-    ) or any(_unit_has_unknown_facts(unit) for unit in units_raw)
+    ) or any(_unit_has_unknown_facts(unit) for unit in units_raw) or any(
+        group.refused or group.unobserved_paths for group in observation.groups
+    )
 
-    nothing_to_rescue = not units
+    empty_state, unchecked_count = empty_unit_state(run) if not units else ("yet", 0)
+    unchecked = empty_state == "risk"
+    nothing_to_rescue = not units and not unchecked
     # docs/DESIGN.md 4.11 (F6 hardening): "every attempt completed" is a
     # claim about a FINISHED run where every attempt's own outcome is
     # 'completed' -- not merely one with no killed/failed/superseded unit,
     # which is also true of an unfinished run, or one whose only attempt is
     # 'unknown' (no transcript at all, so not proven completed either).
-    nothing_to_rescue_ok = nothing_to_rescue and run.finished and all(
-        attempt.outcome == "completed" for attempt in run.attempts
-    )
+    all_completed = empty_state == "ok"
 
-    if possibly_live:
+    # docs/DESIGN.md 4.11, 4.13.11 (N5c-2): a lifecycle terminal `unknown` is an UNKNOWN
+    # fact of the whole run, whatever the units say.
+    lifecycle_unknown = _lifecycle_unknown(run)
+    if possibly_live or lifecycle_unknown or unchecked:
         exit_code = 4
     elif nothing_to_rescue:
-        exit_code = 0 if nothing_to_rescue_ok else 4
+        exit_code = 0 if all_completed else 4
     elif has_unknown:
         exit_code = 4
     else:
@@ -498,12 +841,11 @@ def build_plan(
         finished=run.finished,
         possibly_live=possibly_live,
         nothing_to_rescue=nothing_to_rescue,
-        nothing_to_rescue_ok=nothing_to_rescue_ok,
+        nothing_to_rescue_ok=all_completed,
         units=units,
         checked=observation.checked,
-        observation_reason=observation.reason,
-        repo_root=observation.repo_root,
-        declared_checks=declared_checks,
+        observation_reason=_observation_reason(observation),
+        repo_root=observation.repo_root if observation.checked else None,
         config_warnings=list(cfg.warnings),
         killed_brief=_killed_brief_rows(run),
         failed_brief=_failed_brief_rows(run, findings),
@@ -511,6 +853,10 @@ def build_plan(
         already_exists_commits=already_commits,
         has_unknown_fact=has_unknown,
         exit_code=exit_code,
+        already_exists_sources=already_sources,
+        observation=observation,
+        fan_out_overlap=_fan_out_overlap(run),
+        unchecked_attempts=unchecked_count if unchecked else None,
     )
 
 
@@ -523,19 +869,32 @@ _ATTEMPTS_COL = 10
 _PATH_INDENT = " " * 12
 
 
-def _register_plan_paths(plan: RescuePlan, redactor: Redactor) -> None:
+def _register_plan_paths(plan: RescuePlan, redactor: Redactor, run: Run | None = None) -> None:
+    """Every path the plan text may print, in one namespace. At local (N3b
+    P19) each display key is placed by the path function from the raw
+    spelling it came from, against the run's working directory; the
+    repository root is the one the plan's own observation resolved (D-n)."""
+    cwd = observe._discover_cwd(run) if run is not None else None
     for unit in plan.units:
         for row in unit.paths:
-            redactor.names.path(row.display_key)
+            redactor.names.path(row.display_key, cwd, resolve_from=row.raw_path)
         for entry in unit.in_flight:
             if entry.display_key is not None:
-                redactor.names.path(entry.display_key)
+                redactor.names.path(entry.display_key, cwd, resolve_from=entry.raw_path)
     for path in plan.already_exists_paths:
-        redactor.names.path(path)
+        redactor.names.path(path, cwd, resolve_from=plan.already_exists_sources.get(path))
 
 
-def _register_plan_names(run: Run, redactor: Redactor) -> None:
-    report._register_names(run, redactor)
+def _register_plan_names(run: Run, redactor: Redactor, *, detailed: bool = False) -> None:
+    report._register_names(run, redactor, detailed=detailed)
+
+
+def _piece(redactor: Redactor, value):
+    """One piece of a rescue line or record, scanned where it enters it (docs/DESIGN.md 5.1; F fix
+    7, W7-4): a string goes through the one free-text scanner, anything else (a number, a bool,
+    None) is not text and is returned as it is. An assembled line is never scanned again, so
+    every piece that can hold text goes through this (or a pseudonym call) before it is joined."""
+    return redactor(value) if isinstance(value, str) else value
 
 
 def _raw_claim_value(value) -> str:
@@ -553,10 +912,13 @@ def _format_claim_value(key: str, value, redactor: Redactor) -> str:
     # as the fixed word "set", never its own value; --no-redact still shows
     # the real string.
     if key == "status":
-        return _raw_claim_value(value) if not redactor.enabled else "set"
+        # at local the claim is free text of up to 32 characters: scanned like any other value
+        return "set" if redactor.level == "share" else redactor(_raw_claim_value(value))
     if key == "report_path" and isinstance(value, str):
         return redactor.names.path(value)
-    return _raw_claim_value(value)
+    # a claim value is free text: scanned here, as its own piece (the assembled line is not
+    # scanned again, docs/DESIGN.md 5.1: the end of a line belongs to the path that starts in it)
+    return redactor(_raw_claim_value(value))
 
 
 def _reported_text(reported: dict | None, redactor: Redactor) -> str:
@@ -593,14 +955,26 @@ def _unit_header_line(unit: UnitPlan, redactor: Redactor) -> str:
     )
 
 
-def _task_lines(unit: UnitPlan, redactor: Redactor) -> list[str]:
+def _task_lines(unit: UnitPlan, view: "report.EvidenceView", redactor: Redactor) -> list[str]:
+    """The prompt is quoted only with --evidence at local and raw (N3b D10,
+    D-o), exactly as v0.2 printed it under --no-redact: the first 300
+    characters, then the pointer. Otherwise the pointer to where it is and
+    its length. At share the pointer names an aliased file; at local and raw
+    the real one."""
     if unit.task is None:
         return ["  TASK      no prompt recorded"]
-    pointer = f"full text: {unit.task.transcript_name}:{unit.task.line_no}"
-    if not redactor.enabled:
-        quoted = unit.task.text[:300]
-        return [f'  TASK      "{quoted}"', f"            {pointer}"]
-    return [f"  TASK      {pointer}", f"            prompt length: {unit.task.length} chars"]
+    pointer = view.pointer(unit.task.transcript_name, unit.task.line_no)
+    if view.show_excerpts and pointer is not None:
+        return [
+            f'  TASK      "{redactor(unit.task.text[:300])}"', f"            full text: {pointer}",
+        ]
+    lines = []
+    if pointer is not None:
+        lines.append(f"  TASK      full text: {pointer}")
+        lines.append(f"            prompt length: {unit.task.length} chars")
+    else:
+        lines.append(f"  TASK      prompt length: {unit.task.length} chars")
+    return lines
 
 
 def _paths_lines(unit: UnitPlan, redactor: Redactor) -> list[str]:
@@ -625,8 +999,8 @@ def _paths_lines(unit: UnitPlan, redactor: Redactor) -> list[str]:
     return lines
 
 
-def _commits_line(unit: UnitPlan) -> str:
-    ids = ", ".join(unit.commits) if unit.commits else "0"
+def _commits_line(unit: UnitPlan, redactor: Redactor) -> str:
+    ids = ", ".join(redactor(commit) for commit in unit.commits) if unit.commits else "0"
     return f"  COMMITS   reported by these attempts: {ids}"
 
 
@@ -635,13 +1009,18 @@ def _in_flight_lines(unit: UnitPlan, redactor: Redactor) -> list[str]:
         return []
     lines = []
     for index, entry in enumerate(unit.in_flight):
-        tool = entry.tool or "tool"
+        tool = redactor(entry.tool or "tool")
         path_display = redactor(entry.display_key) if entry.display_key else "(no path)"
         text = f"{tool} {path_display} (no result recorded)"
         prefix = "  IN FLIGHT at the kill: " if index == 0 else _PATH_INDENT
         lines.append(prefix + text)
     return lines
 
+
+_UNKNOWN_GROUP_SENTENCE = (
+    "(repo state not seen for some of this unit's attempts: a shell command or an "
+    "unobserved path may hide what they wrote)"
+)
 
 _UNKNOWN_SENTENCE = (
     "whose content is in the dirty paths; whether the task's goal was reached; "
@@ -657,18 +1036,23 @@ def _unknown_lines(unit: UnitPlan, plan: RescuePlan, redactor: Redactor) -> list
     # at all (facts is None) is its own, distinct UNKNOWN reason.
     if unit.facts_unknown:
         lines.append("            UNKNOWN facts: transcript missing")
+    if unit.unknown_group and plan.checked:
+        # (when nothing was checked, the line above already says the state was not seen)
+        lines.append(f"            {_UNKNOWN_GROUP_SENTENCE}")
     return lines
 
 
-def _checks_line(plan: RescuePlan, redactor: Redactor) -> str:
-    if plan.declared_checks:
+def _checks_line(unit: UnitPlan, plan: RescuePlan, redactor: Redactor) -> str:
+    if unit.declared_checks:
         # docs/DESIGN.md 4.11/5.1 (F7 hardening): a declared check's own
         # text gets its own check-N pseudonym by default -- the whole
         # command hidden, not merely a path embedded inside it.
-        joined = "; ".join(redactor.names.check(check) for check in plan.declared_checks)
+        joined = "; ".join(redactor.check_text(check) for check in unit.declared_checks)
+        if len(unit.repos) > 1:
+            return f"  CHECKS    declared across {len(unit.repos)} repositories: {joined}"
         return f"  CHECKS    declared for this repo: {joined}"
     if plan.checked and plan.repo_root:
-        repo_display = plan.repo_root if not redactor.enabled else "this repository"
+        repo_display = plan.repo_root if redactor.level == "raw" else "this repository"
         return (
             f'  CHECKS    no checks declared for {repo_display}: add [[repos]] to the '
             "config, see docs"
@@ -679,44 +1063,80 @@ def _checks_line(plan: RescuePlan, redactor: Redactor) -> str:
     )
 
 
-def _steps_lines(unit: UnitPlan, plan: RescuePlan, redactor: Redactor) -> list[str]:
+def _step_paths(unit: UnitPlan, plan: RescuePlan) -> tuple[list[PathRow], str]:
+    """The rows the `git status`/`git diff` steps name, and the note that goes
+    with them. Dirty paths always; when the repo state was not checked at all,
+    every path written; a path whose group was refused or not checked is listed
+    too, since nothing looked at it."""
     dirty = [row for row in unit.paths if row.state == observe.DIRTY_NOW]
-    unchecked_note = ""
-    if dirty:
-        step_paths = dirty
-    elif unit.paths and not plan.checked:
-        step_paths = unit.paths
-        unchecked_note = "   (repo state not checked; every path written is listed)"
-    else:
-        step_paths = []
+    if not plan.checked and unit.paths:
+        return (dirty or list(unit.paths)), (
+            "" if dirty else "   (repo state not checked; every path written is listed)"
+        )
+    unchecked = [row for row in unit.paths if row.unchecked]
+    listed = [
+        row for row in unit.paths if row.state == observe.DIRTY_NOW or row.unchecked
+    ]
+    if unchecked and listed:
+        return listed, "   (repo state not checked for some paths; those are listed too)"
+    return dirty, ""
+
+
+def _run_check_text(unit: UnitPlan, redactor: Redactor) -> str:
+    """The `[decide]` step that runs the unit's declared checks: from the repo root for
+    one repository, from each repository's own root for several."""
+    joined = "; ".join(redactor.check_text(check) for check in unit.declared_checks)
+    if len(unit.repos) > 1:
+        return f"run the declared checks, each from its own repository root: {joined}"
+    return f"run the declared check from the repo root: {joined}"
+
+
+def _steps_lines(unit: UnitPlan, plan: RescuePlan, redactor: Redactor) -> list[str]:
+    step_paths, unchecked_note = _step_paths(unit, plan)
 
     if not step_paths and plan.checked:
         # Observation ran and nothing the killed attempts wrote is dirty
         # now: there is nothing to inspect, keep, or commit. Say so instead
-        # of printing commands with no paths.
-        lines = [
-            "  STEPS",
-            "   1. [look]   no path is dirty now: what the killed attempts wrote is "
-            "committed (CLEAN_NOW) or absent (MISSING_NOW); see PATHS",
-        ]
+        # of printing commands with no paths. A unit whose attempts sit in a
+        # refused or unobserved group (N5 fix 1, S1) is never told that: what
+        # it wrote was not seen.
+        if unit.unknown_group:
+            first = (
+                "   1. [look]   no path was observed for this unit: a shell command or an "
+                "unobserved repository may hide what it wrote; run git status --short in the "
+                "repository the agent worked in"
+            )
+        else:
+            first = (
+                "   1. [look]   no path is dirty now: what the killed attempts wrote is "
+                "committed (CLEAN_NOW) or absent (MISSING_NOW); see PATHS"
+            )
+        lines = ["  STEPS", first]
         if plan.possibly_live:
             return lines
-        if plan.declared_checks:
+        if unit.declared_checks:
             lines.append(
-                "   2. [decide] run the declared check from the repo root: "
-                + "; ".join(redactor.names.check(check) for check in plan.declared_checks)
+                f"   2. [decide] {_run_check_text(unit, redactor)}"
             )
         else:
             lines.append("   2. [decide] declare a check first")
         lines.append("   3. [decide] relaunch the remaining work")
         return lines
 
-    path_str = " ".join(redactor(row.display_key) for row in step_paths) if step_paths else "<none>"
+    # docs/DESIGN.md 4.11 (K4.1): a unit with no path to name gets both whole-tree commands, no
+    # pathspec; the literal `<none>` is never printed.
+    if step_paths:
+        path_str = " ".join(redactor(row.display_key) for row in step_paths)
+        status_command = f"git status --short -- {path_str}{unchecked_note}"
+        diff_command = f"git diff -- {path_str}"
+    else:
+        status_command = "git status --short"
+        diff_command = "git diff"
 
     lines = [
         "  STEPS",
-        f"   1. [look]   git status --short -- {path_str}{unchecked_note}",
-        f"   2. [look]   git diff -- {path_str}",
+        f"   1. [look]   {status_command}",
+        f"   2. [look]   {diff_command}",
     ]
     # docs/DESIGN.md 4.11 (LIVE rule): a possibly-live run only ever gets the
     # two read-only look steps -- committing, relaunching, or even deciding
@@ -725,10 +1145,8 @@ def _steps_lines(unit: UnitPlan, plan: RescuePlan, redactor: Redactor) -> list[s
     if plan.possibly_live:
         return lines
 
-    if plan.declared_checks:
-        check_text = "run the declared check from the repo root: " + "; ".join(
-            redactor.names.check(check) for check in plan.declared_checks
-        )
+    if unit.declared_checks:
+        check_text = _run_check_text(unit, redactor)
     else:
         check_text = "declare a check first"
 
@@ -746,25 +1164,29 @@ def _never_line() -> str:
     return "  NEVER  git checkout / restore / reset / stash / clean on these paths"
 
 
-def _render_unit_text(unit: UnitPlan, plan: RescuePlan, redactor: Redactor) -> str:
+def _render_unit_text(
+    unit: UnitPlan, plan: RescuePlan, redactor: Redactor, view: "report.EvidenceView",
+) -> str:
     lines = [_unit_header_line(unit, redactor)]
-    lines.extend(_task_lines(unit, redactor))
+    lines.extend(_task_lines(unit, view, redactor))
     lines.append(f"  REPORTED  {_reported_text(unit.reported, redactor)}")
     lines.extend(_paths_lines(unit, redactor))
-    lines.append(_commits_line(unit))
+    lines.append(_commits_line(unit, redactor))
     lines.extend(_in_flight_lines(unit, redactor))
     lines.extend(_unknown_lines(unit, plan, redactor))
-    lines.append(_checks_line(plan, redactor))
+    lines.append(_checks_line(unit, plan, redactor))
     lines.extend(_steps_lines(unit, plan, redactor))
     lines.append(_never_line())
-    return "\n".join(redactor(line) for line in lines)
+    # every piece above was scanned where it entered the line; an assembled line is not scanned
+    # again, because a path hides the rest of its line (docs/DESIGN.md 5.1)
+    return "\n".join(lines)
 
 
 def _brief_text(plan: RescuePlan, redactor: Redactor) -> str:
     killed_parts = []
     for row in plan.killed_brief:
         label = redactor.names.agent(row["label"])
-        time_str = row["time"] or "unknown time"
+        time_str = redactor(row["time"]) if row["time"] else "unknown time"
         silence = row["silence_seconds"]
         silence_str = f"{int(silence)}s" if silence is not None else "unknown"
         killed_parts.append(
@@ -775,70 +1197,116 @@ def _brief_text(plan: RescuePlan, redactor: Redactor) -> str:
     failed_parts = []
     for row in plan.failed_brief:
         label = redactor.names.agent(row["label"])
-        cause_phrase = report._cause_phrase(row["cause"])
-        piece = f"{label}: {cause_phrase}, retry_now {row['retry_now']}"
+        cause_phrase = redactor(report._cause_phrase(row["cause"]))
+        piece = f"{label}: {cause_phrase}, retry_now {_piece(redactor, row['retry_now'])}"
         if row["reset_time"]:
-            piece += f", resets {row['reset_time']}"
+            piece += f", resets {redactor(row['reset_time'])}"
         failed_parts.append(piece)
     failed_text = "; ".join(failed_parts) if failed_parts else "none"
 
     paths = [redactor(path) for path in plan.already_exists_paths]
-    commits = list(plan.already_exists_commits)
-    exists_bits = []
-    if paths:
-        exists_bits.append(f"{len(paths)} paths ({', '.join(paths)})")
-    else:
-        exists_bits.append("0 paths")
-    if commits:
-        exists_bits.append(f"{len(commits)} commits ({', '.join(commits)})")
-    else:
-        exists_bits.append("0 commits")
+    commits = [redactor(commit) for commit in plan.already_exists_commits]
+    # docs/DESIGN.md 4.11, 4.13.1 (N5c-2): a commit id is a summary-shaped output
+    # line the tool has not confirmed, so the brief says commits were reported, never
+    # that they exist.
+    paths_text = f"{len(paths)} paths ({', '.join(paths)})" if paths else "0 paths"
+    commits_text = (
+        f"commits reported: {len(commits)} ({', '.join(commits)})" if commits
+        else "commits reported: 0"
+    )
 
     lines = [
         "BRIEF FOR A RELAUNCH",
         f"  killed: {killed_text}   failed: {failed_text}",
-        f"  already exists: {', '.join(exists_bits)}",
+        f"  already exists: {paths_text}; {commits_text}",
         "  start from what exists; do not redo it",
-        "  caveat: resume re-runs downstream agents after a parallel fan-out "
-        "(anthropics/claude-code #95076)",
     ]
-    return "\n".join(redactor(line) for line in lines)
+    # docs/DESIGN.md 4.11 (K4.2): only when two attempts of different keys overlapped in time.
+    if plan.fan_out_overlap:
+        lines.append(
+            "  caveat: resume re-runs downstream agents after a parallel fan-out "
+            "(anthropics/claude-code #95076)"
+        )
+    return "\n".join(lines)
 
 
-_LIVE_LINE = (
-    "POSSIBLY LIVE: do not modify files in this repo. Confirm with the human "
-    "that the run has stopped."
+_NOTHING_YET = (
+    "NOTHING TO RESCUE YET: the run has not finished and no attempt was killed or failed."
+)
+
+# docs/DESIGN.md 4.11 (field milestone F, FB3): the first line of `rescue plan` text on a
+# possibly-live run, one of three, by who may still be writing.
+_NOTHING_YET_LIVE = (
+    "NOTHING TO RESCUE YET: the run may still be running; no attempt has been killed or "
+    "failed so far."
+)
+
+_LIVE_OTHER = (
+    "POSSIBLY LIVE: the run may still be running, and another agent may be writing the files "
+    "listed below. Do not modify them until it has stopped; confirm with the human."
+)
+
+_LIVE_OWN = (
+    "YOUR CURRENT SESSION: this run is the session you are working in. Check the files listed "
+    "below yourself before relaunching the killed work."
 )
 
 
-def render_plan_text(run: Run, plan: RescuePlan, redactor: Redactor) -> str:
-    _register_plan_names(run, redactor)
-    _register_plan_paths(plan, redactor)
+def _is_callers_session(run: Run, caller_session: str | None) -> bool:
+    """FB3: a SESSION run whose transcript stem equals the caller's own session id (a
+    canonical UUID, compared in lowercase). A workflow run is never the caller's session,
+    even one its session launched: its workers may still be writing."""
+    return (
+        caller_session is not None
+        and run.kind == "session"
+        and run.path.stem.lower() == caller_session.lower()
+    )
+
+
+def render_plan_text(
+    run: Run, plan: RescuePlan, redactor: Redactor, *, evidence: bool = False,
+    caller_session: str | None = None,
+) -> str:
+    _register_plan_names(run, redactor, detailed=True)
+    _register_plan_paths(plan, redactor, run)
+    view = report.EvidenceView(run, redactor, show_excerpts=evidence)
 
     blocks: list[str] = []
-    if plan.possibly_live:
-        blocks.append(_LIVE_LINE)
+    if evidence and view.note() is not None:
+        blocks.append(view.note())
+    if plan.possibly_live and plan.units:
+        # FB3: who may still be writing the listed files decides the wording.
+        blocks.append(_LIVE_OWN if _is_callers_session(run, caller_session) else _LIVE_OTHER)
     if plan.nothing_to_rescue:
         # docs/DESIGN.md 4.11: "every attempt completed" is a claim about a
         # finished run. A possibly-live run with no qualifying unit yet is a
         # different, honest claim -- nothing has needed rescuing SO FAR, not
-        # that everything is done -- so it gets only the LIVE line above,
-        # never this sentence.
-        if not plan.possibly_live:
+        # that everything is done -- so it gets its own sentence (FB3), never
+        # the cheerful one and never a do-not-modify warning with no file to protect.
+        if plan.possibly_live:
+            blocks.append(_NOTHING_YET_LIVE)
+        else:
             if plan.nothing_to_rescue_ok:
                 blocks.append("NOTHING TO RESCUE: every attempt completed.")
             else:
                 # F6 hardening: an unfinished run (or one with an attempt
                 # that is neither completed nor killed/failed/superseded)
                 # has no qualifying unit YET, not because it is done.
-                blocks.append(
-                    "NOTHING TO RESCUE YET: the run has not finished and no "
-                    "attempt was killed or failed."
-                )
+                blocks.append(_NOTHING_YET)
+        return "\n".join(blocks) + "\n"
+
+    if plan.unchecked_attempts is not None:
+        # N8 fix 1, S2: no unit, but the risk population is not empty or not complete
+        if plan.possibly_live:
+            # unreachable from the CLI (an unchecked population needs a finished run); a
+            # hand-built plan keeps the warning rather than printing nothing
+            blocks.append(_LIVE_OTHER)
+        else:
+            blocks.append(redactor(_unchecked_sentence(plan.unchecked_attempts, plan.run_id)))
         return "\n".join(blocks) + "\n"
 
     for unit in plan.units:
-        blocks.append(_render_unit_text(unit, plan, redactor))
+        blocks.append(_render_unit_text(unit, plan, redactor, view))
 
     if not plan.possibly_live:
         blocks.append(_brief_text(plan, redactor))
@@ -849,11 +1317,33 @@ def render_plan_text(run: Run, plan: RescuePlan, redactor: Redactor) -> str:
 # --- JSON rendering -----------------------------------------------------
 
 
-def _export_path_row(row: PathRow, redactor: Redactor) -> dict:
+def _export_path_row(row: PathRow, redactor: Redactor, view: "report.EvidenceView") -> dict:
+    """docs/DESIGN.md 5.3b: observation state and ledger facts in separate
+    fields. `group` is the index of the path's group in the plan's `groups`
+    array (None when no group lists the path); `observation` is the path's own
+    observation, null when its group was refused, unknown, or not checked (N5c-1);
+    `ledger` is the list of this path's ledger entries in attempt order, `[]`
+    when none names it."""
     return {
         "path": redactor(row.display_key),
-        "state": row.state,
-        "reason": redactor(row.state_reason) if row.state_reason else None,
+        "group": row.group,
+        "observation": (
+            {
+                "state": row.state,
+                "reason": redactor(row.state_reason) if row.state_reason else None,
+            }
+            if row.observation is not None else None
+        ),
+        "ledger": [
+            {
+                "attempt": ordinal,
+                "effect": entry.effect,
+                "basis": entry.basis,
+                "completion": entry.completion,
+                "line": view.ledger_line(entry.line),
+            }
+            for ordinal, entry in row.ledger
+        ],
         "attempts": row.attempt_ordinals,
         "later_write_observed": row.later_write,
     }
@@ -875,42 +1365,52 @@ def _export_reported(reported: dict | None, redactor: Redactor) -> dict | None:
                 # renderer's _format_claim_value.
                 exported_claims[key] = value if not redactor.enabled else "set"
             else:
-                exported_claims[key] = value
+                # a number, a bool, or a list of commit ids: every string in it is scanned
+                exported_claims[key] = report.redact_value(value, redactor)
         return {"type": "dict", "claims": exported_claims}
     return None
 
 
-def _export_unit(unit: UnitPlan, plan: RescuePlan, redactor: Redactor) -> dict:
+def _export_unit(
+    unit: UnitPlan, plan: RescuePlan, redactor: Redactor, view: "report.EvidenceView",
+) -> dict:
     task = None
     if unit.task is not None:
+        # docs/DESIGN.md 5.3b: the pointer follows the `line` convention (null
+        # for an attempt with no canonical agent id at share); `text` exists
+        # only at local and raw with --evidence, structurally redacted there.
         task = {
-            "pointer": f"{unit.task.transcript_name}:{unit.task.line_no}",
+            "pointer": view.pointer(unit.task.transcript_name, unit.task.line_no),
             "length": unit.task.length,
-            "text": unit.task.text[:300] if not redactor.enabled else None,
         }
+        if view.show_excerpts:
+            task["text"] = redactor(unit.task.text[:300])
     unknown = [_UNKNOWN_SENTENCE]
     if not plan.checked and plan.observation_reason:
         unknown.append(redactor(plan.observation_reason))
     if unit.facts_unknown:
         unknown.append("UNKNOWN facts: transcript missing")
+    if unit.unknown_group and plan.checked:
+        unknown.append(_UNKNOWN_GROUP_SENTENCE)
 
-    dirty = [row for row in unit.paths if row.state == observe.DIRTY_NOW]
-    step_paths = dirty if dirty else (unit.paths if not plan.checked else [])
+    step_paths, _note = _step_paths(unit, plan)
     path_str = " ".join(redactor(row.display_key) for row in step_paths) if step_paths else None
+    # docs/DESIGN.md 4.11 (K4.1): both look commands are always non-null strings, the
+    # whole-tree forms when no path is named.
     steps = [
         {"grade": "look", "text": "git status", "command":
-            f"git status --short -- {path_str}" if path_str else None},
+            f"git status --short -- {path_str}" if path_str else "git status --short"},
         {"grade": "look", "text": "git diff", "command":
-            f"git diff -- {path_str}" if path_str else None},
+            f"git diff -- {path_str}" if path_str else "git diff"},
     ]
     # docs/DESIGN.md 4.11 (LIVE rule): steps 3-6 (decide/commit/relaunch) are
     # never offered for a possibly-live run, in JSON any more than in text.
     if not plan.possibly_live:
-        if plan.declared_checks:
+        if unit.declared_checks:
             check_command = "; ".join(
-                redactor.names.check(check) for check in plan.declared_checks
+                redactor.check_text(check) for check in unit.declared_checks
             )
-            step3_text = f"run the declared check from the repo root: {check_command}"
+            step3_text = _run_check_text(unit, redactor)
         else:
             check_command = None
             step3_text = "declare a check first"
@@ -930,27 +1430,33 @@ def _export_unit(unit: UnitPlan, plan: RescuePlan, redactor: Redactor) -> dict:
         "end": unit.last_end_word,
         "task": task,
         "reported": _export_reported(unit.reported, redactor),
-        "paths": [_export_path_row(row, redactor) for row in unit.paths],
-        "commits": list(unit.commits),
+        "paths": [_export_path_row(row, redactor, view) for row in unit.paths],
+        "commits": [redactor(commit) for commit in unit.commits],
         "in_flight": [
-            {"tool": entry.tool, "path": redactor(entry.display_key) if entry.display_key else None}
+            {
+                "tool": _piece(redactor, entry.tool),
+                "path": redactor(entry.display_key) if entry.display_key else None,
+            }
             for entry in unit.in_flight
         ],
         "unknown": unknown,
-        "checks": [redactor.names.check(check) for check in plan.declared_checks],
+        "checks": [redactor.check_text(check) for check in unit.declared_checks],
         "steps": steps,
     }
 
 
-def plan_to_json(run: Run, plan: RescuePlan, redactor: Redactor) -> dict:
-    _register_plan_names(run, redactor)
-    _register_plan_paths(plan, redactor)
+def plan_to_json(
+    run: Run, plan: RescuePlan, redactor: Redactor, *, evidence: bool = False,
+) -> dict:
+    _register_plan_names(run, redactor, detailed=True)
+    _register_plan_paths(plan, redactor, run)
+    view = report.EvidenceView(run, redactor, show_excerpts=evidence)
 
     killed = [
         {
             "agent": redactor.names.agent(row["label"]),
             "ordinal": row["ordinal"],
-            "time": row["time"],
+            "time": _piece(redactor, row["time"]),
             "silence_seconds": row["silence_seconds"],
         }
         for row in plan.killed_brief
@@ -958,9 +1464,9 @@ def plan_to_json(run: Run, plan: RescuePlan, redactor: Redactor) -> dict:
     failed = [
         {
             "agent": redactor.names.agent(row["label"]),
-            "cause": row["cause"],
-            "retry_now": row["retry_now"],
-            "reset_time": row["reset_time"],
+            "cause": _piece(redactor, row["cause"]),
+            "retry_now": _piece(redactor, row["retry_now"]),
+            "reset_time": _piece(redactor, row["reset_time"]),
         }
         for row in plan.failed_brief
     ]
@@ -969,19 +1475,29 @@ def plan_to_json(run: Run, plan: RescuePlan, redactor: Redactor) -> dict:
         "failed": failed,
         "already_exists": {
             "paths": [redactor(path) for path in plan.already_exists_paths],
-            "commits": list(plan.already_exists_commits),
+            "commits": [redactor(commit) for commit in plan.already_exists_commits],
         },
     }
 
     return {
         "schema": SCHEMA_VERSION,
+        "disclosure": redactor.level,
         "run": {
             "run_id": plan.run_id, "kind": plan.kind, "finished": plan.finished,
             "possibly_live": plan.possibly_live,
         },
         "nothing_to_rescue": plan.nothing_to_rescue,
-        "units": [_export_unit(unit, plan, redactor) for unit in plan.units],
-        "brief": brief if (not plan.possibly_live and not plan.nothing_to_rescue) else None,
+        "groups": (
+            report.export_observation_groups(plan.observation, redactor, omit_empty_unknown=True)
+            if plan.observation is not None else []
+        ),
+        "units": [_export_unit(unit, plan, redactor, view) for unit in plan.units],
+        "brief": (
+            brief if (
+                not plan.possibly_live and not plan.nothing_to_rescue
+                and plan.unchecked_attempts is None
+            ) else None
+        ),
         "exit_code": plan.exit_code,
     }
 
@@ -996,6 +1512,7 @@ class NotCountedRow:
     line_no: int
     reason: str
     excerpt: str
+    category: str = "command"  # fixed text from code; never transcript bytes
 
 
 @dataclass
@@ -1010,6 +1527,7 @@ class CountedRun:
 class NeverRow:
     line_no: int
     excerpt: str
+    category: str = "command"  # the matched rule's own spelling, e.g. "git checkout"
 
 
 @dataclass
@@ -1028,6 +1546,9 @@ class UnitStatus:
     # etc.) elsewhere are unaffected; a renderer appends "NEVER_COMMAND_
     # OBSERVED" to the displayed word when this is true.
     never_command_observed: bool = False
+    # docs/DESIGN.md 4.11 (N5c-2): the declared repository this row is about (None for a
+    # unit no declared repository contains).
+    repo: str | None = None
 
 
 @dataclass
@@ -1041,10 +1562,38 @@ class RescueStatus:
     repo_root: str | None
     exit_code: int = 0
     listed_paths: tuple[str, ...] = ()  # display keys of every unit's candidate paths
+    # docs/DESIGN.md 4.11 (K4.3): with no unit, true only for a finished run whose every attempt
+    # completed (the one predicate `rescue plan` uses).
+    nothing_to_rescue_ok: bool = False
+    # N8 fix 1, S2: see RescuePlan.unchecked_attempts.
+    unchecked_attempts: int | None = None
 
 
 def _never_list_match(command: str) -> bool:
     return bool(_NEVER_LIST_RE.search(command))
+
+
+def _never_category(command: str) -> str:
+    """The matched NEVER rule's own canonical spelling (`git checkout`),
+    built from the rule's fixed vocabulary, never from the transcript's
+    bytes (N3b C1). A command that matches no rule gets the fixed word
+    `command`."""
+    match = _NEVER_LIST_RE.search(command)
+    if match is None:
+        return "command"
+    return f"git {match.group(1)}"
+
+
+def _matched_check(command: str, declared_checks: list[str]) -> str | None:
+    """The declared check this command is, or merely contains: an exact (trailing
+    whitespace stripped) match first, else the first one it contains."""
+    stripped = command.rstrip()
+    if stripped in declared_checks:
+        return stripped
+    for check in declared_checks:
+        if check in command:
+            return check
+    return None
 
 
 def _classify_bash_call(call, declared_checks: list[str], repo_root: str | None):
@@ -1053,15 +1602,12 @@ def _classify_bash_call(call, declared_checks: list[str], repo_root: str | None)
     'compound command', 'backgrounded', 'no result' -- docs/DESIGN.md 4.11's
     exact vocabulary. matched_check is the declared check string this call's
     command contains, or None when it contains none of them at all (the call
-    is then irrelevant and never listed)."""
+    is then irrelevant and never listed). `repo_root` is the declared repository
+    the checks belong to: a call counts only at its exact working directory."""
     command = call.command
     if not command:
         return None, None
-    matched = None
-    for check in declared_checks:
-        if check in command:
-            matched = check
-            break
+    matched = _matched_check(command, declared_checks)
     if matched is None:
         return None, None
 
@@ -1085,6 +1631,49 @@ def _classify_bash_call(call, declared_checks: list[str], repo_root: str | None)
     return matched, None
 
 
+_WRITE_SHELL_TOOLS = ("Bash", "Monitor")
+_WRITE_FILE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+
+
+def _file_tool_path(call) -> str | None:
+    """The target a file-tool call named: MultiEdit keeps it in `multiedit_path`
+    (4.13.1), the other file tools in `path`."""
+    path = call.multiedit_path if call.tool_name == "MultiEdit" else call.path
+    return path if isinstance(path, str) and path else None
+
+
+def _shell_cwd(call) -> str | None:
+    """The working directory a shell call's later segments run in (4.13.1, L9): the call's
+    own absolute cwd, replaced by a literal absolute leading `cd DIR &&`; None when it is
+    missing, relative, or changed by any other shape (an opaque, unrecorded, or later cd)."""
+    if not call.command:
+        return None
+    lexed = commands.lex(call.command)
+    if not lexed.placed or not lexed.segments:
+        return None
+    bases = commands.segment_bases(lexed, call.cwd)
+    start = 1 if commands.cd_operand(lexed.segments[0]) is not None else 0
+    rest = bases[start:] or bases[:1]
+    if any(base is None for base in rest):
+        return None
+    return rest[0]
+
+
+def _write_order(call) -> tuple:
+    return (call.ts or _MIN_TS, call.line_no)
+
+
+def _file_write_key(call) -> str:
+    """The absolute, normalized spelling of a file-tool call's target, or its own text when
+    nothing places it."""
+    path = _file_tool_path(call) or ""
+    if path.startswith("/"):
+        return commands.normalize_path(path)
+    if isinstance(call.cwd, str) and call.cwd.startswith("/"):
+        return commands.normalize_path(os.path.join(call.cwd, path))
+    return path
+
+
 def build_status(run: Run, cfg: config_module.Config, observation) -> RescueStatus:
     parent_path = reader._parent_transcript_path(run)
     transcript_unknown = False
@@ -1104,11 +1693,23 @@ def build_status(run: Run, cfg: config_module.Config, observation) -> RescueStat
         if ended_at is None or (call.ts is not None and call.ts > ended_at)
     ]
 
-    declared_checks = []
-    if observation.checked and observation.repo_root:
-        declared_checks = config_module.checks_for_repo(cfg, observation.repo_root)
+    # docs/DESIGN.md 4.11 (N5c-2, plan S7): everything below is per (unit, declared
+    # repository). The roots are the configuration's own, lexical, never from git.
+    roots = declared_roots(cfg)
+    units = qualifying_units(run)
+    unit_rows = []  # (unit, listed spellings, target -> owning roots, repos)
+    relevant_roots: list[str] = []
+    for unit in units:
+        specs = _row_specs(unit, observation)
+        owners = _target_owners(specs, roots)
+        repos = _unit_repos(owners)
+        for root in repos:
+            if root not in relevant_roots:
+                relevant_roots.append(root)
+        unit_rows.append((unit, _listed_spellings(unit), owners, repos))
 
-    counted: list[CountedRun] = []
+    counted: dict[str, list[CountedRun]] = {root: [] for root in relevant_roots}
+    counted_call_ids: set[int] = set()
     not_counted: list[NotCountedRow] = []
     never_matches: list[NeverRow] = []
 
@@ -1116,141 +1717,157 @@ def build_status(run: Run, cfg: config_module.Config, observation) -> RescueStat
         if call.tool_name != "Bash" or not call.command:
             continue
         if _never_list_match(call.command):
-            never_matches.append(NeverRow(line_no=call.line_no, excerpt=call.command[:400]))
-        matched, reason = _classify_bash_call(call, declared_checks, observation.repo_root)
-        if matched is None:
+            never_matches.append(NeverRow(
+                line_no=call.line_no, excerpt=call.command[:400],
+                category=_never_category(call.command),
+            ))
+        counted_somewhere = False
+        first_reason = None
+        for root in relevant_roots:
+            matched, reason = _classify_bash_call(call, roots[root], root)
+            if matched is None:
+                continue
+            if reason is None:
+                counted[root].append(CountedRun(
+                    line_no=call.line_no, ts=call.ts, command=matched,
+                    completion=call.completion,
+                ))
+                counted_somewhere = True
+                counted_call_ids.add(id(call))
+            elif first_reason is None:
+                first_reason = reason
+        if not counted_somewhere and first_reason is not None:
+            not_counted.append(NotCountedRow(
+                line_no=call.line_no, reason=first_reason, excerpt=call.command[:400],
+                category=_never_category(call.command),
+            ))
+
+    for root in relevant_roots:
+        counted[root].sort(key=lambda c: (c.ts or _MIN_TS, c.line_no))
+
+    # docs/DESIGN.md 4.11 (F3 hardening, N5c-2): a shell call that is not proven read-only
+    # is a possible write. It belongs to the one declared repository that owns its working
+    # directory (after a literal absolute leading cd); a call whose directory is missing,
+    # unknown, or owned by no declared root may have written in every repository of the run
+    # (fail closed). Only a call counted as a declared check for some repository is skipped
+    # (N5 fix 1, C1): a call that merely contains a check string but was rejected (other
+    # cwd, compound, backgrounded, no result, ambiguous id) is a possible write like any other.
+    shell_writes: list[tuple[tuple, object, frozenset[str]]] = []
+    for call in relevant_calls:
+        if call.tool_name not in _WRITE_SHELL_TOOLS:
             continue
-        if reason is None:
-            counted.append(CountedRun(
-                line_no=call.line_no, ts=call.ts, command=matched, completion=call.completion,
-            ))
-        else:
-            not_counted.append(NotCountedRow(
-                line_no=call.line_no, reason=reason, excerpt=call.command[:400],
-            ))
+        if id(call) in counted_call_ids:
+            continue
+        if call.command and _proven_read_only(call.command):
+            continue
+        cwd = _shell_cwd(call)
+        owner = _owner(cwd, roots) if cwd is not None else None
+        affected = frozenset({owner}) if owner is not None else frozenset(relevant_roots)
+        shell_writes.append((_write_order(call), call, affected))
 
-    counted.sort(key=lambda c: (c.ts or _MIN_TS, c.line_no))
-    last_counted = counted[-1] if counted else None
+    file_writes = [
+        call for call in relevant_calls
+        if call.tool_name in _WRITE_FILE_TOOLS and call.completion == "completed_ok"
+        and _file_tool_path(call)
+    ]
 
-    # docs/DESIGN.md 4.11 (F3 hardening): after the last counted check run,
-    # ANY Bash call whose command is not proven read-only counts as a
-    # possible write to the repository -- not only Edit/Write/NotebookEdit
-    # to one of this unit's own listed paths (the per-unit loop below still
-    # covers that). Skipped when the call already matched a declared check
-    # substring (it is then already accounted for, with its own reason,
-    # by the loop above) so the same call is never listed twice.
-    bash_write_count = 0
-    if last_counted is not None:
-        last_order = (last_counted.ts or _MIN_TS, last_counted.line_no)
-        for call in relevant_calls:
-            if call.tool_name != "Bash" or not call.command:
-                continue
-            call_order = (call.ts or _MIN_TS, call.line_no)
-            if call_order <= last_order:
-                continue
-            matched, _reason = _classify_bash_call(call, declared_checks, observation.repo_root)
-            if matched is not None:
-                continue
-            if _proven_read_only(call.command):
-                continue
-            bash_write_count += 1
-            not_counted.append(NotCountedRow(
-                line_no=call.line_no,
-                reason="a Bash command that may write ran after the check",
-                excerpt=call.command[:400],
-            ))
-
-    global_cwd = observe._discover_cwd(run) if observation.checked else None
-    units = qualifying_units(run)
+    flagged_shell_calls: set[int] = set()
     unit_statuses: list[UnitStatus] = []
     all_listed: list[str] = []
-    for unit in units:
-        order, _writers = _unit_candidate_paths(unit)
+    global_cwd = observe._discover_cwd(run) if observation.checked else None
+    for unit, spellings, owners, repos in unit_rows:
         listed_keys = {
             _display_key(raw, global_cwd, observation.repo_root) if observation.checked else raw
-            for raw in order
+            for raw in spellings
         }
         all_listed.extend(key for key in listed_keys if key not in all_listed)
 
-        if last_counted is None:
-            word = "NOT_OBSERVED"
-        elif last_counted.completion == "completed_ok":
-            word = "EXIT_0_OBSERVED"
-        else:
-            word = "NONZERO_OBSERVED"
-
-        writes_after = 0
-        write_events = []
-        for call in relevant_calls:
-            if call.tool_name not in ("Edit", "Write", "NotebookEdit"):
-                continue
-            if call.completion != "completed_ok" or not call.path:
-                continue
-            if observation.checked:
-                key = _display_key(call.path, call.cwd, observation.repo_root)
+        for repo in (repos or [None]):
+            counted_here = counted.get(repo, []) if repo is not None else []
+            last_counted = counted_here[-1] if counted_here else None
+            if last_counted is None:
+                word = "NOT_OBSERVED"
+            elif last_counted.completion == "completed_ok":
+                word = "EXIT_0_OBSERVED"
             else:
-                key = call.path
-            if key not in listed_keys:
-                continue
-            write_events.append(call)
-            call_order = (call.ts or _MIN_TS, call.line_no)
-            last_order = None
+                word = "NONZERO_OBSERVED"
+
+            writes: list[tuple] = []
+            shell_after: list[object] = []
+            if repo is not None:
+                for call in file_writes:
+                    if repo in owners.get(_file_write_key(call), ()):
+                        writes.append(_write_order(call))
+                for order_key, call, affected in shell_writes:
+                    if repo in affected:
+                        writes.append(order_key)
+                        shell_after.append((order_key, call))
+
+            writes_after = 0
             if last_counted is not None:
                 last_order = (last_counted.ts or _MIN_TS, last_counted.line_no)
-            if last_order is not None and call_order > last_order:
-                writes_after += 1
+                writes_after = sum(1 for key in writes if key > last_order)
+                for order_key, call in shell_after:
+                    if order_key > last_order:
+                        flagged_shell_calls.add(id(call))
 
-        # F3 hardening: a possible write is a possible write to THE
-        # REPOSITORY, not attributable to one unit's own candidate paths --
-        # so it counts for every unit alike, the same way never_matches
-        # already applies transcript-wide rather than per unit.
-        writes_after += bash_write_count
+            # cycles: a counted run preceded, since the previous counted run, by at least one
+            # write this repository owns.
+            timeline = [((c.ts or _MIN_TS, c.line_no), "check") for c in counted_here]
+            timeline.extend((key, "write") for key in writes)
+            timeline.sort(key=lambda item: (item[0], item[1] == "check"))
+            cycles = 0
+            write_since_last_check = False
+            for _key, kind in timeline:
+                if kind == "write":
+                    write_since_last_check = True
+                else:
+                    if write_since_last_check:
+                        cycles += 1
+                    write_since_last_check = False
 
-        # cycles: a counted run preceded, since the previous counted run, by
-        # at least one observed write to one of this unit's listed paths.
-        timeline: list[tuple] = []
-        for c in counted:
-            timeline.append((c.ts or _MIN_TS, c.line_no, "check", None))
-        for call in write_events:
-            timeline.append((call.ts or _MIN_TS, call.line_no, "write", None))
-        timeline.sort(key=lambda item: (item[0], item[1]))
+            unit_statuses.append(UnitStatus(
+                key=unit.key, label=unit.label,
+                checks_declared=len(roots[repo]) if repo is not None else 0,
+                last_counted=last_counted, word=word, writes_after=writes_after,
+                cycles=cycles, never_command_observed=bool(never_matches), repo=repo,
+            ))
 
-        cycles = 0
-        write_since_last_check = False
-        for _ts, _line, kind, _ in timeline:
-            if kind == "write":
-                write_since_last_check = True
-            elif kind == "check":
-                if write_since_last_check:
-                    cycles += 1
-                write_since_last_check = False
+    listed_lines = {row.line_no for row in not_counted}
+    for _order_key, call, _affected in shell_writes:
+        if id(call) in flagged_shell_calls and call.line_no not in listed_lines:
+            command = call.command or ""
+            not_counted.append(NotCountedRow(
+                line_no=call.line_no,
+                reason="a Bash command that may write ran after the check",
+                excerpt=command[:400],
+                category=_never_category(command),
+            ))
 
-        unit_statuses.append(UnitStatus(
-            key=unit.key, label=unit.label, checks_declared=len(declared_checks),
-            last_counted=last_counted, word=word, writes_after=writes_after, cycles=cycles,
-            never_command_observed=bool(never_matches),
-        ))
-
-    # docs/DESIGN.md 4.11 exit codes: 3 outranks 4 (the same precedence
-    # cli._cmd_run gives a critical finding over a merely-INCOMPLETE status)
-    # -- a check that actually failed is the more actionable signal.
-    exit_code = 0
+    # docs/DESIGN.md 4.11, 4.13.11 (N5c-2), the first condition that applies wins: 3 for
+    # any failed check, ahead of every 4 condition (a NEVER-list match, an unknown
+    # lifecycle, a transcript that could not be read, a check not observed, a write after
+    # a check); else 0.
+    # K4.3: no unit at all exits 0 only for a finished run whose every attempt completed.
+    empty_state, empty_count = empty_unit_state(run) if not unit_statuses else ("yet", 0)
+    empty_not_ok = not unit_statuses and empty_state != "ok"
     if any(u.word == "NONZERO_OBSERVED" for u in unit_statuses):
         exit_code = 3
-    elif transcript_unknown or any(
-        u.word == "NOT_OBSERVED" or u.writes_after > 0 for u in unit_statuses
+    elif (
+        transcript_unknown or never_matches or _lifecycle_unknown(run) or empty_not_ok
+        or any(u.word == "NOT_OBSERVED" or u.writes_after > 0 for u in unit_statuses)
     ):
         exit_code = 4
-    # F3 hardening: any command matching the NEVER list forces exit 4
-    # regardless of everything else -- even a NONZERO_OBSERVED's exit 3.
-    if never_matches:
-        exit_code = 4
+    else:
+        exit_code = 0
 
     return RescueStatus(
         run_id=run.run_id, units=unit_statuses, not_counted=not_counted,
         never_matches=never_matches, transcript_unknown=transcript_unknown,
         checked=observation.checked, repo_root=observation.repo_root,
         exit_code=exit_code, listed_paths=tuple(all_listed),
+        nothing_to_rescue_ok=empty_state == "ok",
+        unchecked_attempts=empty_count if empty_state == "risk" else None,
     )
 
 
@@ -1270,9 +1887,12 @@ def _display_word(unit: UnitStatus) -> str:
     return unit.word
 
 
-def _unit_status_lines(unit: UnitStatus, status: RescueStatus, redactor: Redactor) -> list[str]:
+def _unit_status_lines(
+    unit: UnitStatus, status: RescueStatus, redactor: Redactor, *, evidence: bool = False,
+) -> list[str]:
     agent = redactor.names.agent(unit.label)
-    lines = [f"UNIT {agent}   checks declared: {unit.checks_declared}"]
+    repo_part = f"   repository {redactor.names.path(unit.repo)}" if unit.repo is not None else ""
+    lines = [f"UNIT {agent}{repo_part}   checks declared: {unit.checks_declared}"]
     display_word = _display_word(unit)
     if unit.last_counted is not None:
         exit_word = "0" if unit.last_counted.completion == "completed_ok" else "non-zero"
@@ -1281,7 +1901,7 @@ def _unit_status_lines(unit: UnitStatus, status: RescueStatus, redactor: Redacto
             if unit.last_counted.ts else "unknown"
         )
         lines.append(
-            f"  last counted run: {redactor.names.check(unit.last_counted.command)}  "
+            f"  last counted run: {redactor.check_text(unit.last_counted.command)}  "
             f"exit {exit_word}  at {time_str}      -> {display_word}"
         )
     else:
@@ -1292,40 +1912,30 @@ def _unit_status_lines(unit: UnitStatus, status: RescueStatus, redactor: Redacto
     for row in status.not_counted:
         lines.append(f"  not counted: line {row.line_no}: {row.reason}")
     for row in status.never_matches:
-        excerpt = _display_excerpt(row.excerpt, status, redactor)
+        if evidence and redactor.level != "share":
+            # D-o: v0.2's --no-redact line: the paths replaced the way the
+            # PATHS table spells them at this level, the first 60 characters.
+            excerpt = _pseudonymize_excerpt(row.excerpt, status, redactor)[:60]
+        else:
+            excerpt = row.category
         lines.append(f"  commands matching the NEVER list: line {row.line_no}: {excerpt}")
     return lines
 
 
-def _display_excerpt(excerpt: str, status: RescueStatus, redactor: Redactor) -> str:
-    """docs/DESIGN.md 4.11/5.1 (F7 hardening): by default, only the
-    command's own first word (git, sed, printf) -- the rest of a NEVER-list
-    or not-counted command (its flags, its exact subcommand, an embedded
-    path or prompt fragment) is private and must not appear in default-mode
-    output at all, path-N substitution or not. The full, path-N-substituted
-    60-char excerpt is still available, but only under --no-redact."""
-    if not redactor.enabled:
-        return _pseudonymize_excerpt(excerpt, status, redactor)[:60]
-    parts = excerpt.split()
-    return parts[0] if parts else ""
-
-
 def _pseudonymize_excerpt(excerpt: str, status: RescueStatus, redactor: Redactor) -> str:
-    """Replace every listed path in a command excerpt, in its absolute and
-    repo-relative forms, with the path-N pseudonym the PATHS table uses, so
-    a command echoed from the transcript never shows a real path under the
-    default redaction. Longest paths first, so a path that is a prefix of
-    another is never replaced inside it."""
+    """A command excerpt as `rescue status --evidence` prints it: every listed path, in its
+    display (repo-relative) and absolute spellings, registered in the active path namespace so it
+    prints as the path-N the PATHS table uses (at local the P19 display), and the excerpt then
+    goes through the one free-text scanner (docs/DESIGN.md 5.1). No raw substring replacement:
+    the scanner renders the complete shell word that holds a listed path, so a continuation
+    after an escaped space or a quote is never left behind, and a prefix-related or a second
+    listed path is found independently."""
     if not redactor.enabled:
         return excerpt
-    forms: list[tuple[str, str]] = []
     for display in status.listed_paths:
-        pseudonym = redactor.names.path(display)
-        forms.append((display, pseudonym))
+        redactor.names.path(display)
         if status.repo_root:
-            forms.append((os.path.join(status.repo_root, display), pseudonym))
-    for raw, pseudonym in sorted(forms, key=lambda pair: -len(pair[0])):
-        excerpt = excerpt.replace(raw, pseudonym)
+            redactor.names.alias_path(os.path.join(status.repo_root, display), display)
     return redactor(excerpt)
 
 
@@ -1335,41 +1945,55 @@ def _register_status_paths(run: Run, status: RescueStatus, redactor: Redactor) -
     verbatim on the 'last counted run' line -- is redacted consistently with
     the PATHS table `rescue plan` already prints for the same paths."""
     global_cwd = observe._discover_cwd(run) if status.checked else None
+    cwd = observe._discover_cwd(run)
+    for row in status.units:
+        if row.repo is not None:
+            redactor.names.path(row.repo)
     for unit in qualifying_units(run):
-        order, _writers = _unit_candidate_paths(unit)
-        for raw_path in order:
+        for raw_path in _listed_spellings(unit):
             if status.checked:
                 display = _display_key(raw_path, global_cwd, status.repo_root)
             else:
                 display = raw_path
-            redactor.names.path(display)
+            redactor.names.path(display, cwd, resolve_from=raw_path)
 
 
-def render_status_text(run: Run, status: RescueStatus, redactor: Redactor) -> str:
-    report._register_names(run, redactor)
+def render_status_text(
+    run: Run, status: RescueStatus, redactor: Redactor, *, evidence: bool = False,
+) -> str:
+    report._register_names(run, redactor, detailed=True)
     _register_status_paths(run, status, redactor)
     blocks: list[str] = []
+    if evidence and redactor.level == "share":
+        blocks.append(report.EXCERPT_NOTE)
     if not status.units:
-        blocks.append("NOTHING TO RESCUE: every attempt completed.")
+        if status.unchecked_attempts is not None:
+            blocks.append(_unchecked_sentence(status.unchecked_attempts, status.run_id))
+        elif status.nothing_to_rescue_ok:
+            blocks.append("NOTHING TO RESCUE: every attempt completed.")
+        else:
+            blocks.append(_NOTHING_YET)
     else:
         for unit in status.units:
-            blocks.append("\n".join(_unit_status_lines(unit, status, redactor)))
+            blocks.append("\n".join(_unit_status_lines(unit, status, redactor, evidence=evidence)))
     blocks.append(_FRESHNESS_SENTENCE)
-    text = "\n".join(blocks) + "\n"
-    return "\n".join(redactor(line) for line in text.splitlines()) + "\n"
+    return "\n".join(blocks) + "\n"
 
 
-def status_to_json(run: Run, status: RescueStatus, redactor: Redactor) -> dict:
-    report._register_names(run, redactor)
+def status_to_json(
+    run: Run, status: RescueStatus, redactor: Redactor, *, evidence: bool = False,
+) -> dict:
+    report._register_names(run, redactor, detailed=True)
     _register_status_paths(run, status, redactor)
     units = []
     for unit in status.units:
         last = unit.last_counted
         units.append({
             "agent": redactor.names.agent(unit.label),
+            "repo": redactor.names.path(unit.repo) if unit.repo is not None else None,
             "checks_declared": unit.checks_declared,
             "last_counted_run": None if last is None else {
-                "command": redactor.names.check(last.command),
+                "command": redactor.check_text(last.command),
                 "completion": last.completion,
                 "at": last.ts.isoformat() if last.ts else None,
             },
@@ -1378,18 +2002,29 @@ def status_to_json(run: Run, status: RescueStatus, redactor: Redactor) -> dict:
             "write_after_check": unit.writes_after > 0,
             "cycles": unit.cycles,
         })
+    # docs/DESIGN.md 5.3b: `category` is the matched rule's fixed spelling (or
+    # the word `command`), never transcript text; the quoted excerpt exists
+    # only at local and raw with --evidence, the same 60 characters the text
+    # shows there.
+    quote = evidence and redactor.level != "share"
+
+    def excerpt_part(row) -> dict:
+        if not quote:
+            return {}
+        return {"excerpt": _pseudonymize_excerpt(row.excerpt, status, redactor)[:60]}
+
     return {
         "schema": SCHEMA_VERSION,
+        "disclosure": redactor.level,
         "run": {"run_id": status.run_id},
         "units": units,
         "not_counted": [
-            {"line": row.line_no, "reason": row.reason,
-             "excerpt": _display_excerpt(row.excerpt, status, redactor)}
+            {"line": row.line_no, "reason": row.reason, "category": row.category,
+             **excerpt_part(row)}
             for row in status.not_counted
         ],
         "never_matches": [
-            {"line": row.line_no,
-             "excerpt": _display_excerpt(row.excerpt, status, redactor)}
+            {"line": row.line_no, "category": row.category, **excerpt_part(row)}
             for row in status.never_matches
         ],
         "transcript_unknown": status.transcript_unknown,

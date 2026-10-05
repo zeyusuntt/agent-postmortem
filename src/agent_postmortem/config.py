@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +76,48 @@ def _check_is_rejected(check: str) -> bool:
     if any(fragment in check for fragment in _FORBIDDEN_CHECK_FRAGMENTS):
         return True
     return check.lstrip().startswith("cd ")
+
+
+@dataclass(frozen=True)
+class WarningPart:
+    """One piece of a config warning (docs/DESIGN.md 5.1; F fix 8, W8-10). `kind` is `text` (the
+    tool's own fixed words, kept as they are), `path` (the config file or a `[[repos]]` path field,
+    rendered once as one value by `display_path`) or `untrusted` (a value that came from the file:
+    a rule id, a detector id, a date, a parser message, a rejected command; it goes through the
+    free-text scan as one piece)."""
+
+    kind: str
+    value: str
+
+
+class ConfigWarning(str):
+    """A warning as the text it is plus the typed parts it was built from. It IS the assembled
+    string (so a caller that only prints or compares it is unchanged); `Config.shown_warnings`
+    renders from `parts` and never splits the assembled text."""
+
+    parts: tuple[WarningPart, ...]
+
+    def __new__(cls, *parts: WarningPart) -> "ConfigWarning":
+        warning = super().__new__(cls, "".join(part.value for part in parts))
+        warning.parts = tuple(parts)
+        return warning
+
+
+def _t(value: object) -> WarningPart:
+    return WarningPart("text", str(value))
+
+
+def _p(value: object) -> WarningPart:
+    return WarningPart("path", str(value))
+
+
+def _u(value: object) -> WarningPart:
+    return WarningPart("untrusted", str(value))
+
+
+def _warn(path: object, *rest: WarningPart) -> ConfigWarning:
+    """`agent-postmortem: <config path>: <rest>`, the shape of every warning."""
+    return ConfigWarning(_t("agent-postmortem: "), _p(path), _t(": "), *rest)
 
 
 @dataclass(frozen=True)
@@ -114,6 +157,39 @@ class Config:
     # `rules review`'s own input, alongside the state store's legacy
     # `applied` entries (7.5).
     adopted: tuple[AdoptedRule, ...] = ()
+    # The config file the warnings name (N3b C4): lets a renderer replace it,
+    # and every [[repos]] path, by its own display before the text is shown.
+    config_file: str = ""
+
+    def shown_warnings(
+        self, display: Callable[[str], str], scan: Callable[[str], str] | None = None,
+    ) -> list[str]:
+        """`warnings` as they are shown (docs/DESIGN.md 5.1; F fix 8, W8-10): a warning is built
+        from typed parts when the parser creates it (`ConfigWarning`). A `text` part is kept, a
+        `path` part (the config file, a `[[repos]]` path) is rendered once as one value by
+        display(path), and an `untrusted` part goes through `scan` as one piece when one is given.
+        The assembled warning is never split again and never scanned as a whole, so a repository
+        path that is a prefix of a longer untrusted path cannot leave a tail unscanned, and a
+        rendered `~/name` is not read as a path start that hides the words after it. A warning
+        with no parts (a hand-built one) is one untrusted piece."""
+        return ["".join(self._shown_piece(part, display, scan) for part in _parts_of(warning))
+                for warning in self.warnings]
+
+    @staticmethod
+    def _shown_piece(
+        part: WarningPart, display: Callable[[str], str], scan: Callable[[str], str] | None,
+    ) -> str:
+        if part.kind == "path":
+            return display(part.value)
+        if part.kind == "untrusted" and scan is not None and part.value:
+            return scan(part.value)
+        return part.value
+
+
+def _parts_of(warning: str) -> tuple[WarningPart, ...]:
+    if isinstance(warning, ConfigWarning):
+        return warning.parts
+    return (WarningPart("untrusted", str(warning)),)
 
 
 _EMPTY = Config(detectors_off=frozenset(), warnings=[])
@@ -157,41 +233,41 @@ def _parse_repos(data: dict, path: Path, warnings: list[str]) -> list[RepoConfig
     if raw_repos is None:
         return []
     if not isinstance(raw_repos, list):
-        warnings.append(f"agent-postmortem: {path}: [[repos]] must be an array of tables")
+        warnings.append(_warn(path, _t("[[repos]] must be an array of tables")))
         return []
 
     repos: list[RepoConfig] = []
     for entry in raw_repos:
         if not isinstance(entry, dict):
-            warnings.append(f"agent-postmortem: {path}: a [[repos]] entry must be a table")
+            warnings.append(_warn(path, _t("a [[repos]] entry must be a table")))
             continue
         raw_path = entry.get("path")
         if not isinstance(raw_path, str) or not raw_path:
-            warnings.append(f"agent-postmortem: {path}: a [[repos]] table needs a non-empty 'path'")
+            warnings.append(_warn(path, _t("a [[repos]] table needs a non-empty 'path'")))
             continue
         norm_path = os.path.normpath(os.path.expanduser(raw_path))
 
         raw_checks = entry.get("checks", [])
         if not isinstance(raw_checks, list):
-            warnings.append(
-                f"agent-postmortem: {path}: [[repos]] 'checks' must be a list of strings "
-                f"({norm_path})"
-            )
+            warnings.append(_warn(
+                path, _t("[[repos]] 'checks' must be a list of strings ("), _p(norm_path), _t(")"),
+            ))
             raw_checks = []
 
         checks: list[str] = []
         for check in raw_checks:
             if not isinstance(check, str) or not check.strip():
-                warnings.append(
-                    f"agent-postmortem: {path}: a declared check must be a non-empty string "
-                    f"({norm_path})"
-                )
+                warnings.append(_warn(
+                    path, _t("a declared check must be a non-empty string ("), _p(norm_path),
+                    _t(")"),
+                ))
                 continue
             if _check_is_rejected(check):
-                warnings.append(
-                    f"agent-postmortem: {path}: declared check rejected, compound or "
-                    f"directory-changing command: {check!r}"
-                )
+                warnings.append(_warn(
+                    path,
+                    _t("declared check rejected, compound or directory-changing command: "),
+                    _u(repr(check)),
+                ))
                 continue
             checks.append(check)
 
@@ -208,45 +284,44 @@ def _parse_adopted(data: dict, path: Path, warnings: list[str]) -> list[AdoptedR
     if raw_adopted is None:
         return []
     if not isinstance(raw_adopted, list):
-        warnings.append(f"agent-postmortem: {path}: [[adopted]] must be an array of tables")
+        warnings.append(_warn(path, _t("[[adopted]] must be an array of tables")))
         return []
 
     adopted: list[AdoptedRule] = []
     for entry in raw_adopted:
         if not isinstance(entry, dict):
-            warnings.append(f"agent-postmortem: {path}: an [[adopted]] entry must be a table")
+            warnings.append(_warn(path, _t("an [[adopted]] entry must be a table")))
             continue
         rule_id = entry.get("rule")
         if not isinstance(rule_id, str) or not rule_id:
-            warnings.append(
-                f"agent-postmortem: {path}: an [[adopted]] table needs a non-empty 'rule'"
-            )
+            warnings.append(_warn(path, _t("an [[adopted]] table needs a non-empty 'rule'")))
             continue
         if rule_id not in RULES:
-            warnings.append(f"agent-postmortem: {path}: unknown rule id '{rule_id}' in [[adopted]]")
+            warnings.append(_warn(
+                path, _t("unknown rule id '"), _u(rule_id), _t("' in [[adopted]]"),
+            ))
             continue
 
         date = entry.get("date")
         if not isinstance(date, str):
-            warnings.append(
-                f"agent-postmortem: {path}: an [[adopted]] table needs 'date' as YYYY-MM-DD "
-                f"({rule_id})"
-            )
+            warnings.append(_warn(
+                path, _t("an [[adopted]] table needs 'date' as YYYY-MM-DD ("), _u(rule_id), _t(")"),
+            ))
             continue
         try:
             datetime.strptime(date, "%Y-%m-%d")
         except ValueError:
-            warnings.append(
-                f"agent-postmortem: {path}: [[adopted]] 'date' is not a valid YYYY-MM-DD date "
-                f"({rule_id}: {date!r})"
-            )
+            warnings.append(_warn(
+                path, _t("[[adopted]] 'date' is not a valid YYYY-MM-DD date ("), _u(rule_id),
+                _t(": "), _u(repr(date)), _t(")"),
+            ))
             continue
 
         target = entry.get("target", "")
         if not isinstance(target, str):
-            warnings.append(
-                f"agent-postmortem: {path}: [[adopted]] 'target' must be a string ({rule_id})"
-            )
+            warnings.append(_warn(
+                path, _t("[[adopted]] 'target' must be a string ("), _u(rule_id), _t(")"),
+            ))
             target = ""
 
         adopted.append(AdoptedRule(rule=rule_id, date=date, target=target))
@@ -264,7 +339,8 @@ def _parse(path: Path) -> Config:
     except (tomllib.TOMLDecodeError, UnicodeDecodeError, ValueError) as exc:
         return Config(
             detectors_off=frozenset(),
-            warnings=[f"agent-postmortem: {path}: could not parse config: {exc}"],
+            warnings=[_warn(path, _t("could not parse config: "), _u(exc))],
+            config_file=str(path),
         )
 
     warnings: list[str] = []
@@ -274,31 +350,27 @@ def _parse(path: Path) -> Config:
     detectors_section = data.get("detectors")
     if detectors_section is not None:
         if not isinstance(detectors_section, dict):
-            warnings.append(f"agent-postmortem: {path}: [detectors] must be a table")
+            warnings.append(_warn(path, _t("[detectors] must be a table")))
         else:
             off = detectors_section.get("off", [])
             if not isinstance(off, list):
-                warnings.append(
-                    f"agent-postmortem: {path}: [detectors].off must be a list of strings"
-                )
+                warnings.append(_warn(path, _t("[detectors].off must be a list of strings")))
             else:
                 known = _known_detector_ids()
                 critical = _critical_detector_ids()
                 for item in off:
                     if not isinstance(item, str) or not item:
-                        warnings.append(
-                            f"agent-postmortem: {path}: [detectors].off entries must be "
-                            "non-empty strings"
-                        )
+                        warnings.append(_warn(
+                            path, _t("[detectors].off entries must be non-empty strings"),
+                        ))
                         continue
                     if item in critical:
                         critical_rejected.append(item)
                         continue
                     if item not in known:
-                        warnings.append(
-                            f"agent-postmortem: {path}: unknown detector id '{item}' in "
-                            "[detectors].off"
-                        )
+                        warnings.append(_warn(
+                            path, _t("unknown detector id '"), _u(item), _t("' in [detectors].off"),
+                        ))
                         continue
                     kept.add(item)
 
@@ -311,6 +383,7 @@ def _parse(path: Path) -> Config:
         critical_rejected=tuple(critical_rejected),
         repos=tuple(repos),
         adopted=tuple(adopted),
+        config_file=str(path),
     )
 
 

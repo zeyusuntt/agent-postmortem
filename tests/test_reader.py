@@ -1114,12 +1114,16 @@ def test_workflow_run_with_no_started_key_at_all_is_not_finished(tmp_path):
     assert run.finished is False
 
 
-def test_session_run_is_always_finished(tmp_path):
+def test_session_run_has_no_finished_concept(tmp_path):
+    """docs/DESIGN.md 4.13.3 (v0.3, N2, D11): a session carries no Workflow
+    launch and no generation to pair, so it has no lifecycle model to report
+    at all -- Run.finished is null, not true, distinct from the pre-N2 rule
+    this test used to pin ('a session is always finished')."""
     session_path = _write_minimal_session(
         tmp_path, "-home-user-project", "00000000-0000-4000-8000-000000000000",
     )
     run = reader.load_run(session_path)
-    assert run.finished is True
+    assert run.finished is None
 
 
 # --- ParentIndex.tool_result_agent_ids (docs/DESIGN.md 7.2's D2) -----------

@@ -16,7 +16,7 @@ FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs"
 FAKE_SLUG = "-home-user-project"
 FAKE_UUID = "00000000-0000-4000-8000-000000000000"
 # silent_retry_kill lives in the package now (docs/DESIGN.md 5.4/6).
-SILENT_RETRY_KILL = Path(agent_postmortem.__file__).parent / "demo" / "wf_00000000-d30"
+SILENT_RETRY_KILL = Path(agent_postmortem.__file__).parent / "demo" / "-home-user-project" / "00000000-0000-4000-8000-000000000000" / "subagents" / "workflows" / "wf_00000000-d30"
 
 
 def _load(case: str):
@@ -31,11 +31,12 @@ def test_wasted_time_session_metrics_are_run_child_seconds_and_count():
     finding = wasted_time.DETECTOR.run(run)[0]
     assert finding.detector == "wasted_time"
     assert finding.severity == "info"
-    assert set(finding.metrics) == {"run_seconds", "child_seconds", "child_count"}
+    assert set(finding.metrics) == {"run_seconds", "child_seconds", "child_count", "wasted_seconds"}
     # main spans 09:00:00 to 09:04:05 (245s); each subagent spans 80s.
     assert finding.metrics["run_seconds"] == 245.0
     assert finding.metrics["child_seconds"] == 160.0
     assert finding.metrics["child_count"] == 2
+    assert finding.metrics["wasted_seconds"] == 0.0
 
 
 def test_wasted_time_session_title_matches_the_contract_wording():

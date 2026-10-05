@@ -146,6 +146,50 @@ def _backdate(wf_dir: Path, when: datetime) -> None:
             os.utime(path, (ts, ts))
 
 
+def _fail_via_parent(root: Path, slug: str, wf_id: str, when: datetime) -> Path:
+    """N5b (4.6, 4.13.4): FAILED is the run's own lifecycle terminal, no
+    detector is critical any more. Write the parent transcript of the run
+    `_wf_dir(root, slug, wf_id)` with a Workflow launch whose accepted
+    notification says `failed`, and backdate it to `when` so the session it
+    makes never reads "possibly live". The parent is itself a (CLEAN,
+    zero-subagent) session run to scan."""
+    parent = root / slug / f"{FAKE_UUID}.jsonl"
+    parent.parent.mkdir(parents=True, exist_ok=True)
+    envelope = (
+        "<task-notification>\n<task-id>t1</task-id>\n"
+        "<tool-use-id>toolu_f</tool-use-id>\n<status>failed</status>\n"
+        "</task-notification>"
+    )
+    lines = [
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant", "usage": {},
+                "content": [{"type": "tool_use", "id": "toolu_f", "name": "Workflow", "input": {}}],
+            },
+            "timestamp": _iso(when - timedelta(hours=2)),
+        },
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_f", "content": "launched"}],
+            },
+            "toolUseResult": {"runId": wf_id, "taskId": "t1", "status": "async_launched"},
+            "timestamp": _iso(when - timedelta(hours=2) + timedelta(seconds=1)),
+        },
+        {
+            "type": "user",
+            "message": {"role": "user", "content": envelope},
+            "origin": {"kind": "task-notification"},
+            "timestamp": _iso(when),
+        },
+    ]
+    parent.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+    os.utime(parent, (when.timestamp(), when.timestamp()))
+    return parent
+
+
 def _freeze_now(monkeypatch) -> datetime:
     fixed = datetime.now(timezone.utc)
     monkeypatch.setattr(report, "_now", lambda: fixed)
@@ -214,6 +258,30 @@ def test_is_possibly_live_requires_unfinished_workflow_and_recent_mtime():
     assert report.is_possibly_live(finished, now.timestamp() - 1, now, 600) is False
 
 
+def _session_run(run_id, ended_at=None) -> Run:
+    return Run(
+        run_id=run_id, kind="session", path=Path("/tmp/does-not-exist"),
+        project_slug="-home-user-x", session_id=None, claude_version=None,
+        journal=[], agents=[], attempts=[], started_at=None,
+        ended_at=ended_at, diagnostics=[], finished=None,
+    )
+
+
+def test_is_possibly_live_also_applies_to_a_session():
+    """docs/DESIGN.md 4.13.3's Sessions paragraph: 'possibly running' is
+    unit M3b's own hook-free live heuristic, the same one a workflow gets --
+    never unreachable for a session. A session's Run.finished is always
+    None (D11), never anything is_possibly_live's own `run.finished` check
+    would reject, so only the `kind == 'workflow'` short-circuit (this
+    finding) ever stood in the way."""
+    now = datetime.now(timezone.utc)
+    session = _session_run("s_abcdef0123456789")
+
+    assert report.is_possibly_live(session, now.timestamp() - 10, now, 600) is True
+    assert report.is_possibly_live(session, now.timestamp() - 900, now, 600) is False
+    assert report.is_possibly_live(session, None, now, 600) is False
+
+
 def test_scan_age_string_forms():
     now = datetime.now(timezone.utc)
     run_recent = _run("wf_a", [], ended_at=now - timedelta(minutes=8))
@@ -274,15 +342,11 @@ def test_ranking_order_live_then_paths_then_verdict_then_no_paths(tmp_path, monk
 
         s1 = s0 + timedelta(minutes=1)
         done_text = "Done."
-        if with_denial:
-            done_text = (
-                "[codex] WRITE_DENIED: patch rejected: writing outside of the project; "
-                "rejected by user approval settings"
-            )
-        events2 = [
-            _user(a2, s1, f"Retry: implement {key}."),
-            _assistant_text(a2, s1 + timedelta(seconds=20), done_text),
-        ]
+        events2 = [_user(a2, s1, f"Retry: implement {key}.")]
+        # N5b: `with_denial` no longer means a codex denial (that is a minor
+        # finding now); it means the harness reported the run failed, which
+        # is what makes a verdict FAILED (see _fail_via_parent below).
+        events2.append(_assistant_text(a2, s1 + timedelta(seconds=20), done_text))
         _write_transcript(wf_dir, a2, events2)
         _write_meta(wf_dir, a2, f"Implement {key}.")
 
@@ -296,9 +360,11 @@ def test_ranking_order_live_then_paths_then_verdict_then_no_paths(tmp_path, monk
              "result": {"ok": True}},
         ])
         _backdate(wf_dir, ended)
+        if with_denial:
+            _fail_via_parent(root, slug, wf_id, ended)
         return wf_dir
 
-    # e04: FAILED, 1 path (retried + WRITE_DENIED on the surviving attempt).
+    # e04: FAILED, 1 path (retried, and the harness reported the run failed).
     _retried_pair("-home-user-scan-e04", "wf_00000000-740", "v2:e04",
                   with_path=True, with_denial=True)
     # e02: DEGRADED, 1 path (retried, no denial).
@@ -341,14 +407,17 @@ def test_ranking_order_live_then_paths_then_verdict_then_no_paths(tmp_path, monk
         line.strip().split("  ", 1)[0] for line in captured.out.splitlines()
         if line.strip().startswith("wf_")
     ]
+    # FB2: e01 (possibly live, otherwise CLEAN) is no longer a NEEDS ATTENTION candidate; it
+    # is the one line of the LIVE NOW group printed after the candidates.
     assert run_ids_in_order == [
-        "wf_00000000-710",  # e01: possibly live
         "wf_00000000-740",  # e04: FAILED, 1 path
         "wf_00000000-720",  # e02: DEGRADED, 1 path
         "wf_00000000-750",  # e05: CLEAN, 1 path
         "wf_00000000-730",  # e03: DEGRADED, 0 paths: paths outrank verdict
         "wf_00000000-760",  # e06: FAILED, 1 path, 20 days old: recency outranks both
+        "wf_00000000-710",  # e01: possibly live, under LIVE NOW
     ]
+    assert "LIVE NOW (1 of 8 runs)" in captured.out
     assert "possibly live" in captured.out
     assert "CLAUDE.md" not in captured.out
     assert "apply" not in captured.out
@@ -358,7 +427,15 @@ def test_clean_zero_subagent_session_is_never_a_candidate(tmp_path, monkeypatch,
     now = _freeze_now(monkeypatch)
     root = tmp_path / "root"
 
-    _write_session(root, "-home-user-scan-clean-session", now - timedelta(hours=1))
+    # N1N2 review finding 3 fix: a session is now eligible for scan's
+    # hook-free "possibly live" heuristic the same as a workflow, so this
+    # session's own file must be backdated to actually be stale -- an hour
+    # ago, matching the event timestamp above -- or it would read "possibly
+    # live" from its own fresh mtime and defeat the "never a candidate" this
+    # test means to pin.
+    clean_session_path = _write_session(root, "-home-user-scan-clean-session", now - timedelta(hours=1))
+    stale_ts = (now - timedelta(hours=1)).timestamp()
+    os.utime(clean_session_path, (stale_ts, stale_ts))
 
     fail_dir = _wf_dir(root, "-home-user-scan-clean-wf", "wf_00000000-760")
     a1 = _aid(1)
@@ -372,20 +449,19 @@ def test_clean_zero_subagent_session_is_never_a_candidate(tmp_path, monkeypatch,
     _write_meta(fail_dir, a1, "Implement fail.")
     _write_transcript(fail_dir, a1, [
         _user(a1, t0, "Implement fail."),
-        _assistant_text(
-            a1, t0 + timedelta(seconds=5),
-            "[codex] WRITE_DENIED: patch rejected: writing outside of the project; "
-            "rejected by user approval settings",
-        ),
+        _assistant_text(a1, t0 + timedelta(seconds=5), "Done."),
     ])
+    # N5b: FAILED comes from the harness reporting the run failed; the parent
+    # transcript that says so is a second, stale, zero-subagent session.
+    _fail_via_parent(root, "-home-user-scan-clean-wf", "wf_00000000-760", now - timedelta(hours=1))
 
     code = main(["scan", "--root", str(root)])
     captured = capsys.readouterr()
     assert code == 3, captured.err
 
-    assert "NEEDS ATTENTION (1 of 2 runs)" in captured.out
+    assert "NEEDS ATTENTION (1 of 3 runs)" in captured.out
     assert not any(line.strip().startswith("s_") for line in captured.out.splitlines())
-    assert "1 session runs" in captured.out
+    assert "2 session runs" in captured.out
 
 
 def test_reason_line_for_usage_limit_names_cause_and_reset_time(tmp_path, monkeypatch, capsys):
@@ -442,28 +518,36 @@ def test_default_output_fits_25_lines_with_12_runs_and_limit_flag_caps_rows(tmp_
         _write_meta(wf_dir, agent_id, "Implement many.")
         _write_transcript(wf_dir, agent_id, [
             _user(agent_id, t0, "Implement many."),
-            _assistant_text(
-                agent_id, t0 + timedelta(seconds=5),
-                "[codex] WRITE_DENIED: patch rejected: writing outside of the project; "
-                "rejected by user approval settings",
-            ),
+            _assistant_text(agent_id, t0 + timedelta(seconds=5), "Done."),
         ])
+        # N5b: FAILED comes from the harness reporting the run failed; each
+        # parent transcript is a stale, zero-subagent session run.
+        _fail_via_parent(root, slug, wf_id, t0)
 
-    _write_session(root, "-home-user-scan-many-clean-1", now - timedelta(hours=2))
-    _write_session(root, "-home-user-scan-many-clean-2", now - timedelta(hours=3))
+    # N1N2 review finding 3 fix: backdate each session's own file so neither
+    # reads "possibly live" from a fresh mtime (see the longer comment at
+    # the similar fixture in test_clean_zero_subagent_session_is_never_a_
+    # candidate above) -- these two must stay out of NEEDS ATTENTION for
+    # this test's own "10 of 12" count to hold.
+    clean_session_1 = _write_session(root, "-home-user-scan-many-clean-1", now - timedelta(hours=2))
+    os.utime(clean_session_1, ((now - timedelta(hours=2)).timestamp(),) * 2)
+    clean_session_2 = _write_session(root, "-home-user-scan-many-clean-2", now - timedelta(hours=3))
+    os.utime(clean_session_2, ((now - timedelta(hours=3)).timestamp(),) * 2)
 
     code = main(["scan", "--root", str(root)])
     captured = capsys.readouterr()
     assert code == 3, captured.err
     lines = captured.out.splitlines()
-    assert "NEEDS ATTENTION (10 of 12 runs)" in lines[0]
+    # N5b: 10 failed workflows, their 10 parent sessions, and 2 clean sessions.
+    assert "NEEDS ATTENTION (10 of 22 runs)" in lines[0]
     assert len(lines) <= 25, f"default scan output was {len(lines)} lines:\n{captured.out}"
 
     code = main(["scan", "--root", str(root), "--limit", "3"])
     captured = capsys.readouterr()
     assert code == 3, captured.err
     lines = captured.out.splitlines()
-    assert "NEEDS ATTENTION (10 of 12 runs)" in lines[0]
+    # FB2: a truncated list says so in its own header.
+    assert lines[0] == "NEEDS ATTENTION (10 of 22 runs; showing 3, use --limit N or --all for more)"
     shown_ids = [
         line.strip().split("  ", 1)[0] for line in lines if line.strip().startswith("wf_")
     ]
@@ -490,40 +574,63 @@ def test_all_flag_output_is_the_old_one_row_per_run_list(tmp_path, monkeypatch, 
     _write_meta(wf_dir, a1, "Implement all.")
     _write_transcript(wf_dir, a1, [
         _user(a1, t0, "Implement all."),
-        _assistant_text(
-            a1, t0 + timedelta(seconds=5),
-            "[codex] WRITE_DENIED: patch rejected: writing outside of the project; "
-            "rejected by user approval settings",
-        ),
+        _assistant_text(a1, t0 + timedelta(seconds=5), "Done."),
     ])
+    # N5b: FAILED comes from the harness reporting the run failed; the parent
+    # transcript that says so is a second session run (project -wf).
+    parent_path = _fail_via_parent(root, "-home-user-scan-all-wf", "wf_00000000-820", t0)
     session_path = _write_session(root, "-home-user-scan-all-session", t0 + timedelta(hours=1))
 
     code = main(["scan", "--root", str(root), "--all", "--no-redact"])
     captured = capsys.readouterr()
     assert code == 3, captured.err
 
-    session_ref = next(
-        ref for ref in reader.discover_runs(root, kinds=frozenset({"session"}))
-    )
-    assert session_ref.path == session_path
+    session_refs = {
+        ref.path: ref for ref in reader.discover_runs(root, kinds=frozenset({"session"}))
+    }
+    session_ref = session_refs[session_path]
+    parent_ref = session_refs[parent_path]
 
     workflow_date = t0.date().isoformat()
     session_date = (t0 + timedelta(hours=1)).date().isoformat()
-    # Same calendar date for both rows (built minutes apart in the same test
-    # run): rows.sort(key=date) is then a stable no-op, so discover_runs'
-    # own path sort decides the tie -- "...-session" sorts before "...-wf".
-    expected = (
+    # Rows are ordered by the day, then by the exact start time. The rows are
+    # built from the real clock, so they can fall on different dates; the
+    # expected order follows the same rule instead of assuming
+    # one date.
+    # its one entry is at the frozen now and its file was just written, so the tool's own
+    # liveness rule calls it possibly running, and the --all row says so (release review of 0.3.0)
+    session_row = (
         f"{session_ref.run_id}  {session_date}  -home-user-scan-all-session  session  "
-        f"0 agents  0 attempts  CLEAN  -\n"
-        f"wf_00000000-820  {workflow_date}  -home-user-scan-all-wf  workflow  "
-        f"1 agents  1 attempts  FAILED  codex_write_denied\n"
-        f"\n"
-        f"1 workflow runs, 0 with retries, 1 attempts, 0.0h wasted\n"
-        f"1 session runs, 0 subagents, 0 interrupted\n"
-        f"  codex_write_denied: 2\n"
-        f"  wasted_time: 2\n"
+        f"0 agents  0 attempts  CLEAN possibly running  -\n"
     )
-    assert captured.out == expected
+    workflow_row = (
+        f"wf_00000000-820  {workflow_date}  -home-user-scan-all-wf  workflow  "
+        f"1 agents  1 attempts  FAILED  workflow_failed\n"
+    )
+    # N5b: the workflow's parent transcript is a session run of its own; its
+    # first event is two hours before the failure notification.
+    parent_date = (t0 - timedelta(hours=2)).date().isoformat()
+    parent_row = (
+        f"{parent_ref.run_id}  {parent_date}  -home-user-scan-all-wf  session  "
+        f"0 agents  0 attempts  CLEAN  -\n"
+    )
+    # release review of 0.3.0: rows are ordered by the day and then by the exact start time
+    # (the parent session starts at t0 - 2h, the workflow at t0, the other session at t0 + 1h)
+    ordered = sorted([
+        (session_date, t0 + timedelta(hours=1), session_row), (workflow_date, t0, workflow_row),
+        (parent_date, t0 - timedelta(hours=2), parent_row),
+    ])
+    expected = (
+        "".join(row for _, _, row in ordered)
+        + "\n"
+        "1 workflow runs, 0 with retries, 1 attempts, 0.0h wasted\n"
+        "2 session runs, 0 subagents, 0 interrupted\n"
+        "findings per detector (one finding can cover several events):\n"
+        "  wasted_time: 3\n"
+        "  workflow_failed: 1\n"
+    )
+    # N3b P15: --no-redact is --raw, whose text starts with the disclosure label.
+    assert captured.out == "disclosure: raw (real names, absolute paths; do not paste)\n" + expected
 
 
 def test_json_rows_carry_the_new_keys_and_nothing_else(tmp_path, monkeypatch, capsys):
@@ -549,7 +656,7 @@ def test_json_rows_carry_the_new_keys_and_nothing_else(tmp_path, monkeypatch, ca
     expected_keys = {
         "run_id", "kind", "date", "project", "agents", "attempts", "verdict",
         "top_detector", "finished", "attention", "attention_reason", "age",
-        "possibly_live", "paths_at_risk", "unfinished_state",
+        "possibly_live", "paths_at_risk", "paths_at_risk_complete", "unfinished_state",
     }
     for row in payload["rows"]:
         assert set(row.keys()) == expected_keys, row.keys()
@@ -566,28 +673,86 @@ def test_json_rows_carry_the_new_keys_and_nothing_else(tmp_path, monkeypatch, ca
 # --- unfinished_state: possibly live / failed / abandoned -------------------
 
 
-def test_unfinished_state_failed_when_the_only_key_ends_in_a_failed_event(tmp_path, monkeypatch, capsys):
+def test_unfinished_state_failed_when_the_harness_reports_the_run_failed(
+    tmp_path, monkeypatch, capsys,
+):
+    """docs/DESIGN.md 5.3b (v0.3 N2): unfinished_state's own 'failed' is now
+    lifecycle-derived, never a per-key journal state -- a key whose own
+    attempt ends in a journal 'failed' event no longer lands here at all
+    once the run's own journal fully resolves (that per-key story belongs
+    to attempt_failed); only an accepted parent-level failed terminal
+    (notification/TaskStop/launch result) does."""
     now = _freeze_now(monkeypatch)
     root = tmp_path / "root"
-    wf_dir = _wf_dir(root, "-home-user-scan-unf-failed", "wf_00000000-752")
+    slug = "-home-user-scan-unf-failed"
+    wf_id = "wf_00000000-752"
+    wf_dir = _wf_dir(root, slug, wf_id)
     a1 = _aid(1)
     t0 = now - timedelta(hours=1)
+    # The journal itself resolves cleanly: this failure is the harness's
+    # own, not an attempt-level one.
     _write_journal(wf_dir, [
         {"type": "started", "timestamp": _iso(t0), "key": "v2:unf", "agentId": a1,
          "label": "impl:unf", "phase": "Implement"},
-        {"type": "failed", "timestamp": _iso(t0 + timedelta(minutes=1)), "key": "v2:unf",
-         "agentId": a1},
+        {"type": "result", "timestamp": _iso(t0 + timedelta(minutes=1)), "key": "v2:unf",
+         "agentId": a1, "result": {"ok": True}},
     ])
     _write_meta(wf_dir, a1, "Implement unf.")
     _write_transcript(wf_dir, a1, [_user(a1, t0, "Implement unf.")])
 
+    parent_path = root / slug / f"{FAKE_UUID}.jsonl"
+    parent_path.parent.mkdir(parents=True, exist_ok=True)
+    envelope = (
+        "<task-notification>\n<task-id>t1</task-id>\n"
+        "<tool-use-id>toolu_1</tool-use-id>\n<status>failed</status>\n"
+        "</task-notification>"
+    )
+    parent_lines = [
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "toolu_1", "name": "Workflow", "input": {}}],
+                "usage": {},
+            },
+            "timestamp": _iso(t0),
+        },
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "launched"}],
+            },
+            "toolUseResult": {"runId": wf_id, "taskId": "t1", "status": "async_launched"},
+            "timestamp": _iso(t0 + timedelta(seconds=1)),
+        },
+        {
+            "type": "user",
+            "message": {"role": "user", "content": envelope},
+            "origin": {"kind": "task-notification"},
+            "timestamp": _iso(t0 + timedelta(minutes=2)),
+        },
+    ]
+    parent_path.write_text(
+        "\n".join(json.dumps(line) for line in parent_lines) + "\n", encoding="utf-8",
+    )
+
     code = main(["scan", "--root", str(root), "--json"])
     payload = json.loads(capsys.readouterr().out)
-    assert code == 0
-    assert payload["rows"][0]["unfinished_state"] == "failed"
+    # N5b (4.6): a failed lifecycle terminal makes the verdict FAILED, so the
+    # scan exits 3 (it exited 0 while FAILED needed a critical finding).
+    assert code == 3
+    workflow_row = next(row for row in payload["rows"] if row["kind"] == "workflow")
+    assert workflow_row["verdict"] == "FAILED"
+    assert workflow_row["unfinished_state"] == "failed"
 
 
-def test_unfinished_state_abandoned_when_started_alone_and_old(tmp_path, monkeypatch, capsys):
+def test_unfinished_state_no_terminal_record_when_started_alone_and_old(tmp_path, monkeypatch, capsys):
+    """docs/DESIGN.md 5.3b (v0.3 N2): 'abandoned' is removed. A workflow
+    with no parent-level terminal evidence at all (zero generations) and an
+    unresolved journal key is lifecycle terminal 'none'; once its files have
+    gone quiet (activity 'stale'), that is 'no terminal record', never
+    'abandoned'."""
     now = _freeze_now(monkeypatch)
     root = tmp_path / "root"
     wf_dir = _wf_dir(root, "-home-user-scan-unf-abandoned", "wf_00000000-753")
@@ -608,10 +773,10 @@ def test_unfinished_state_abandoned_when_started_alone_and_old(tmp_path, monkeyp
     assert code == 0
     row = payload["rows"][0]
     assert row["possibly_live"] is False
-    assert row["unfinished_state"] == "abandoned"
+    assert row["unfinished_state"] == "no terminal record"
 
 
-def test_unfinished_state_possibly_live_when_started_alone_and_fresh(tmp_path, monkeypatch, capsys):
+def test_unfinished_state_possibly_running_when_started_alone_and_fresh(tmp_path, monkeypatch, capsys):
     now = _freeze_now(monkeypatch)
     root = tmp_path / "root"
     wf_dir = _wf_dir(root, "-home-user-scan-unf-live", "wf_00000000-754")
@@ -629,7 +794,45 @@ def test_unfinished_state_possibly_live_when_started_alone_and_fresh(tmp_path, m
     assert code == 0
     row = payload["rows"][0]
     assert row["possibly_live"] is True
-    assert row["unfinished_state"] == "possibly live"
+    assert row["unfinished_state"] == "possibly running"
+
+
+def test_unfinished_state_possibly_running_for_a_fresh_session(tmp_path, monkeypatch, capsys):
+    """docs/DESIGN.md 4.13.3's Sessions paragraph / 5.3b: a session row's own
+    unfinished_state reaches 'possibly running' through the same hook-free
+    live heuristic a workflow gets."""
+    now = _freeze_now(monkeypatch)
+    root = tmp_path / "root"
+    _write_session(root, "-home-user-scan-session-fresh", now - timedelta(seconds=5))
+    # File left at its natural fresh mtime -- no backdating.
+
+    code = main(["scan", "--root", str(root), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    row = payload["rows"][0]
+    assert row["kind"] == "session"
+    assert row["possibly_live"] is True
+    assert row["unfinished_state"] == "possibly running"
+
+
+def test_unfinished_state_null_for_a_stale_session(tmp_path, monkeypatch, capsys):
+    """The other half of the same rule: a session whose own file has gone
+    quiet is not possibly live, and a session row's unfinished_state is
+    otherwise always null (docs/DESIGN.md 5.3b: a session never derives 'no
+    terminal record', this milestone claims less)."""
+    now = _freeze_now(monkeypatch)
+    root = tmp_path / "root"
+    session_path = _write_session(root, "-home-user-scan-session-stale", now - timedelta(hours=2))
+    stale_ts = (now - timedelta(hours=2)).timestamp()
+    os.utime(session_path, (stale_ts, stale_ts))
+
+    code = main(["scan", "--root", str(root), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    row = payload["rows"][0]
+    assert row["kind"] == "session"
+    assert row["possibly_live"] is False
+    assert row["unfinished_state"] is None
 
 
 # --- unit M3c: silencing a detector by config (docs/DESIGN.md 4.6/4.7/4.10) -
@@ -762,7 +965,8 @@ def test_scan_all_top_detector_column_excludes_a_silenced_detector(tmp_path, mon
     code = main(["scan", "--root", str(root), "--all", "--no-redact"])
     captured = capsys.readouterr()
     assert code == 0, captured.err
-    assert "silent_retry" not in captured.out.split("\n")[0]
+    # N3b P15: line 1 is the raw disclosure label; the first row is line 2.
+    assert "silent_retry" not in captured.out.split("\n")[1]
     assert "mislabeled_kill" in captured.out
     assert captured.out.rstrip("\n").splitlines()[-1] == "1 detector silenced by config: silent_retry"
 

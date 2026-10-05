@@ -143,7 +143,15 @@ def test_evidence_includes_finding_lines_and_run_id():
     findings = _make_findings(run)
     text = report.render_bug_report(run, findings, _redactor())
     assert "wf_00000000-001" in text
-    assert "InputValidationError" in text
+    # N3b P16: at share an evidence line is a pointer, never its excerpt.
+    assert "InputValidationError" not in text
+    assert "a1111111111111111" not in text
+    assert "  - agent-1.jsonl:8" in text
+    # ... and with --evidence at raw the excerpt is back (D10).
+    raw = report.render_bug_report(
+        run, findings, Redactor(enabled=False, home=_FAKE_HOME), evidence=True,
+    )
+    assert "InputValidationError" in raw
 
 
 def test_suggested_fixes_include_rule_text_and_detector_sentence():
@@ -168,7 +176,8 @@ def test_no_redact_mode_leaves_the_raw_path_and_uuid_visible():
     run = _make_run()
     findings = _make_findings(run)
     redactor = Redactor(enabled=False, home=_FAKE_HOME)
-    text = report.render_bug_report(run, findings, redactor)
+    # N3b D10: raw prints an excerpt only with --evidence.
+    text = report.render_bug_report(run, findings, redactor, evidence=True)
     assert "/Users/tester" in text
 
 
@@ -180,9 +189,15 @@ def test_footer_warns_that_evidence_lines_are_unredacted_transcript_excerpts():
     run = _make_run()
     findings = _make_findings(run)
     text = report.render_bug_report(run, findings, _redactor())
+    # N3b P16: at share the evidence lines are pointers only, so the footer
+    # says that instead of warning about excerpts.
     assert text.rstrip("\n").endswith(
         "Redacted: paths, ids, emails, account names, agent names. "
-        "Not redacted: evidence lines, which are transcript excerpts. "
-        "Read them before posting."
+        "Evidence lines are pointers and marker codes only; "
+        "no transcript excerpts are included."
     )
     assert "safe to paste" not in text.lower()
+    raw = report.render_bug_report(
+        run, findings, Redactor(enabled=False, home=_FAKE_HOME), evidence=True,
+    )
+    assert "Evidence lines include transcript excerpts (--evidence); read them first." in raw

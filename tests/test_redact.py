@@ -51,7 +51,7 @@ def test_redactor_no_op_mode_leaves_text_unchanged():
 
 
 def test_redactor_enabled_mode_matches_redact():
-    text = "/home/user/project has uuid 00000000-0000-4000-8000-000000000000"
+    text = "has uuid 00000000-0000-4000-8000-000000000000 in /home/user/project"
     redactor = Redactor(enabled=True, home=Path("/home/user"))
     assert redactor(text) == redact(text, home=Path("/home/user"))
 
@@ -355,7 +355,7 @@ def test_redactor_call_substitutes_a_registered_path_unlike_a_name():
     redactor = Redactor(enabled=True, home=Path("/no/such/home"))
     redactor.names.path("clients/acme-secret/reports/internal.md")
     text = "report at clients/acme-secret/reports/internal.md was missing"
-    assert redactor(text) == "report at path-1 was missing"
+    assert redactor(text) == "report at path-1 [text hidden]"
     assert "clients/acme-secret/reports/internal.md" not in redactor(text)
 
 
@@ -456,14 +456,33 @@ def test_evidence_is_never_corrupted_by_a_registered_phase_or_label():
     # unit M3a: an evidence excerpt only prints with --evidence now (docs/
     # DESIGN.md 4.7 rule 7); this exercises the exact same corruption check
     # against the --evidence text.
-    text = report.render_run_text(run, [finding], redactor, evidence=True)
+    # N3b P16: excerpts exist only at local and raw; this checks the corruption
+    # rule at raw, where the excerpt is printed untouched, and that share
+    # prints no excerpt at all.
+    raw = Redactor(enabled=False, home=_FAKE_HOME)
+    text = report.render_run_text(run, [finding], raw, evidence=True)
     assert "Implement the silent-alpha module and add a test." in text
+    share_text = report.render_run_text(run, [finding], redactor, evidence=True)
+    assert "silent-alpha module" not in share_text
 
-    bug = report.render_bug_report(run, [finding], Redactor(enabled=True, home=_FAKE_HOME))
+    bug = report.render_bug_report(
+        run, [finding], Redactor(enabled=False, home=_FAKE_HOME), evidence=True,
+    )
     assert "Implement the silent-alpha module and add a test." in bug
+    share_bug = report.render_bug_report(
+        run, [finding], Redactor(enabled=True, home=_FAKE_HOME), evidence=True,
+    )
+    assert "silent-alpha module" not in share_bug
 
+    # N5a-1 (schema 3, docs/DESIGN.md 5.3b): the exported evidence follows the same
+    # evidence view as the text: pointer only at share (no book here, so the file
+    # stem is positional), the untouched excerpt only at raw with --evidence.
     exported = report.export_run(run, [finding], Redactor(enabled=True, home=_FAKE_HOME))
-    assert exported["findings"][0]["evidence"] == [
+    assert exported["findings"][0]["evidence"] == ["agent-1.jsonl:1"]
+    exported_raw = report.export_run(
+        run, [finding], Redactor(enabled=False, home=_FAKE_HOME), evidence=True,
+    )
+    assert exported_raw["findings"][0]["evidence"] == [
         "agent-a1111111111111111.jsonl:1: Implement the silent-alpha module and add a test."
     ]
 
@@ -547,7 +566,7 @@ def _every_fixture_run():
     itself a root (docs/DESIGN.md 6), so discover_runs is pointed at each
     one in turn rather than at the whole fixtures tree."""
     case_dirs = sorted(p for p in FIXTURES_ROOT.iterdir() if p.is_dir())
-    case_dirs += sorted(p for p in DEMO_ROOT.iterdir() if p.is_dir())
+    case_dirs += [DEMO_ROOT]
     for case_dir in case_dirs:
         for ref in reader.discover_runs(case_dir):
             try:
@@ -720,7 +739,10 @@ def test_scan_and_trend_text_never_carry_a_protected_value():
 def test_silent_retry_kill_fixtures_own_label_is_the_worked_example():
     """The exact case docs/DESIGN.md 6 calls out: impl:silent-alpha is
     absent from the redacted text report and present with --no-redact."""
-    run = reader.load_run(DEMO_ROOT / "wf_00000000-d30")
+    run = reader.load_run(
+        DEMO_ROOT / "-home-user-project" / "00000000-0000-4000-8000-000000000000"
+        / "subagents" / "workflows" / "wf_00000000-d30"
+    )
     findings = detectors.run_detectors(run)
 
     redacted_text = report.render_run_text(run, findings, Redactor(enabled=True))

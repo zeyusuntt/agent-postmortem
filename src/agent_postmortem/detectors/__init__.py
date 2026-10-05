@@ -35,21 +35,40 @@ TOOLING_DETECTOR_IDS: frozenset[str] = frozenset({
 })
 
 
+# docs/DESIGN.md 4.13.7 step 1 (N7): discovery runs once per process, not once
+# per run; `scan` used to repeat it for every run it analyzed.
+_REGISTRY: list[Detector] | None = None
+
+
 def all_detectors() -> list[Detector]:
     """Return every registered detector, sorted by id.
 
-    Returns an empty list when the package holds no detector modules (v0
-    ships this package with base.py only; detector modules land later).
+    Discovered on the first call and cached for the process; each call hands
+    out a new list, so a caller that edits its list cannot change what the next
+    caller sees. Returns an empty list when the package holds no detector
+    modules (v0 ships this package with base.py only; detector modules land
+    later).
     """
-    found: list[Detector] = []
-    for module_info in pkgutil.iter_modules(__path__):
-        if module_info.name in ("base", "__init__"):
-            continue
-        module = importlib.import_module(f"{__name__}.{module_info.name}")
-        detector = getattr(module, "DETECTOR", None)
-        if detector is not None:
-            found.append(detector)
-    return sorted(found, key=lambda detector: detector.id)
+    global _REGISTRY
+    if _REGISTRY is None:
+        found: list[Detector] = []
+        for module_info in pkgutil.iter_modules(__path__):
+            if module_info.name in ("base", "__init__"):
+                continue
+            module = importlib.import_module(f"{__name__}.{module_info.name}")
+            detector = getattr(module, "DETECTOR", None)
+            if detector is not None:
+                found.append(detector)
+        _REGISTRY = sorted(found, key=lambda detector: detector.id)
+    return list(_REGISTRY)
+
+
+def _reset_registry() -> None:
+    """Forget the cached discovery, so the next all_detectors() call discovers
+    again. A documented test hook (docs/DESIGN.md 4.13.11 "N7"); production code
+    never calls it."""
+    global _REGISTRY
+    _REGISTRY = None
 
 
 def run_detectors(run: "Run") -> list["Finding"]:

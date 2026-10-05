@@ -193,7 +193,7 @@ def test_is_binary_detects_a_null_byte():
 
 def test_is_fixture_path_matches_fixtures_and_demo_but_not_other_source():
     assert rules._is_fixture_path(Path("tests/fixtures/runs/clean_run/journal.jsonl"))
-    assert rules._is_fixture_path(Path("src/agent_postmortem/demo/wf_00000000-d30/journal.jsonl"))
+    assert rules._is_fixture_path(Path("src/agent_postmortem/demo/-home-user-project/00000000-0000-4000-8000-000000000000/subagents/workflows/wf_00000000-d30/journal.jsonl"))
     assert not rules._is_fixture_path(Path("src/agent_postmortem/reader.py"))
     assert not rules._is_fixture_path(Path("tests/test_reader.py"))
 

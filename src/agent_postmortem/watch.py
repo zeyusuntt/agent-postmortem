@@ -3,8 +3,8 @@
 section 7).
 
 Designed to be the command line a Claude Code Monitor runs: it prints one
-line per event a person would act on (KILL, FAILED, QUIET) and nothing
-otherwise, then a terminal DONE or LIMIT line and exits.
+START line first, then one line per event a person would act on (KILL, FAILED,
+OK, QUIET) and nothing otherwise, then a terminal DONE or LIMIT line and exits.
 
 Polling never re-reads a file it does not have to: the journal is read by
 appended bytes only (`_read_new_journal_lines` keeps a byte offset and
@@ -14,9 +14,17 @@ prints one RESET line); a transcript is only ever stat'd for its mtime
 (QUIET), or fully parsed once, the moment a KILL or FAILED needs its last
 line or its silence span -- never polled incrementally. A partial trailing
 journal line growing past 1 MB, or a complete line that is not a JSON
-object, is malformed evidence (MALFORMED); a KILL/FAILED event this poll
+object, is malformed evidence (MALFORMED); a KILL/FAILED/OK event this poll
 cannot yet resolve (the rate limit, or a transcript not on disk yet) is
 retried on later polls, bounded at 12, rather than dropped.
+
+DONE (docs/DESIGN.md 4.12, N8b K5.4) is eligible at once from a lifecycle terminal
+of completed, failed, or stopped (an accepted notification, a TaskStop, or a
+synchronous launch result), or after `--done-grace` once every journal key is
+resolved. The lifecycle is evaluated from watch's own in-memory occurrences and
+a parent index refreshed only when the parent transcript's stat signature
+changes; a RESET starts a new journal epoch whose watermark hides the ended
+epoch's generations.
 
 `_now` and `_sleep` are module attributes so a test can monkeypatch both: the
 suite never sleeps for a real second, and `_sleep` doubles as the point
@@ -31,12 +39,12 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
-from . import detectors, reader, report
+from . import detectors, disclosure, ledger, reader, report
 from .detectors import attempt_failed as _attempt_failed
 from .detectors.base import meaningful_event_before
 from .markers import KILL_SENTINEL_PREFIX
-from .redact import Redactor
 
 DEFAULT_INTERVAL = 5.0
 DEFAULT_MAX_HOURS = 6.0
@@ -61,11 +69,11 @@ _RATE_LIMIT_SECONDS = 60.0
 # must not be reread and rechecked without bound.
 _MAX_PARTIAL_LINE_BYTES = 1_048_576
 
-# docs/DESIGN.md 4.12 (release finding F10): a KILL/FAILED event suppressed
+# docs/DESIGN.md 4.12 (release finding F10): a KILL/FAILED/OK event suppressed
 # by the rate limit, or (KILL only) by a transcript that does not exist
 # yet, is retried on the next poll rather than dropped -- but only for this
 # many polls, after which it is force-emitted (KILL, with a degraded
-# message) or emitted as-is (FAILED) and marked handled either way, so a
+# message) or emitted as-is (FAILED, OK) and marked handled either way, so a
 # transcript that never appears can never wedge the loop forever.
 _MAX_PENDING_POLLS = 12
 
@@ -207,24 +215,26 @@ def _last_user_index(events: list) -> int | None:
     return last
 
 
-def _parse_kill(path: Path) -> tuple[bool, float | None, int, int]:
-    """(is_kill, silence_seconds, paths_written, commits) for one attempt's
-    transcript, from a single full parse: is_kill is whether its last user
+def _parse_kill(path: Path) -> tuple[bool, float | None, int, int, bool]:
+    """(is_kill, silence_seconds, paths_written, commits, paths_partial) for one attempt's
+    transcript, from a single full parse (`paths_partial`, N8 fix 1 S-m5: the attempt's ledger
+    is partial, so `paths_written` is a lower bound): is_kill is whether its last user
     event is the kill sentinel; silence_seconds is computed the same way the
     interrupt machinery does (reader._build_interrupt): the gap from the
     last meaningful event before the sentinel (detectors.base.
     meaningful_event_before) to the sentinel itself, None when a timestamp
     is missing or the delta would be negative."""
     diagnostics: list[str] = []
-    events, _version, _session_id, _total, _bad, tool_calls = reader._read_transcript(
-        path, diagnostics
+    state = ledger.TranscriptState()
+    events, _version, _session_id, _total, _bad, tool_calls, _marker_hits = reader._read_transcript(
+        path, diagnostics, state=state,
     )
     kill_index = _last_user_index(events)
     if kill_index is None:
-        return False, None, 0, 0
+        return False, None, 0, 0, False
     kill_event = events[kill_index]
     if not kill_event.text.startswith(KILL_SENTINEL_PREFIX):
-        return False, None, 0, 0
+        return False, None, 0, 0, False
 
     preceding = meaningful_event_before(_EventsHolder(events), kill_index)
     silence: float | None = None
@@ -236,23 +246,32 @@ def _parse_kill(path: Path) -> tuple[bool, float | None, int, int]:
     facts = reader._build_attempt_facts(tool_calls, "killed", kill_event.ts, path, False)
     paths = len(facts.paths_written) if facts is not None else 0
     commits = len(facts.commits) if facts is not None else 0
-    return True, silence, paths, commits
+    partial = ledger.build_ledger(tool_calls, path.name, state).completeness == "partial"
+    return True, silence, paths, commits, partial
 
 
 def _cause_phrase_for_failed(path: Path) -> tuple[str, str | None]:
     """(phrase, reset_time) from the same last-transcript-line rule
-    detectors/attempt_failed.py uses (docs/DESIGN.md 4.3): 'cause not
+    detectors/attempt_failed.py uses (docs/DESIGN.md 4.3, 4.13.2): 'cause not
     recorded' when the last entry carries none of the four runtime-produced
     markers attempt_failed itself recognizes."""
     diagnostics: list[str] = []
-    events, *_rest = reader._read_transcript(path, diagnostics)
+    events, _version, _session_id, _total, _bad, _tool_calls, marker_hits = (
+        reader._read_transcript(path, diagnostics)
+    )
     last_event = events[-1] if events else None
     if last_event is None:
         return "cause not recorded", None
-    if last_event.kind == "user" and last_event.text.startswith(KILL_SENTINEL_PREFIX):
+    # _cause_from_last_event only reads attempt.marker_hits; a bare
+    # namespace stands in for the real Attempt this one-off transcript was
+    # never otherwise built into.
+    pseudo_attempt = SimpleNamespace(marker_hits=marker_hits)
+    if last_event.kind == "user" and _attempt_failed._anchored_on_event(
+        pseudo_attempt, "kill_sentinel", last_event
+    ):
         return "interrupted before finishing", None
     if last_event.kind == "assistant":
-        matched = _attempt_failed._cause_from_last_event(last_event)
+        matched = _attempt_failed._cause_from_last_event(pseudo_attempt, last_event)
         if matched is not None:
             _cause, phrase, reset_time = matched
             return phrase, reset_time
@@ -264,12 +283,6 @@ def _cause_phrase_for_failed(path: Path) -> tuple[str, str | None]:
 
 def _line(word: str, rest: str) -> str:
     return f"{word:<{_LABEL_WIDTH}}{rest}"
-
-
-def _label_of(occurrence) -> str:
-    entry = occurrence.started_entry
-    label = entry.get("label") if isinstance(entry, dict) else None
-    return label if isinstance(label, str) else ""
 
 
 def _rate_limited(key: str, now: float, last_print: dict[str, float]) -> bool:
@@ -298,6 +311,85 @@ class _PendingFailed:
     polls: int = 0
 
 
+@dataclass
+class _PendingOk:
+    """A journal 'result' occurrence not yet resolved to a printed OK line
+    (docs/DESIGN.md 4.12, N8b K5.2), retried the same way as _PendingFailed."""
+
+    occurrence: object
+    polls: int = 0
+
+
+# The lifecycle terminals that make DONE eligible at once (docs/DESIGN.md 4.12): the
+# terminals a parent notification, a TaskStop, or a synchronous launch result can give.
+_IMMEDIATE_TERMINALS = frozenset({"completed", "failed", "stopped"})
+
+
+def _parent_signature(path: Path) -> tuple | None:
+    """(inode, size, mtime_ns, ctime_ns) of the parent transcript, None when it cannot be
+    statted. The parent index is refreshed only when this changes (docs/DESIGN.md 4.12)."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+# --- agent names (N3b P14, C-1, C-5, C-6) -----------------------------------
+
+WATCH_DIAGNOSTIC = f"agent-postmortem watch: {disclosure.UNAVAILABLE_DIAGNOSTIC}"
+
+
+class _AgentNames:
+    """The agent named on a watch line or in an event's `agent` field is the
+    event attempt's own stable alias `a:<alias>` (P14), the one `run` shows
+    for the same attempt. The agents known at start register in one call; an
+    agent first named by a later event registers then (one locked
+    registration per new agent, the book's slow path). If a registration
+    fails the book degrades: that event and every later one name agents
+    positionally (`agent-N`, numbered within this watch) while the lines
+    already printed stand (C-1). The diagnostic goes to stderr once, as the
+    one fixed line, in text and --json mode alike (C-6); stdout stays clean.
+
+    An attempt whose agentId is missing, null or not a canonical id (C-5) is
+    named by a positional `agent-N`, never by its label."""
+
+    def __init__(self, err) -> None:
+        self._err = err
+        self._diagnosed = False
+        self._book: disclosure.AliasBook | None = None
+
+    def _check(self) -> None:
+        if self._book is not None and not self._book.available and not self._diagnosed:
+            self._diagnosed = True
+            print(WATCH_DIAGNOSTIC, file=self._err)
+
+    def start(self, occurrences) -> None:
+        known: list[tuple[str, str]] = []
+        for occurrence in occurrences:
+            agent_id = occurrence.agent_id
+            if disclosure.is_canonical_id("agent", agent_id) and ("agent", agent_id) not in known:
+                known.append(("agent", agent_id))
+        self._book = disclosure.register(known) if known else disclosure.lazy_book()
+        self._check()
+
+    def started(self) -> bool:
+        return self._book is not None
+
+    def name(self, occurrence) -> str:
+        assert self._book is not None
+        agent_id = occurrence.agent_id
+        if disclosure.is_canonical_id("agent", agent_id):
+            alias = self._book.alias("agent", agent_id)
+        else:
+            # Not canonical: never an alias and never the label. The book
+            # numbers it positionally, in step with every other positional
+            # name of this watch.
+            alias = self._book.alias("agent", f"no-identity:{occurrence.key}:{occurrence.ordinal}")
+        self._check()
+        return disclosure.rendered_form("agent", alias)
+
+
 # --- the poll loop ----------------------------------------------------
 
 
@@ -321,9 +413,11 @@ def watch_run(
     if run_dir is None:
         return 2
     journal_path = run_dir / "journal.jsonl"
-    run_id = run_dir.name
+    # N3b C2: a directory name is printed as a run id only when it passes the
+    # reader's validator; otherwise the replacement `run` itself uses.
+    run_id = reader.valid_workflow_run_id(run_dir.name)
 
-    redactor = Redactor(enabled=True)
+    names = _AgentNames(err)
     offset = 0
     full_journal: list[dict] = []
     last_print: dict[str, float] = {}
@@ -331,11 +425,22 @@ def watch_run(
     handled_fail: set[tuple[str, int]] = set()
     pending_kill: dict[tuple[str, int], _PendingKill] = {}
     pending_fail: dict[tuple[str, int], _PendingFailed] = {}
+    handled_ok: set[tuple[str, int]] = set()
+    pending_ok: dict[tuple[str, int], _PendingOk] = {}
     quiet_threshold: dict[tuple[str, int], float] = {}
     resolved_since: float | None = None
     started_seen = 0
     next_line_no = 0
     malformed = False
+    start_printed = False
+    # docs/DESIGN.md 4.12 (N8b K5.4): the parent index and the stat signature it was last
+    # cleanly refreshed at, the newest parent generation launch line known after the previous
+    # poll, and the watermark a RESET leaves behind for the epoch it ended.
+    parent_path = reader._parent_transcript_path_for_workflow_dir(run_dir)
+    parent_index = reader.ParentIndex(None, [], [], []) if parent_path is None else None
+    parent_signature: tuple | None = None
+    known_newest_launch = 0
+    epoch_watermark = 0
 
     while True:
         try:
@@ -343,7 +448,9 @@ def watch_run(
         except JournalLineTooLong:
             # docs/DESIGN.md 4.12 (release finding F9): an immediate, final
             # verdict -- not gated on every key being resolved, unlike the
-            # malformed-complete-line case below.
+            # malformed-complete-line case below. A first poll that ends here prints
+            # no START: the journal was never parsed, so its counts are unknown and
+            # the exit is final (docs/DESIGN.md 4.12).
             if json_mode:
                 payload = {"event": "MALFORMED", "reason": "line longer than 1 MB"}
                 print(json.dumps(payload), file=out)
@@ -364,16 +471,22 @@ def watch_run(
             handled_fail = set()
             pending_kill = {}
             pending_fail = {}
+            handled_ok = set()
+            pending_ok = {}
             quiet_threshold = {}
             resolved_since = None
             started_seen = 0
             next_line_no = 0
             malformed = False
+            # K5.4: a new journal epoch. Generations launched up to the newest line known
+            # before this reset belong to the ended epoch and cannot finish the replacement.
+            epoch_watermark = known_newest_launch
             if json_mode:
                 print(json.dumps({"event": "RESET"}), file=out)
             else:
                 print(_line("RESET", "journal was truncated or replaced; state cleared."), file=out)
 
+        malformed_notice: int | None = None
         for raw_line in new_lines:
             next_line_no += 1
             try:
@@ -383,22 +496,29 @@ def watch_run(
             if not isinstance(entry, dict):
                 # docs/DESIGN.md 4.12 (release finding F9): a complete line
                 # that is not a JSON object is malformed evidence -- printed
-                # once, and DONE can never be printed again for this run.
+                # once (after START, K5.1), and DONE can never be printed
+                # again for this run.
                 if not malformed:
                     malformed = True
-                    if json_mode:
-                        payload = {
-                            "event": "MALFORMED", "line": next_line_no, "reason": "not JSON",
-                        }
-                        print(json.dumps(payload), file=out)
-                    else:
-                        print(f"MALFORMED journal line {next_line_no} is not JSON", file=out)
+                    malformed_notice = next_line_no
                 continue
             full_journal.append(entry)
 
         occurrences, _diagnostics = reader._run_journal_state_machine(full_journal)
-        for occurrence in occurrences:
-            redactor.names.agent(_label_of(occurrence))
+        if not names.started():
+            names.start(occurrences)
+
+        # docs/DESIGN.md 4.12 (K5.1): START is the first byte of output, once, ahead of the
+        # MALFORMED line this very poll parsed and ahead of every other event.
+        if not start_printed:
+            _emit_start(run_id, occurrences, json_mode, out)
+            start_printed = True
+        if malformed_notice is not None:
+            if json_mode:
+                payload = {"event": "MALFORMED", "line": malformed_notice, "reason": "not JSON"}
+                print(json.dumps(payload), file=out)
+            else:
+                print(f"MALFORMED journal line {malformed_notice} is not JSON", file=out)
 
         now = _now()
 
@@ -420,7 +540,7 @@ def watch_run(
         for handle in list(pending_kill.keys()):
             pending = pending_kill[handle]
             status = _try_emit_kill(
-                run_dir, run_id, redactor, pending.previous, pending.current, now, last_print,
+                run_dir, run_id, names, pending.previous, pending.current, now, last_print,
                 json_mode, out,
             )
             if status == "retry":
@@ -428,7 +548,7 @@ def watch_run(
                 if pending.polls < _MAX_PENDING_POLLS:
                     continue
                 _emit_kill_fallback(
-                    run_id, redactor, pending.previous, pending.current, json_mode, out,
+                    run_id, names, pending.previous, pending.current, json_mode, out,
                 )
             handled_kill.add(handle)
             del pending_kill[handle]
@@ -446,36 +566,82 @@ def watch_run(
         for handle in list(pending_fail.keys()):
             pending = pending_fail[handle]
             status = _try_emit_failed(
-                run_dir, redactor, pending.occurrence, now, last_print, json_mode, out,
+                run_dir, names, pending.occurrence, now, last_print, json_mode, out,
             )
             if status == "retry":
                 pending.polls += 1
                 if pending.polls < _MAX_PENDING_POLLS:
                     continue
                 _force_emit_failed(
-                    run_dir, redactor, pending.occurrence, now, last_print, json_mode, out,
+                    run_dir, names, pending.occurrence, now, last_print, json_mode, out,
                 )
             handled_fail.add(handle)
             del pending_fail[handle]
 
-        # DONE: every key resolved (docs/DESIGN.md section 3/4.1's own rule,
-        # reused verbatim rather than re-derived here), and no new `started`
-        # for done_grace seconds, so the gap between two sequential phases is
-        # not mistaken for the end of the run (docs/DESIGN.md 4.12). A
-        # malformed journal (release finding F9) makes DONE impossible: once
-        # every key would otherwise have resolved, LIMIT is printed instead.
+        # OK: a journal 'result' closed an attempt. Same handled-only-after-emission,
+        # bounded-retry treatment as FAILED (docs/DESIGN.md 4.12, N8b K5.2).
+        for occurrence in occurrences:
+            if occurrence.closed_by != "completed":
+                continue
+            handle = (occurrence.key, occurrence.ordinal)
+            if handle not in handled_ok and handle not in pending_ok:
+                pending_ok[handle] = _PendingOk(occurrence=occurrence)
+
+        for handle in list(pending_ok.keys()):
+            pending = pending_ok[handle]
+            status = _try_emit_ok(names, pending.occurrence, now, last_print, json_mode, out)
+            if status == "retry":
+                pending.polls += 1
+                if pending.polls < _MAX_PENDING_POLLS:
+                    continue
+                _force_emit_ok(names, pending.occurrence, now, last_print, json_mode, out)
+            handled_ok.add(handle)
+            del pending_ok[handle]
+
+        # DONE (docs/DESIGN.md 4.12, N8b K5.4). The parent index is refreshed only when the
+        # parent transcript's stat signature changed since the last clean refresh, and the
+        # signature is not remembered while the index still owes a full recheck (a transient
+        # read failure is retried on the next poll though the file did not change). The
+        # lifecycle table is evaluated from this poll's own occurrences, never from a second
+        # journal read.
+        if parent_path is not None:
+            signature = _parent_signature(parent_path)
+            if (
+                parent_index is None or signature != parent_signature
+                or parent_index.pending_full_recheck
+            ):
+                parent_index = reader.ParentIndex.for_path(parent_path)
+                parent_signature = None if parent_index.pending_full_recheck else signature
+        journal_resolved = reader.journal_resolved_from_occurrences(occurrences)
+        lifecycle = reader.lifecycle_from_journal_state(
+            run_dir, run_id, journal_resolved, parent_index, after_launch_line=epoch_watermark,
+        )
+        known_newest_launch = max(
+            (generation.launch_line for generation in parent_index.generations_for(run_id)),
+            default=0,
+        )
+
+        # Eligible at once from terminal evidence the journal did not give, or after the grace
+        # period once every key is resolved (the gap between two sequential phases is not the
+        # end of the run). A malformed journal (release finding F9) makes DONE impossible:
+        # LIMIT is printed instead, at the point DONE would have been. DONE waits for every
+        # already-detected KILL, FAILED, and OK transition to be emitted or forced.
         if len(occurrences) != started_seen:
             started_seen = len(occurrences)
             resolved_since = None
-        if reader.workflow_journal_finished(full_journal):
+        if journal_resolved:
             if resolved_since is None:
                 resolved_since = now
-            if now - resolved_since >= done_grace:
-                if malformed:
-                    return _emit_malformed_limit(json_mode, out)
-                return _emit_done(run_dir, json_mode, out)
         else:
             resolved_since = None
+        eligible = lifecycle.terminal in _IMMEDIATE_TERMINALS or (
+            lifecycle.terminal == "journal_resolved" and resolved_since is not None
+            and now - resolved_since >= done_grace
+        )
+        if eligible and not (pending_kill or pending_fail or pending_ok):
+            if malformed:
+                return _emit_malformed_limit(json_mode, out)
+            return _emit_done(run_dir, json_mode, out)
 
         # QUIET: the currently open attempt of every key, if any.
         last_by_key: dict[str, object] = {}
@@ -485,7 +651,7 @@ def watch_run(
             if occurrence.closed_by is not None:
                 continue
             _maybe_emit_quiet(
-                run_dir, redactor, key, occurrence, now, last_print, quiet_threshold,
+                run_dir, names, key, occurrence, now, last_print, quiet_threshold,
                 quiet_after, json_mode, out,
             )
 
@@ -501,10 +667,10 @@ def watch_run(
 
 
 def _emit_kill_line(
-    run_id: str, redactor: Redactor, previous, current, silence: float | None, paths: int,
-    commits: int, json_mode: bool, out,
+    run_id: str, names: _AgentNames, previous, current, silence: float | None, paths: int,
+    commits: int, json_mode: bool, out, *, paths_partial: bool = False,
 ) -> None:
-    agent = redactor.names.agent(_label_of(previous))
+    agent = names.name(previous)
     silence_int = None if silence is None else round(silence)
     silence_str = "unknown" if silence_int is None else str(silence_int)
 
@@ -532,7 +698,8 @@ def _emit_kill_line(
         print(
             _line(
                 "",
-                f"attempt {previous.ordinal} wrote {paths} paths, reported {commits} "
+                f"attempt {previous.ordinal} wrote {paths}{'+' if paths_partial else ''} paths, "
+                f"reported {commits} "
                 f"commits.  -> agent-postmortem rescue plan {run_id}",
             ),
             file=out,
@@ -540,7 +707,7 @@ def _emit_kill_line(
 
 
 def _try_emit_kill(
-    run_dir: Path, run_id: str, redactor: Redactor, previous, current, now: float,
+    run_dir: Path, run_id: str, names: _AgentNames, previous, current, now: float,
     last_print: dict[str, float], json_mode: bool, out,
 ) -> str:
     """Attempt to resolve one supersede transition to a printed KILL line
@@ -555,26 +722,29 @@ def _try_emit_kill(
     transcript_path = _transcript_path(run_dir, previous.agent_id)
     if not transcript_path.exists():
         return "retry"
-    is_kill, silence, paths, commits = _parse_kill(transcript_path)
+    is_kill, silence, paths, commits, partial = _parse_kill(transcript_path)
     if not is_kill:
         return "not_a_kill"
     if _rate_limited(previous.key, now, last_print):
         return "retry"
 
-    _emit_kill_line(run_id, redactor, previous, current, silence, paths, commits, json_mode, out)
+    _emit_kill_line(
+        run_id, names, previous, current, silence, paths, commits, json_mode, out,
+        paths_partial=partial,
+    )
     last_print[previous.key] = now
     return "emitted"
 
 
 def _emit_kill_fallback(
-    run_id: str, redactor: Redactor, previous, current, json_mode: bool, out,
+    run_id: str, names: _AgentNames, previous, current, json_mode: bool, out,
 ) -> None:
     """docs/DESIGN.md 4.12 (release finding F10): previous.polls reached
     _MAX_PENDING_POLLS with the transition still unresolved (the earlier
     transcript never appeared, or the rate limit never cleared) -- printed
     anyway, without the transcript-derived details, so a killed attempt can
     never be silently dropped forever."""
-    agent = redactor.names.agent(_label_of(previous))
+    agent = names.name(previous)
     if json_mode:
         payload = {
             "event": "KILL",
@@ -600,7 +770,7 @@ def _emit_kill_fallback(
 
 
 def _compute_and_emit_failed(
-    run_dir: Path, redactor: Redactor, occurrence, json_mode: bool, out,
+    run_dir: Path, names: _AgentNames, occurrence, json_mode: bool, out,
 ) -> None:
     phrase, reset_time = "cause not recorded", None
     if occurrence.agent_id:
@@ -608,7 +778,7 @@ def _compute_and_emit_failed(
         if transcript_path.exists():
             phrase, reset_time = _cause_phrase_for_failed(transcript_path)
 
-    agent = redactor.names.agent(_label_of(occurrence))
+    agent = names.name(occurrence)
     if json_mode:
         payload = {
             "event": "FAILED", "agent": agent, "attempt": occurrence.ordinal, "cause": phrase,
@@ -620,7 +790,7 @@ def _compute_and_emit_failed(
 
 
 def _try_emit_failed(
-    run_dir: Path, redactor: Redactor, occurrence, now: float, last_print: dict[str, float],
+    run_dir: Path, names: _AgentNames, occurrence, now: float, last_print: dict[str, float],
     json_mode: bool, out,
 ) -> str:
     """docs/DESIGN.md 4.12 (release finding F10): 'emitted' or 'retry'
@@ -629,19 +799,65 @@ def _try_emit_failed(
     emission, so it is never a reason to retry)."""
     if _rate_limited(occurrence.key, now, last_print):
         return "retry"
-    _compute_and_emit_failed(run_dir, redactor, occurrence, json_mode, out)
+    _compute_and_emit_failed(run_dir, names, occurrence, json_mode, out)
     last_print[occurrence.key] = now
     return "emitted"
 
 
 def _force_emit_failed(
-    run_dir: Path, redactor: Redactor, occurrence, now: float, last_print: dict[str, float],
+    run_dir: Path, names: _AgentNames, occurrence, now: float, last_print: dict[str, float],
     json_mode: bool, out,
 ) -> None:
     """release finding F10: occurrence.polls reached _MAX_PENDING_POLLS
     while only ever suppressed by the rate limit -- printed anyway, bypassing
     the limit, so a FAILED event can never be dropped forever either."""
-    _compute_and_emit_failed(run_dir, redactor, occurrence, json_mode, out)
+    _compute_and_emit_failed(run_dir, names, occurrence, json_mode, out)
+    last_print[occurrence.key] = now
+
+
+def _emit_start(run_id: str, occurrences: list, json_mode: bool, out) -> None:
+    """docs/DESIGN.md 4.12 (N8b K5.1): once, first. `agents` is the number of distinct journal
+    keys started so far and `attempts` the number of started occurrences."""
+    agents = len({occurrence.key for occurrence in occurrences})
+    attempts = len(occurrences)
+    if json_mode:
+        payload = {"event": "START", "run": run_id, "agents": agents, "attempts": attempts}
+        print(json.dumps(payload), file=out)
+    else:
+        print(
+            _line("START", f"{run_id}: {agents} agents started so far, {attempts} attempts."),
+            file=out,
+        )
+
+
+def _emit_ok_line(names: _AgentNames, occurrence, json_mode: bool, out) -> None:
+    agent = names.name(occurrence)
+    if json_mode:
+        payload = {"event": "OK", "agent": agent, "attempt": occurrence.ordinal}
+        print(json.dumps(payload), file=out)
+    else:
+        print(_line("OK", f"{agent} attempt {occurrence.ordinal} returned a result."), file=out)
+
+
+def _try_emit_ok(
+    names: _AgentNames, occurrence, now: float, last_print: dict[str, float], json_mode: bool,
+    out,
+) -> str:
+    """docs/DESIGN.md 4.12 (N8b K5.2): 'emitted' or 'retry' (suppressed by the per-agent rate
+    limit, the only reason an OK waits)."""
+    if _rate_limited(occurrence.key, now, last_print):
+        return "retry"
+    _emit_ok_line(names, occurrence, json_mode, out)
+    last_print[occurrence.key] = now
+    return "emitted"
+
+
+def _force_emit_ok(
+    names: _AgentNames, occurrence, now: float, last_print: dict[str, float], json_mode: bool,
+    out,
+) -> None:
+    """The bounded retry ran out: printed through the rate limit, so an OK is never dropped."""
+    _emit_ok_line(names, occurrence, json_mode, out)
     last_print[occurrence.key] = now
 
 
@@ -658,7 +874,7 @@ def _emit_malformed_limit(json_mode: bool, out) -> int:
 
 
 def _maybe_emit_quiet(
-    run_dir: Path, redactor: Redactor, key: str, occurrence, now: float,
+    run_dir: Path, names: _AgentNames, key: str, occurrence, now: float,
     last_print: dict[str, float], quiet_threshold: dict[tuple[str, int], float],
     quiet_after: float, json_mode: bool, out,
 ) -> None:
@@ -679,7 +895,7 @@ def _maybe_emit_quiet(
     if _rate_limited(key, now, last_print):
         return
 
-    agent = redactor.names.agent(_label_of(occurrence))
+    agent = names.name(occurrence)
     silence_int = round(silence)
     if json_mode:
         payload = {
@@ -697,7 +913,7 @@ def _maybe_emit_quiet(
 def _emit_done(run_dir: Path, json_mode: bool, out) -> int:
     run = reader.load_run(run_dir)
     findings = detectors.run_detectors(run)
-    verdict = report.verdict_word(findings, run.status)
+    verdict = report.verdict_of(run, findings)
     agents = len(run.agents)
     attempts = len(run.attempts)
 
@@ -716,7 +932,13 @@ def _emit_done(run_dir: Path, json_mode: bool, out) -> int:
             ),
             file=out,
         )
-    return 3 if verdict.startswith("FAILED") else 0
+    # docs/DESIGN.md 4.12, 4.13.11 (N5c-2), ordered: a FAILED verdict is 3, ahead of a run
+    # whose lifecycle terminal is `unknown`, which cannot be called a clean DONE and is 4.
+    if verdict.startswith("FAILED"):
+        return 3
+    if run.lifecycle is not None and run.lifecycle.terminal == "unknown":
+        return 4
+    return 0
 
 
 def _format_hours(max_hours: float) -> str:

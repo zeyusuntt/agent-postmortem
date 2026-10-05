@@ -1,23 +1,35 @@
 """Detects a tool call whose input failed the runtime's own JSON validation.
 
-DESIGN.md 4.3: minor severity, fires when a tool_result contains the
-tool-input validation marker (TOOL_INPUT_INVALID in markers.py). This is a
-runtime defect an agent cannot route around, so there is no rule_id; it goes
-into the bug report instead. metrics: count, tools (the distinct tool names
-that hit it). Skips a read_only_output event (docs/DESIGN.md 4.3's
-self-reference rule): a Read/Grep/cat/sed/etc. call can only ever be
-quoting a marker string that already exists on disk, never reporting a
-tool-input failure that actually happened to this agent.
+DESIGN.md 4.3: minor severity, fires on every anchored, not-in-payload
+'tool_input_invalid' MarkerHit (docs/DESIGN.md 4.13.2: the registry's own
+shape already excludes a StructuredOutput call, which gets its own
+'structured_output_mismatch' id instead). This is a runtime defect an agent
+cannot route around, so there is no rule_id; it goes into the bug report
+instead. metrics: count, tools (the distinct tool names that hit it). Skips
+a read_only_output event (docs/DESIGN.md 4.3's self-reference rule): a
+Read/Grep/cat/sed/etc. call can only ever be quoting a marker string that
+already exists on disk, never reporting a tool-input failure that actually
+happened to this agent.
 """
 
 from __future__ import annotations
 
-from ..markers import TOOL_INPUT_INVALID
+from .. import severity as severity_rules
 from ..models import Event, Finding, Run
-from .base import KINDS_BOTH, Detector, evidence_line, make_finding_id, tooling_attempts
+from .base import (
+    KINDS_BOTH,
+    Detector,
+    anchored_marker_hits,
+    event_for_marker_hit,
+    evidence_line,
+    make_finding_id,
+    tooling_attempts,
+)
 
 ID = "tool_json_error"
 SEVERITY = "minor"
+_REGISTRY_MARKER = "tool_input_invalid"
+
 
 class ToolJsonError:
     id = ID
@@ -28,15 +40,13 @@ class ToolJsonError:
         hits: list[Event] = []
         agent_id: str | None = None
         for attempt in tooling_attempts(run):
-            for event in attempt.events:
-                if event.kind not in ("tool_result", "attachment"):
+            for hit in anchored_marker_hits(attempt, _REGISTRY_MARKER):
+                event = event_for_marker_hit(attempt, hit)
+                if event is None or event.read_only_output:
                     continue
-                if event.read_only_output:
-                    continue
-                if any(marker in event.markers for marker in TOOL_INPUT_INVALID):
-                    hits.append(event)
-                    if agent_id is None:
-                        agent_id = attempt.agent_id
+                hits.append(event)
+                if agent_id is None:
+                    agent_id = attempt.agent_id
         if not hits:
             return []
 
@@ -49,7 +59,7 @@ class ToolJsonError:
         return [
             Finding(
                 detector=ID,
-                severity=SEVERITY,
+                severity=severity_rules.resolve(run, ID),
                 title=title,
                 run_id=run.run_id,
                 agent_id=agent_id,

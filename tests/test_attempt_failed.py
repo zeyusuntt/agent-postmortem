@@ -55,6 +55,21 @@ def test_usage_limit_weekly_cause_and_reset_time():
     assert "weekly usage limit reached, resets Monday 9am" in finding.title
 
 
+def test_usage_limit_reset_time_is_still_extracted_with_leading_whitespace():
+    """docs/DESIGN.md 4.13.2: the anchored kill_sentinel/usage-limit check is
+    computed on the flattened text AFTER leading whitespace is stripped.
+    reset_time extraction must agree with it -- reading the same, stripped
+    text -- rather than the raw, unstripped Event.text excerpt, else a cause
+    that correctly fires (anchored on the stripped text) could silently lose
+    its reset_time (the unstripped startswith check fails) for no reason a
+    reader could see from the cause alone."""
+    run = reader.load_run(CAUSES)
+    finding = _findings_by_agent(run)["af100000000000007"]
+    assert finding.metrics["cause"] == "usage_limit_session"
+    assert finding.metrics["reset_time"] == "2pm"
+    assert "session usage limit reached, resets 2pm" in finding.title
+
+
 def test_machine_sleep_cause_has_no_reset_time_and_can_retry_now():
     run = reader.load_run(CAUSES)
     finding = _findings_by_agent(run)["af100000000000003"]

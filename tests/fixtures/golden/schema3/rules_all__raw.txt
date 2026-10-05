@@ -1,0 +1,66 @@
+##### case fleet
+exit=0
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "raw",
+  "rules": [
+    {
+      "rule_id": "R-ASSERT-ARTIFACT",
+      "title": "Assert a required artifact exists before consuming it",
+      "count": 6
+    },
+    {
+      "rule_id": "R-CAP-CONCURRENCY",
+      "title": "Cap concurrent heavy agents per parallel() call",
+      "count": 0
+    },
+    {
+      "rule_id": "R-CODEX-CONTRACT",
+      "title": "Give a Codex reviewer an unambiguous read or write contract",
+      "count": 4
+    },
+    {
+      "rule_id": "R-GIT-CWD",
+      "title": "Give every agent an explicit repository path",
+      "count": 0
+    },
+    {
+      "rule_id": "R-MODEL-ALLOCATION",
+      "title": "Set an explicit model or agentType on every agent() call",
+      "count": 0
+    },
+    {
+      "rule_id": "R-MONITOR-RETRIES",
+      "title": "Monitor a workflow for silent retries",
+      "count": 4
+    },
+    {
+      "rule_id": "R-NO-LONG-BASH",
+      "title": "Never run a Bash command that can outlive its timeout",
+      "count": 4
+    },
+    {
+      "rule_id": "R-RETRY-SAFE",
+      "title": "Recover from a killed attempt without losing work",
+      "count": 9
+    },
+    {
+      "rule_id": "R-SCALAR-SCHEMA",
+      "title": "Keep structured-output schemas to scalars and paths",
+      "count": 1
+    },
+    {
+      "rule_id": "R-SMALL-QUANTUM",
+      "title": "Keep each agent() call to one milestone",
+      "count": 0
+    },
+    {
+      "rule_id": "R-USAGE-LIMIT",
+      "title": "Do not relaunch before a usage limit resets",
+      "count": 3
+    }
+  ]
+}
+<<<STDERR>>>
+<<<END>>>

@@ -1,0 +1,52 @@
+##### case fleet
+exit=0
+<<<STDOUT>>>
+{
+  "schema": 3,
+  "disclosure": "share",
+  "reviews": [
+    {
+      "rule_id": "R-GIT-CWD",
+      "target_kind": "project instructions",
+      "detectors": [
+        "git_cwd_mismatch"
+      ],
+      "adopted_at": "2026-09-10",
+      "target": "target-1",
+      "before": {
+        "runs": 2,
+        "fired": 0,
+        "rate": 0.0
+      },
+      "after": {
+        "runs": 17,
+        "fired": 0,
+        "rate": 0.0
+      }
+    },
+    {
+      "rule_id": "R-RETRY-SAFE",
+      "target_kind": "workflow prompt",
+      "detectors": [
+        "silent_retry"
+      ],
+      "adopted_at": "2026-09-15T00:00:00Z",
+      "target": "target-2",
+      "before": {
+        "runs": 2,
+        "fired": 1,
+        "rate": 0.5
+      },
+      "after": {
+        "runs": 8,
+        "fired": 2,
+        "rate": 0.25
+      }
+    }
+  ],
+  "consider_removing": [
+    "R-GIT-CWD"
+  ]
+}
+<<<STDERR>>>
+<<<END>>>

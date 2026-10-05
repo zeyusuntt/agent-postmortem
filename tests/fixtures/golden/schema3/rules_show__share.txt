@@ -1,0 +1,16 @@
+##### case show
+exit=0
+<<<STDOUT>>>
+{
+  "disclosure": "share",
+  "rule_id": "R-RETRY-SAFE",
+  "title": "Recover from a killed attempt without losing work",
+  "enforcement": "prompt",
+  "detectors": [
+    "silent_retry"
+  ],
+  "target_kind": "workflow prompt",
+  "text": "Every implementation prompt begins: You may be a retry after a killed attempt. First run git status and git diff --stat; if uncommitted work exists, verify it and commit it before continuing. Never git checkout, restore, or stash a file holding uncommitted work."
+}
+<<<STDERR>>>
+<<<END>>>

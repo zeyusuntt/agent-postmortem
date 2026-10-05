@@ -87,8 +87,12 @@ Expected numbers: attempts 2, keys 2, retries 0, silent kills 0.
 
 ### `silent_retry_kill` (packaged as `wf_00000000-d30`)
 
-Moved into the package (`src/agent_postmortem/demo/wf_00000000-d30/`, docs/
-DESIGN.md 5.4/6/8.2) once the packaged demo landed; it is no longer under
+Moved into the package (`src/agent_postmortem/demo/-home-user-project/
+00000000-0000-4000-8000-000000000000/subagents/workflows/wf_00000000-d30/`,
+with its parent session transcript at
+`src/agent_postmortem/demo/-home-user-project/00000000-0000-4000-8000-000000000000.jsonl`:
+a user turn, the Workflow launch, its result and a completed notification;
+docs/DESIGN.md 5.4/6/8.2) once the packaged demo landed; it is no longer under
 `tests/fixtures/runs/`. Its directory is named `wf_00000000-d30` (a
 conforming workflow run id, M8 review D8) rather than a hash-fallback id, so
 `agent-postmortem demo`'s own RUN header never depends on

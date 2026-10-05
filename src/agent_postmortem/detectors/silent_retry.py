@@ -24,6 +24,7 @@ section 4.3.
 
 from __future__ import annotations
 
+from .. import severity as severity_rules
 from ..markers import KILL_SENTINEL_PREFIX
 from ..models import Attempt, Event, Finding, Run
 from .base import (
@@ -94,6 +95,7 @@ class SilentRetry:
     def run(self, run: Run) -> list[Finding]:
         findings: list[Finding] = []
         burst = _run_has_burst(run)
+        work_risk: str | None = None  # run-level (4.13.4), read once and only when needed
 
         for agent in run.agents:
             attempts = sorted(agent.attempts, key=lambda a: a.ordinal)
@@ -130,6 +132,13 @@ class SilentRetry:
                 f"{format_duration(wasted_seconds)} wasted"
             )
             agent_id = final.agent_id
+            if work_risk is None:
+                work_risk = severity_rules.work_risk(run)
+            severity = severity_rules.resolve(
+                run, self.id,
+                recovered=severity_rules.recovered(run, attempts[0], include_self=False),
+                work_risk=work_risk,
+            )
             rule_ids = ("R-RETRY-SAFE", "R-CAP-CONCURRENCY") if burst else ("R-RETRY-SAFE",)
             finding_id = make_finding_id(
                 run.run_id, self.id, agent_id, evidence[0] if evidence else None
@@ -137,7 +146,7 @@ class SilentRetry:
 
             findings.append(Finding(
                 detector=self.id,
-                severity=self.severity_default,
+                severity=severity,
                 title=title,
                 run_id=run.run_id,
                 agent_id=agent_id,

@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 
 from agent_postmortem import hooks_cli, reader
+from agent_postmortem.models import raw_diagnostic
 
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "runs"
 RESOLVED = FIXTURES_ROOT / "journal_state_resolved"
@@ -88,7 +89,7 @@ def test_superseded_attempt_without_sentinel_is_superseded_and_incomplete():
     assert attempts[0].interrupt is None
     assert attempts[1].outcome == "completed"
     assert run.status == "INCOMPLETE"
-    assert any("jsm-superseded" in diag for diag in run.diagnostics)
+    assert any("jsm-superseded" in raw_diagnostic(diag) for diag in run.diagnostics)
 
 
 # --- 6. started, failed, failed ------------------------------------------
@@ -100,7 +101,7 @@ def test_second_failed_event_is_an_orphan_diagnostic():
     assert len(attempts) == 1
     assert attempts[0].outcome == "failed"
     assert run.status == "INCOMPLETE"
-    assert any("jsm-double-fail" in diag for diag in run.diagnostics)
+    assert any("jsm-double-fail" in raw_diagnostic(diag) for diag in run.diagnostics)
 
 
 # --- failed closing an attempt whose own transcript also ends in the -----
@@ -132,7 +133,7 @@ def test_failed_alone_creates_no_attempt_and_is_unfinished():
     assert run.attempts == []
     assert run.finished is False
     assert run.status == "INCOMPLETE"
-    assert any("jsm-orphan-failed" in diag for diag in run.diagnostics)
+    assert any("jsm-orphan-failed" in raw_diagnostic(diag) for diag in run.diagnostics)
 
 
 # --- 8. started, then result carrying a foreign agentId ------------------
@@ -147,7 +148,7 @@ def test_result_with_foreign_agent_id_closes_nothing():
     assert attempts[0].outcome == "completed"
     assert run.finished is False
     assert run.status == "INCOMPLETE"
-    assert any("jsm-foreign-agent" in diag for diag in run.diagnostics)
+    assert any("jsm-foreign-agent" in raw_diagnostic(diag) for diag in run.diagnostics)
 
 
 # --- hooks_cli._workflow_finished uses the same rule ---------------------
