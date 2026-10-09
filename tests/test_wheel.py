@@ -36,7 +36,9 @@ def test_demo_works_imported_straight_from_the_wheel_zip(tmp_path):
     """docs/DESIGN.md 8.2's D4: the demo path is resolved through
     importlib.resources.as_file, so it must work with agent_postmortem
     imported directly out of the .whl (itself a zip) on sys.path -- never
-    unpacked to a real directory at all."""
+    unpacked to a real directory at all. On Python 3.11, which cannot extract a directory
+    that way, the interpreter running this suite gets the documented exit 2 instead (the test
+    below pins its one line); the suite must pass on every supported version."""
     wheel = _build_wheel(tmp_path)
     result = subprocess.run(
         [sys.executable, "-c",
@@ -45,8 +47,13 @@ def test_demo_works_imported_straight_from_the_wheel_zip(tmp_path):
          str(wheel)],
         capture_output=True, text=True,
     )
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.startswith("RUN ")
+    if sys.version_info >= (3, 12):
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.startswith("RUN ")
+    else:
+        assert result.returncode == 2, result.stderr
+        assert "Traceback" not in result.stderr
+        assert "install the wheel with pip, uv, or pipx" in result.stderr
 
 
 PYTHON_3_11 = shutil.which("python3.11")

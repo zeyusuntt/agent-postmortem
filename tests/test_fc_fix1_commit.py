@@ -99,7 +99,7 @@ def _agent_table_commits(out):
 def test_fc1_the_commits_cell_keeps_its_lower_bound_mark(tmp_path, capsys, command):
     run = _killed_run(tmp_path, command)
     out, _ = _at_risk_line(run, capsys)
-    assert _agent_table_commits(out) == "0+"
+    assert _agent_table_commits(out) == "?"  # G-B G4: it was "0+"
 
 
 def test_fc1_a_call_that_printed_its_id_adds_no_clause(tmp_path, capsys):

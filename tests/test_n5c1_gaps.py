@@ -394,7 +394,7 @@ def test_a_write_command_target_is_named_beside_the_shell_command(tmp_path, monk
     block = _block(_run_text(capsys, run_dir, "--raw"))
     assert block[0].startswith("WORK AT RISK  1 attempt at risk: 1 path named, 0 commits reported;")
     assert block[1] == (
-        f"  {_aid(1)}  named 1 path in write commands; "
+        f"  {_aid(1)} (impl-1)  named 1 path in write commands; "  # G-A (G6)
         "ran 1 shell command that may have written more"
     )
 
@@ -409,7 +409,7 @@ def test_the_guard_line_leaves_out_an_interrupted_child_already_listed(tmp_path,
     block = _block(capsys.readouterr().out)
     guard = [line for line in block if "outside this list" in line]
     assert guard == [
-        f"  1 subagent outside this list never returned a result to the main session: {ids[1]}"
+        f"  1 subagent outside this list has no established return: {ids[1]}"  # G-A (W1)
     ]
 
 

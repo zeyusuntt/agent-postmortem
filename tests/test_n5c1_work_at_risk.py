@@ -50,7 +50,11 @@ def _run_text(capsys, target, *flags):
 
 
 def _attempt_ident(level: str, number: int) -> str:
-    return ALIAS if level == "share" else re.escape(_aid(number))
+    # G-A (G6): the agent is named as the AGENT table names it: `a:<alias> (agent-N)` at share,
+    # `<id> (<label>)` at local and raw (was the bare id)
+    if level == "share":
+        return ALIAS + r" \(agent-\d+\)"
+    return re.escape(_aid(number)) + re.escape(f" (impl-{number})")
 
 
 def _match(lines: list[str], patterns: list[str]) -> None:
@@ -177,7 +181,8 @@ def test_a_refused_group_at_raw_ends_with_the_runnable_command(tmp_path, monkeyp
     assert block == [
         "WORK AT RISK  1 attempt at risk: 1 path named, 1 commit reported; "
         "the tool cannot see all of what was written.",
-        f"  {_aid(1)}  wrote 1 path (file tools); ran 1 shell command that may have written more",
+        f"  {_aid(1)} (impl-1)  wrote 1 path (file tools); ran 1 shell command that may have "
+        "written more",  # G-A G6: the agent is named with its label
         f"  run yourself: git -C {repo} status --short",
         "  run yourself: git status --short in the repository the agent worked in",
         f"    hint: an attempt ran in {repo}",
@@ -215,7 +220,7 @@ def test_a_refused_group_at_share_names_the_alias_and_points_at_local(
     _match(block, [
         re.escape("WORK AT RISK  1 attempt at risk: 1 path named, 1 commit reported; "
                   "the tool cannot see all of what was written."),
-        "  " + ALIAS + re.escape(
+        "  " + ALIAS + r" \(agent-\d+\)" + re.escape(  # G-A G6
             "  wrote 1 path (file tools); ran 1 shell command that may have written more"),
         r"  run yourself: git status --short in path-\d+; --raw prints the exact command",
         re.escape("  run yourself: git status --short in the repository the agent worked in"),
@@ -249,7 +254,7 @@ def test_shell_commands_without_a_path_are_not_none_and_say_what_is_known(
         "WORK AT RISK  1 attempt at risk: 0 paths named, 0 commits reported; "
         "the tool cannot see all of what was written."
     )
-    assert block[1] == f"  {_aid(1)}  ran 2 shell commands that may have written more"
+    assert block[1] == f"  {_aid(1)} (impl-1)  ran 2 shell commands that may have written more"
 
 
 def test_an_unrecognized_tool_and_a_delegation_each_get_their_clause(
@@ -263,7 +268,7 @@ def test_an_unrecognized_tool_and_a_delegation_each_get_their_clause(
     run_dir = _workflow(tmp_path, monkeypatch, "a5c", [Att(1, steps=steps)])
     block = _block(_run_text(capsys, run_dir, "--raw"))
     assert block[1] == (
-        f"  {_aid(1)}  called 2 unrecognized tools that may have written; "
+        f"  {_aid(1)} (impl-1)  called 2 unrecognized tools that may have written; "
         "delegated 1 call that may have written"
     )
 
@@ -274,7 +279,7 @@ def test_an_attempt_level_partial_reason_is_named_in_its_line(tmp_path, monkeypa
     run_dir = _workflow(tmp_path, monkeypatch, "a5d", [Att(1, steps=[unpaired])])
     block = _block(_run_text(capsys, run_dir, "--raw"))
     assert block[1] == (
-        f"  {_aid(1)}  tried 1 path with no confirmed result; "
+        f"  {_aid(1)} (impl-1)  tried 1 path with no confirmed result; "
         "ledger incomplete (unpaired_write_call)"
     )
 
@@ -288,7 +293,7 @@ def test_an_attempt_that_wrote_nothing_the_ledger_names_is_listed_plainly(
         Att(2, key="v2:b", start=40, steps=[Step("u1", "Read", {"file_path": "/tmp/ws/x"}, "t", False, "/tmp/ws")]),
     ])
     block = _block(_run_text(capsys, run_dir, "--raw"))
-    assert block[2] == f"  {_aid(2)}  wrote nothing the ledger names"
+    assert block[2] == f"  {_aid(2)} (impl-2)  wrote nothing the ledger names"
 
 
 # --- an incomplete population ----------------------------------------------------------------------
@@ -353,10 +358,12 @@ def test_a_session_child_that_never_returned_makes_none_unknown(tmp_path, capsys
         tmp_path, [(72, [], False, True), (73, [], False, False)],
     )
     block = _session_block(main, capsys, "--raw")
+    # G-A (W1): the child has no launch evidence and a fresh transcript, so it reads
+    # `possibly running` (was: `never returned a result to the main session`)
     assert block == [
-        "WORK AT RISK  unknown: 1 subagent never returned a result to the main session; "
+        "WORK AT RISK  unknown: 1 subagent has no established return (1 possibly running); "
         "the tool cannot say what it wrote.",
-        f"  {ids[1]}  no result returned to the main session",
+        f"  {ids[1]}  possibly running",
     ]
 
 
@@ -366,8 +373,8 @@ def test_the_no_sentinel_unpaired_write_child_is_unknown(tmp_path, capsys):
         tmp_path, [(74, [_write_unpaired(74, repo)], False, False)],
     )
     block = _session_block(main, capsys, "--raw")
-    assert block[0].startswith("WORK AT RISK  unknown: 1 subagent never returned")
-    assert block[1] == f"  {ids[0]}  no result returned to the main session"
+    assert block[0].startswith("WORK AT RISK  unknown: 1 subagent has no established return")
+    assert block[1] == f"  {ids[0]}  possibly running"  # G-A (W1)
 
 
 def test_two_unreturned_children_use_the_plural_and_share_hides_the_real_ids(tmp_path, capsys):
@@ -376,13 +383,13 @@ def test_two_unreturned_children_use_the_plural_and_share_hides_the_real_ids(tmp
     )
     raw = _session_block(main, capsys, "--raw")
     assert raw[0] == (
-        "WORK AT RISK  unknown: 2 subagents never returned a result to the main session; "
-        "the tool cannot say what they wrote."
+        "WORK AT RISK  unknown: 2 subagents have no established return (2 possibly running); "
+        "the tool cannot say what they wrote."  # G-A (W1)
     )
     shared = _session_block(main, capsys)
     assert shared[0] == raw[0]
     assert all(real not in line for line in shared for real in ids)
-    assert all(re.fullmatch(r"  (a:[0-9a-f]{12,}|agent-\d+)  no result returned to the main session",
+    assert all(re.fullmatch(r"  (a:[0-9a-f]{12,}|agent-\d+)  possibly running",
                             line) for line in shared[1:])
 
 
@@ -397,7 +404,7 @@ def test_an_interrupted_child_is_in_the_population_and_the_guard_still_names_oth
     block = _session_block(main, capsys, "--raw")
     assert block[0] == "WORK AT RISK  1 attempt at risk: 1 path named, 0 commits reported."
     assert f"  {ids[0]}  wrote 1 path (file tools)" in block
-    assert f"  1 subagent outside this list never returned a result to the main session: {ids[1]}" in block
+    assert f"  1 subagent outside this list has no established return: {ids[1]}" in block  # G-A (W1)
 
 
 def test_the_session_main_thread_is_listed_as_main(tmp_path, capsys):

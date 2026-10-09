@@ -166,8 +166,6 @@ def _write_and_exec_sink_calls() -> list[tuple[str, int, str, ast.Call]]:
 _ALLOWED_SINK_CALLS = {
     ("hooks_cli.py", 266, "path.open"):
         "_iter_json_lines: read a unit's own journal/transcript line by line, mode 'r'",
-    ("hooks_cli.py", 326, "path.open"):
-        "_subagent_ends_with_kill_sentinel: read a transcript's own last line, mode 'r'",
     ("observe.py", 256, "subprocess.run"):
         "observe.py's one documented git invocation point (docs/DESIGN.md 4.9 rule 4): "
         "git_path is always the shutil.which('git') result below, argv is always one of "
@@ -178,17 +176,17 @@ _ALLOWED_SINK_CALLS = {
     ("observe.py", 576, "shutil.which"):
         "_GitSession.ready: the same one-time git lookup for the per-repository groups "
         "(docs/DESIGN.md 4.9, N5c-1); a read-only PATH lookup, writes nothing",
-    ("reader.py", 373, "path.open"): "read a run's own file line by line, mode 'r'",
-    ("reader.py", 414, "path.open"): "read a run's own file line by line, mode 'r'",
-    ("reader.py", 827, "journal_path.open"): "read journal.jsonl line by line, mode 'r'",
-    ("reader.py", 1105, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
-    ("reader.py", 2206, "path.open"):
-        "_fork_scan: read a session main transcript's lines to find a fork's inherited "
-        "prefix boundary (docs/DESIGN.md 4.2, FA4), mode 'r', never written",
-    ("reader.py", 2294, "transcript_path.open"): "read a transcript line by line, mode 'r'",
-    ("reader.py", 2403, "transcript_path.open"):
+    # GC-1b: the session sniffers, _fork_scan (docs/DESIGN.md 4.2, FA4), _read_transcript, the
+    # hook's kill-sentinel check and rescue's task text all read through _transcript_lines
+    ("reader.py", 375, "path.open"):
+        "_ends_in_torn_line: read a transcript's last bytes backwards, mode 'rb', never written",
+    ("reader.py", 405, "path.open"): "_transcript_lines: read a transcript line by line, mode 'r'",
+    ("reader.py", 413, "path.open"):
+        "_transcript_lines: read on past a torn last line, mode 'r' (surrogateescape)",
+    ("reader.py", 914, "journal_path.open"): "read journal.jsonl line by line, mode 'r'",
+    ("reader.py", 1192, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
+    ("reader.py", 2647, "transcript_path.open"):
         "probe that a transcript can be opened at all, immediately closed again, mode 'r'",
-    ("rescue.py", 559, "path.open"): "read a transcript line by line, mode 'r'",
     ("state.py", 231, "os.open"):
         "_backup_writer: create 'state.json.corrupt-<timestamp>' inside the state "
         "directory, O_CREAT|O_EXCL, never a caller-named path (docs/DESIGN.md 7.5)",
@@ -257,10 +255,10 @@ _ALLOWED_SINK_CALLS = {
         "inside the state directory (docs/DESIGN.md 7.5, N3a)",
     ("watch.py", 174, "path.open"):
         "_read_new_journal_lines: read appended journal bytes, mode 'rb', never written",
-    ("reader.py", 3232, "self.path.open"):
+    ("reader.py", 3488, "self.path.open"):
         "ParentIndex._hash_prefix: re-read already-parsed prefix bytes to validate the "
         "incremental cache, mode 'rb', never written",
-    ("reader.py", 3429, "self.path.open"):
+    ("reader.py", 3686, "self.path.open"):
         "ParentIndex._parse_increment: read appended parent-transcript bytes, mode 'rb', "
         "never written",
 }

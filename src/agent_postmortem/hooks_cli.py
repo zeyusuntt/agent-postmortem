@@ -323,12 +323,16 @@ def _subagent_ends_with_kill_sentinel(path: Path) -> bool:
     skipped in favor of an earlier, valid line."""
     last_line: str | None = None
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            for raw_line in handle:
+        with reader._transcript_reader(path) as lines:
+            for _line_no, raw_line, torn in lines:
+                if torn:
+                    # docs/DESIGN.md 4.1 (G-C, GC-1): a last line cut inside a character is a
+                    # partial write still in flight: not finished
+                    return False
                 stripped = raw_line.strip()
                 if stripped:
                     last_line = stripped
-    except OSError:
+    except (OSError, UnicodeError):
         return False
     if last_line is None:
         return False
@@ -368,22 +372,70 @@ def _background_task_status(tasks: object, agent_id: str) -> str | None:
     return None
 
 
-def _subagent_finished_evidence(path: Path, agent_id: str, payload: dict, parent_index) -> bool:
-    """docs/DESIGN.md 7.2's D2: a subagent unit is finished only with
-    authoritative evidence -- its last line is a kill sentinel, or the
-    parent main transcript's own tool_result already names this agent id
-    (parent_index.tool_result_agent_ids, docs/DESIGN.md 7.2's light index of
-    the main transcript), or the payload itself lists it as finished. An
-    assistant text entry with no tool_use is never evidence: it is also the
-    ordinary shape of an agent still waiting for its next turn. A payload
-    entry that names this agent id as still running is checked first and
-    overrides every other signal -- the runtime's own live view wins."""
+def _unit_fingerprint(
+    kind: str, path: Path, main_transcript: Path, main_cache: dict,
+) -> list[list]:
+    """The unit's fingerprint (docs/DESIGN.md 7.2): its files' (name, size, mtime_ns) and, for a
+    subagent (H1, v0.3.1), a digest of the main-side evidence for the child (its launch and
+    resume ids, lines, timestamps and result classes, and its accepted notifications) and,
+    when the child is nested, the launcher transcript's size, mtime_ns and inode. GA-3: also the
+    child's current (return_state, return_reason) and a stable token for each of the main
+    transcript, the meta file and a nested launcher that cannot be read (and for a decision that
+    raised), so a read failure that leaves every file's size and mtime alone still changes it."""
+    entries = _fingerprint(_unit_files(kind, path))
+    if kind != "subagent":
+        return entries
+    try:
+        decision, digest, launcher, unreadable = reader.session_child_return(
+            main_transcript, path, main_cache
+        )
+    except Exception:
+        entries.append(["#unreadable:decision", 1, 0])
+        entries.sort(key=lambda entry: entry[0])
+        return entries
+    entries.append(["#main", len(digest), int(digest, 16)])
+    word = f"{decision.state}/{decision.reason}".encode("ascii", "replace")
+    entries.append(["#return", len(word), int(hashlib.sha256(word).hexdigest()[:12], 16)])
+    for token in unreadable:
+        entries.append([f"#unreadable:{token}", 1, 0])
+    if launcher is not None:
+        try:
+            st = launcher.stat()
+            entries.append([f"#launcher:{st.st_ino}", st.st_size, st.st_mtime_ns])
+        except OSError:
+            entries.append(["#launcher:missing", 0, 0])
+    entries.sort(key=lambda entry: entry[0])
+    return entries
+
+
+def _subagent_finished_evidence(
+    path: Path, agent_id: str, payload: dict, main_transcript: Path, main_cache: dict,
+) -> bool:
+    """docs/DESIGN.md 7.2's D2 and H1: a subagent unit is finished only with
+    authoritative evidence -- its last line is a kill sentinel, or its return
+    state (4.13.1, T0 to T5, read from the main transcript and, for a nested
+    child, its launcher read as evidence only) is `returned`,
+    `reported_failed` or `reported_killed`, or the payload itself lists it as
+    finished. An assistant text entry with no tool_use is never evidence: it
+    is also the ordinary shape of an agent still waiting for its next turn. A
+    payload entry that names this agent id as still running is checked first
+    and overrides every other signal -- the runtime's own live view wins."""
     task_status = _background_task_status(payload.get("background_tasks"), agent_id)
     if task_status == "running":
         return False
     if _subagent_ends_with_kill_sentinel(path):
         return True
-    if agent_id in parent_index.tool_result_agent_ids:
+    # docs/DESIGN.md 7.2 (H1, v0.3.1): finished only when the child's return state (4.13.1,
+    # T0 to T5) is terminal; an asynchronous launch with no notification, a resume in
+    # progress and an unestablished return are not
+    try:
+        decision, _digest, _launcher, _unreadable = reader.session_child_return(
+            main_transcript, path, main_cache
+        )
+    except Exception:
+        # fail closed: evidence that cannot be read is not evidence of a return
+        return task_status == "finished"
+    if decision.state in ("returned", "reported_failed", "reported_killed"):
         return True
     return task_status == "finished"
 
@@ -540,19 +592,19 @@ def _check_one_unit(
         )
 
     files = _unit_files(kind, path)
-    current_fp = _fingerprint(files)
+    current_fp = _unit_fingerprint(kind, path, main_transcript, main_cache)
     fp_unchanged = prev is not None and prev_fp == current_fp
 
     # docs/DESIGN.md 7.2's D1: an analyzed unit is re-statted every check.
     # Unchanged, it is left exactly as it was; changed (appended to,
-    # deleted and recreated under the same id, ...), it goes back to
-    # running with stable_checks reset, keeping its reported finding ids so
-    # a finding already surfaced is never re-notified just because the
-    # surrounding content moved.
-    if prev_state == "analyzed":
-        if fp_unchanged:
-            return _UnitOutcome(entry=dict(prev), notify=None)
-        return _UnitOutcome(entry=_skeleton(current_fp, "running", 0), notify=None)
+    # deleted and recreated under the same id, ...), it is re-opened with
+    # stable_checks reset, keeping its reported finding ids so a finding
+    # already surfaced is never re-notified just because the surrounding
+    # content moved.
+    if prev_state == "analyzed" and fp_unchanged:
+        return _UnitOutcome(entry=dict(prev), notify=None)
+    # GA-8: a changed analyzed unit is re-opened below with stable_checks reset, and its finished
+    # evidence is evaluated in this same check (it is not parked as `running` first).
 
     # docs/DESIGN.md 7.2's D7: fingerprint first. An unchanged unit advances
     # stable_checks without reparsing anything, unless this is the one
@@ -574,9 +626,10 @@ def _check_one_unit(
         if kind == "workflow":
             content_finished = _workflow_finished(path / "journal.jsonl")
         else:
-            parent_index = reader.ParentIndex.for_path(main_transcript)
             agent_id = path.stem.removeprefix("agent-")
-            content_finished = _subagent_finished_evidence(path, agent_id, payload, parent_index)
+            content_finished = _subagent_finished_evidence(
+                path, agent_id, payload, main_transcript, main_cache
+            )
         state_word = "finished" if content_finished else "running"
 
     if state_word not in ("finished", "unknown"):
@@ -635,7 +688,7 @@ def _check_one_unit(
     # docs/DESIGN.md 7.2: re-stat after parsing; a fingerprint that moved
     # while parsing means the unit is still being written, so it stays
     # pending and nothing is emitted this check.
-    post_fp = _fingerprint(_unit_files(kind, path))
+    post_fp = _unit_fingerprint(kind, path, main_transcript, main_cache)
     if post_fp != current_fp:
         return _UnitOutcome(entry=_skeleton(post_fp, "running", 0), notify=None)
 

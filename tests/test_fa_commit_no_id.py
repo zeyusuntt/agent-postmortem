@@ -260,9 +260,10 @@ def _commits_cell(out):
     return lines[header + 1][column:].split()[0]
 
 
-def test_fa6_commits_reads_zero_plus_for_a_quiet_commit(tmp_path, capsys):
+def test_fa6_commits_reads_a_question_mark_for_a_quiet_commit(tmp_path, capsys):
+    # G-B G4 (v0.3.1): no known id and an id-less commit call reads `?`, it was `0+`
     run, _ = _attempt_facts(tmp_path, _call("git add -A; git commit -q -m x"))
-    assert _commits_cell(_text(run, capsys)) == "0+"
+    assert _commits_cell(_text(run, capsys)) == "?"
 
 
 def test_fa6_commits_reads_a_plain_count_when_every_commit_printed_its_id(tmp_path, capsys):

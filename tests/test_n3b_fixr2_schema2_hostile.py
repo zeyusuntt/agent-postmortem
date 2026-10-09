@@ -44,8 +44,8 @@ HOSTILE = " ".join([
 # item (4.13.8). N5a-1: the digests of the schema-3 output (they were the schema-2 output of
 # 95c5e36 and of the titles-only correction, 0dc0b462... and 920dc6c2...). Share
 # uses a fixed installation secret, so its aliases are stable bytes.
-RAW_SHA256 = "e4c324f9540e7c7c511ca0d815827c9e4b72fd524d39f9647cd82e0336d03ab2"
-SHARE_SHA256 = "ef43319b5ffda440771efdb4e0380d89598dc1243aec1d4e190c4a7c1f62c283"
+RAW_SHA256 = "1bcbbe70a0f744882e063d71f3ac188b75aa7038653c70580a84d7407958357e"  # G-A: the 3 new attempt keys
+SHARE_SHA256 = "c98edc3dac82499b91e70b586932a243f39d3705dc9b2727dc076e4c0cdadebb"  # G-B1: reported.keys is key-N at share
 # What share printed at 95c5e36 for the two titles that carry the label.
 OLD_SHARE_TITLES = [
     "impl:u uuid:5555 email:29da95 project:f057c4 attempt 1 failed: "

@@ -21,11 +21,12 @@ from .. import severity as severity_rules
 from ..markers import USAGE_LIMIT_SESSION, USAGE_LIMIT_WEEKLY
 from ..models import Attempt, Event, Finding, Run
 from .base import (
-    KINDS_WORKFLOW_ONLY,
+    KINDS_BOTH,
     Detector,
     anchored_marker_hits,
     evidence_line,
     make_finding_id,
+    relative_path,
 )
 
 ID = "attempt_failed"
@@ -139,10 +140,13 @@ def _retry_outcome(run: Run, attempt: Attempt) -> tuple[str, str]:
 class AttemptFailed:
     id = ID
     severity_default = SEVERITY
-    kinds = KINDS_WORKFLOW_ONLY
+    kinds = KINDS_BOTH
 
     def run(self, run: Run) -> list[Finding]:
         findings: list[Finding] = []
+
+        if run.kind == "session":
+            return self._session_findings(run)
 
         for attempt in run.attempts:
             if attempt.outcome != "failed":
@@ -200,5 +204,55 @@ class AttemptFailed:
 
         return findings
 
+
+    def _session_findings(self, run: Run) -> list[Finding]:
+        """docs/DESIGN.md 4.3 (G1c, v0.3.1): one major finding per session subagent whose
+        `return_state` is `reported_failed`; `reported_killed` adds none. The cause names what
+        decided it (a synchronous launch result or a task notification), the retry advice is
+        unknown, and the severity is the table's row for `recovered=unknown`."""
+        findings: list[Finding] = []
+        for attempt in run.attempts:
+            if attempt.return_state != "reported_failed" or attempt.return_evidence is None:
+                continue
+            source, path, line = attempt.return_evidence
+            cause = (
+                "launch_result_failed" if source == "launch_result" else "task_notification_failed"
+            )
+            phrase = _SESSION_CAUSE_PHRASES[cause]
+            event = next(
+                (
+                    candidate
+                    for holder in (run.main, *run.attempts) if holder is not None
+                    for candidate in holder.events
+                    if candidate.path == path and candidate.line_no == line
+                ),
+                None,
+            )
+            pointer = (
+                evidence_line(run, event) if event is not None
+                else f"{relative_path(run, path)}:{line}"
+            )
+            severity = severity_rules.resolve(run, ID, recovered="unknown")
+            title = f"{attempt.label or 'subagent'} failed: {phrase}"
+            findings.append(
+                Finding(
+                    detector=ID,
+                    severity=severity,
+                    title=title,
+                    run_id=run.run_id,
+                    agent_id=attempt.agent_id,
+                    evidence=[pointer],
+                    metrics={"cause": cause, "retry_now": "unknown", "reset_time": None},
+                    rule_id=None,
+                    finding_id=make_finding_id(run.run_id, ID, attempt.agent_id, pointer),
+                )
+            )
+        return findings
+
+
+_SESSION_CAUSE_PHRASES = {
+    "launch_result_failed": "its launch result reported failure",
+    "task_notification_failed": "its task notification reported failure",
+}
 
 DETECTOR: Detector = AttemptFailed()

@@ -480,6 +480,19 @@ class Attempt:
     # whether it returned a result to its parent (reader._LaunchLog.child_returned).
     # Never in to_dict, never exported.
     returned_to_parent: bool | None = None
+    # docs/DESIGN.md 4.1, 4.13.1 (v0.3.1, G-A): the return state of a session subagent (T0 to
+    # T5), its reason, and the number of delivered resumes; None / None / 0 for every other
+    # attempt. `returned_to_parent` is exactly `return_state == "returned"`.
+    return_state: str | None = None
+    return_reason: str | None = None
+    resumes: int = 0
+    # Reader-internal (never in to_dict): what decided a `reported_failed` state,
+    # (source, transcript path, line) with source `launch_result` or `notification`.
+    return_evidence: tuple | None = field(default=None, compare=False, repr=False)
+    # docs/DESIGN.md 4.3 (G3, v0.3.1): claims.SelfReport of the journal `result` this attempt
+    # was closed with (None for a hand-built attempt or one with no dict result). Reader-internal:
+    # in no to_dict, no export; it keeps no key name and no value.
+    _self_report: object = field(default=None, compare=False, repr=False)
     # Reader-internal (never in to_dict): what reading this attempt's transcript
     # saw that the ledger's reasons need (ledger.TranscriptState); None for a
     # hand-built attempt.
@@ -516,7 +529,27 @@ class Attempt:
             "marker_hits": [hit.to_dict() for hit in self.marker_hits],
             "journal_state": self.journal_state,
             "ledger": self.ledger.to_dict() if self.ledger is not None else None,
+            "return_state": self.return_state,
+            "return_reason": self.return_reason,
+            "resumes": self.resumes,
         }
+
+
+def effective_end(attempt: "Attempt") -> str:
+    """docs/DESIGN.md 5.3b (E1): what the evidence establishes about how an attempt ended. A
+    workflow attempt (and the session main thread): its `outcome`. A session subagent: the kill
+    sentinel (`outcome` killed) first, then its return state (`returned` completed,
+    `reported_failed` failed, `reported_killed` killed, `pending` open, `unknown` unknown).
+    The internal `outcome` stays private and keeps driving risk, ledgers, WASTED and rescue."""
+    state = attempt.return_state
+    if state is None:
+        return attempt.outcome
+    if attempt.outcome == "killed":
+        return "killed"
+    return {
+        "returned": "completed", "reported_failed": "failed", "reported_killed": "killed",
+        "pending": "open",
+    }.get(state, "unknown")
 
 
 @dataclass

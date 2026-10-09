@@ -24,6 +24,9 @@ exit=0
         "agent_type": "general-purpose",
         "ordinal": 1,
         "outcome": "killed",
+        "return_state": null,
+        "return_reason": null,
+        "resumes": 0,
         "first_ts": "2026-01-06T19:00:00+00:00",
         "last_ts": "2026-01-06T19:10:00+00:00",
         "usage": {
@@ -76,6 +79,9 @@ exit=0
         "agent_type": "general-purpose",
         "ordinal": 2,
         "outcome": "completed",
+        "return_state": null,
+        "return_reason": null,
+        "resumes": 0,
         "first_ts": "2026-01-06T19:10:05+00:00",
         "last_ts": "2026-01-06T19:25:05+00:00",
         "usage": {
@@ -111,6 +117,9 @@ exit=0
         "agent_type": "general-purpose",
         "ordinal": 1,
         "outcome": "killed",
+        "return_state": null,
+        "return_reason": null,
+        "resumes": 0,
         "first_ts": "2026-01-06T19:30:00+00:00",
         "last_ts": "2026-01-06T19:40:00+00:00",
         "usage": {
@@ -163,6 +172,9 @@ exit=0
         "agent_type": "general-purpose",
         "ordinal": 2,
         "outcome": "completed",
+        "return_state": null,
+        "return_reason": null,
+        "resumes": 0,
         "first_ts": "2026-01-06T19:40:05+00:00",
         "last_ts": "2026-01-06T19:55:05+00:00",
         "usage": {

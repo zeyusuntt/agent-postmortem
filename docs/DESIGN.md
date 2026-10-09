@@ -344,30 +344,27 @@ class Attempt:
         # with no journal key. Separate from `outcome` (a superseded attempt
         # whose transcript ends in the kill sentinel has outcome 'killed' and
         # journal_state 'superseded'). In to_dict(); never in export_run()
-    returned_to_parent: bool | None  # (v0.3, N5c-1, 4.13.1) a typed private
-        # field: None for a workflow attempt and for the session main thread;
-        # for a session subagent, whether it returned a result to its parent,
-        # computed in the reader from the parent snapshot the launch
-        # reconciliation uses. True only when exactly one assistant Agent or
-        # Task launch block has the launch's `tool_use_id` (no other tool_use
-        # block shares it) and exactly one `tool_result` for it (results
-        # identical as parsed JSON count once) carries this child's id, in
-        # either id location with both equal when both are present, is not an
-        # error, is not the rejected shape, and has string ids; and no other
-        # launch names the same child. A result whose `toolUseResult.status`
-        # is `completed` (and `isAsync` is not true), or that has no status
-        # at all, is a return; a result with status `async_launched` or
-        # `isAsync` true (N5 fix 1, S2) returns the child only when an
-        # accepted task notification (4.13.3's acceptance rules, with the
-        # return-specific boundary of 4.13.1's Return evidence: the
-        # notification line is after the Agent or Task launch `tool_use` line,
-        # FA3) has task-id equal to the child's id, tool-use-id equal to that
-        # launch's id, and status `completed`, with no such accepted
-        # notification of the same pair carrying another status; any other status string, or a non-string
-        # one, is not a return. False for a missing, error, rejected,
-        # malformed, duplicate, or conflicting result, a duplicated launch id,
-        # and a discovered child with no matching launch (fail closed). Not
-        # in to_dict() and never in export_run()
+    return_state: str | None  # (v0.3.1, G-A, 4.13.1) None for a workflow attempt
+        # and the session main thread; for a session subagent exactly one of
+        # `returned`, `reported_failed`, `reported_killed`, `pending`,
+        # `unknown`: what the parent-side evidence (the launch, the resume
+        # requests, the main transcript's accepted task notifications; truth
+        # table T1 to T5 of 4.13.1) establishes about its return. Fail
+        # closed: whatever cannot be established is `unknown`. In to_dict();
+        # exported (5.3b)
+    return_reason: str | None  # (v0.3.1) None for a workflow attempt and the main
+        # thread; for a session subagent one of `none` (the state is not
+        # `unknown`; a `pending` child whose latest round has no notification
+        # yet is `pending`/`none`), `no_evidence`, `conflict`, `malformed`,
+        # `delivery_unknown`, `ambiguous`, `parent_unreadable`,
+        # `parent_missing`, `status_unrecognized`. Exported (5.3b)
+    resumes: int  # (v0.3.1) 0 for a workflow attempt and for every child that was
+        # never resumed; for a session subagent the number of delivered
+        # SendMessage requests that resumed it (4.13.1 T3). Exported (5.3b)
+    returned_to_parent: bool | None  # (v0.3, N5c-1; v0.3.1) a typed private field,
+        # exactly `return_state == "returned"` for a session subagent, None for
+        # a workflow attempt and the session main thread. Not in to_dict()
+        # and never in export_run()
 
 @dataclass
 class Interrupt:
@@ -564,6 +561,14 @@ machine never closed, and every session attempt, is decided by the
 transcript alone: `killed` when its last user event is the kill sentinel,
 `completed` otherwise, `unknown` without a transcript.
 
+(v0.3.1, G-A) That transcript-only outcome of a session subagent is the INTERNAL outcome: it keeps
+driving the risk population, the ledgers, WASTED and the rescue units. What the report and the
+JSON say about whether the child ended is its effective end (5.3b): a function of the kill
+sentinel and `return_state` (4.1, 4.13.1), decided from the parent-side evidence, never from a
+modification time. The reader reads, besides the main transcript, the launcher transcript of a
+nested child and the other session transcripts that may hold a resume request (T3), as
+evidence only: they are never analyzed attempts and their diagnostics reach no run.
+
 Parent transcript index (implemented in N1, 4.13.3): for any attempt whose
 transcript ends in the kill sentinel, the reader needs the parent main
 transcript (`<root>/<slug>/<session>.jsonl`, derived from the run path). A
@@ -680,7 +685,14 @@ failure (N4 fix, C2): one diagnostic `<transcript name>: unreadable: <error>`
 marker hit, and launch record discarded, the other transcript-state flags
 cleared, and so a ledger of exactly `Ledger([], 'partial',
 ['transcript_unreadable', ...run-level reasons])`; the run is `INCOMPLETE`
-and the read never raises. The journal, the meta files, and the parent
+and the read never raises. One exception (G-C, GC-1): a final physical line with no trailing
+newline whose bytes are not valid UTF-8 is a half-written line, whether the cut falls between
+characters or inside one. It is handled exactly like a half line of ASCII: one `<transcript
+name>:<n>: ...` diagnostic that quotes none of the line, one more undecodable line in the
+transcript's count, `TranscriptState.undecodable` set, and the transcript stays readable. An
+undecodable byte anywhere else, a torn line that is followed by a newline included, keeps the rule
+above. A hook's kill-sentinel check (7.2) treats such a tail as a partial write, not finished, and
+never raises on it. The journal, the meta files, and the parent
 transcript carry their own guards (a journal `UnicodeError` or `OSError` is a
 `journal.jsonl: undecodable` or `unreadable` diagnostic, a meta file's is a
 `<meta name>` diagnostic, an undecodable parent line is an `undecodable
@@ -722,10 +734,20 @@ rule, and `severity.py` (N5b) is the one place that table lives in code.
 | codex_write_denied | critical | both | a sandbox denial or shell-guard marker in an assistant event whose text starts with "[codex]" (the companion's output echoed), or in a Bash tool_result whose output starts with "[codex]" or whose command runs `codex` as the first word of a command segment (optionally path-qualified) or names `codex-companion.mjs` (the word inside command data, a heredoc body or a file name such as "review-codex.txt", does not count). Measured on the build machine: 23 of 23 real denials were companion output; assistant prose quoting the marker was never one | count, marker | R-CODEX-CONTRACT, R-ASSERT-ARTIFACT |
 | classifier_unavailable | minor | both | tool_result carries both classifier-outage fragments | count | none |
 | git_cwd_mismatch | minor | both | Bash tool_result carries the not-a-git-repository marker | count | R-GIT-CWD |
+| permission_denied (G7, v0.3.1) | minor | both | one finding per attempt, the main thread of a session included, that holds at least one anchored `permission_denied` hit (4.13.2): an `is_error` tool result whose text starts with a runtime denial sentence | count, auto_mode, user, permission_rule, safety_check | none |
 | missing_artifact | critical | both | first user message names an absolute path it must write and the path does not exist at scan time; outside allowed roots: info 'unverified' | paths, verified | R-ASSERT-ARTIFACT |
-| attempt_failed | major/minor | workflow | an attempt's `outcome` is `failed` (major when no later attempt of the key completed -- whether or not one was even tried; minor when a later attempt did complete) | cause, retry_now, reset_time | R-USAGE-LIMIT when cause is a usage limit |
-| claim_contradiction | major | workflow | a `completed` attempt's own dict `reported` reports a failure: `tests_failed`/`suite_failed` > 0, `ok`/`ready` false, `blockers_count` > 0, or a set `report_path` absent on disk (a relative path is unverified, never counted; the path is checked only when the run ended at most 72 hours ago or its end time is unknown, since temp reports are cleaned up later) | clauses, claims | none |
+| attempt_failed | major/minor | both | a workflow attempt's `outcome` is `failed` (major when no later attempt of the key completed -- whether or not one was even tried; minor when a later attempt did complete); a session subagent's `return_state` is `reported_failed` (G1c, v0.3.1: one major finding, title `<label> failed: <cause phrase>`, `launch_result_failed` when a synchronous launch result decided it and `task_notification_failed` when a notification did, `retry_now` `unknown`, `reset_time` null, evidence the deciding result or notification `file:line`; `reported_killed` adds no finding) | cause, retry_now, reset_time | R-USAGE-LIMIT when cause is a usage limit |
+| claim_contradiction | major | workflow | a `completed` attempt's own dict `reported` reports a failure: `tests_failed`/`suite_failed` > 0, `ok`/`ready` false, `blockers_count` > 0, or a set `report_path` absent on disk (a relative path is unverified, never counted; the path is checked only when the run ended at most 72 hours ago or its end time is unknown, since temp reports are cleaned up later); (G3, v0.3.1) or, when no tests, suite, ok, ready or blockers clause holds, a returned result whose top level carries a failure count of its own (`self_reported_failure`) or `blocked: true` (`self_reported_blocked`) | clauses, claims, and for the G3 clauses `self_reported_failure_counts`, `self_reported_blocked` | none |
 | workflow_failed (v0.3, N2, 4.13.3, implemented in N2) | major | workflow | the run's own `Lifecycle.terminal` is `failed` -- the harness itself reported this workflow failed, independent of whatever the journal says | none | none (section 9 names no rule for this detector) |
+
+**A `reported_killed` child adds no finding, and the session header can stay CLEAN (GA-10, v0.3.1).**
+A child whose only evidence of an end is a task notification or launch result saying `killed`,
+`stopped` or `cancelled` (no kill sentinel in its transcript) is usually a deliberate stop: a
+TaskStop by the parent or the user. A finding would call a requested stop a failure, so the
+detector emits none. The facts are not hidden: the AGENT END cell says `killed`, the exported
+`outcome` is `killed`, and WORK AT RISK says `unknown` (`<n> reported killed` in its breakdown) because the
+tool cannot say what the child wrote before it stopped. The header verdict stays `CLEAN` with such
+children; this is the one place where the verdict and the return state can differ, kept on purpose.
 
 **(v0.3, N5b) Inputs and rule per detector.** This table extends the one
 above; every row of it is a row of `severity.RULES`, and a detector never
@@ -737,19 +759,20 @@ chooses a severity any other way. Input names and their values are those of
 attempt has no later attempt of its key in `Run.attempts` or has no key,
 `non_final` otherwise). A clause of `claim_contradiction` is one of
 `tests_failed`, `suite_failed`, `ok_false`, `ready_false`, `blockers` (each
-the "tests/ok/ready/blockers" row) or `report_path_missing`.
+the "tests/ok/ready/blockers" row), `report_path_missing`, or (G3, v0.3.1)
+`self_reported_failure` or `self_reported_blocked`.
 
 | id | inputs | rule |
 |---|---|---|
 | workflow_failed | terminal | `failed`: major |
-| attempt_failed | recovered | `no`, `unknown`: major; `yes`: minor |
+| attempt_failed | recovered | `no`, `unknown`: major; `yes`: minor (a session subagent that reported failure passes `unknown`: major; `recovered` is never a metric) |
 | silent_retry | recovered, work_risk | `no`, `unknown` (any work_risk): major; `yes` with `present` or `unknown`: major; `yes` with `none`: minor |
 | mislabeled_kill | cause, silence, position | `parent_stop` or `human`, anything: info; a `short` or `unknown` silence, any cause, any position: info (the literal 4.13.4 row; N5 fix 1 reverses the N5b reading that let a non-final position override a short silence); `runtime` or `unattributed`, `long`, `final`: major; `runtime` or `unattributed`, `long`, `non_final`: minor |
 | wasted_time | none | info |
-| bash_backgrounded, bash_timeout, tool_json_error, classifier_unavailable, git_cwd_mismatch | none | minor |
+| bash_backgrounded, bash_timeout, tool_json_error, classifier_unavailable, git_cwd_mismatch, permission_denied (G7) | none | minor |
 | structured_output_failure | recovered | `no`, `unknown`: major; `yes`: minor |
 | codex_write_denied | none | minor, one finding per attempt, `rule_ids` `["R-CODEX-CONTRACT", "R-ASSERT-ARTIFACT"]` |
-| claim_contradiction | clause, absence | a tests, suite, ok, ready, or blockers clause (absence `none`, not applicable): major; `report_path_missing` with `absent_now` or `unknown`: info |
+| claim_contradiction | clause, absence | a tests, suite, ok, ready, blockers, `self_reported_failure` or `self_reported_blocked` clause (absence `none`, not applicable): major; `report_path_missing` with `absent_now` or `unknown`: info |
 | missing_artifact | obligation, absence | `prompt_path` with `absent_now` or `unknown`: info |
 
 Every tuple a row does not list, including a value outside an input's
@@ -803,6 +826,31 @@ How the derived inputs are read (N5b):
   later attempt completed", "a later attempt completed") uses the same
   "completed with a result" test as `recovered`, so the tail and the
   severity cannot disagree.
+
+**A returned result that reports a failure count (G3, v0.3.1).** One shared predicate,
+`claims.self_reported_problems(result) -> SelfReport(failed_counts: int, blocked: bool)` (a stdlib
+module used by the reader, the detector, the audit and the corpus check), reads the top level of a
+journal `result` dict only: `failed_counts` is the number of keys that end in `_failed` and hold an
+`int` (a `bool` is not one) above 0, leaving out the two keys the legacy clauses read
+(`tests_failed`, `suite_failed`); `blocked` is true when the key `blocked` is exactly `true`. No
+free-text key is read, no nested value is read, and `blockers_fixed`, `blocker_kind`,
+`blocked_reason`, `errors`, `failures`, `blocked: "yes"` and a nested `{"x": {"a_failed": 1}}`
+count for nothing. The reader keeps only the `SelfReport` on the attempt (a private field, in no
+`to_dict`, no export, no JSON). A `completed` attempt with a non-empty `SelfReport` and no tests,
+suite, ok, ready or blockers clause gets one `claim_contradiction` with the clause
+`self_reported_failure` (`failed_counts` above 0) or `self_reported_blocked` (blocked alone), major
+at every level, so an attempt carries exactly one major `claim_contradiction` through the legacy
+clauses or this one. Its title is the fixed sentence `completed, but its own returned result reports
+failures in <n> field(s)` or `completed, but its own returned result reports it was blocked` (`n` is
+`failed_counts`, the number of positive `*_failed` fields, never a sum of their values; failure
+counts win when both hold; keys are compared as written, so `X_FAILED` counts for nothing), its metrics add `self_reported_failure_counts`
+and `self_reported_blocked`, and its evidence is the one pointer `journal.jsonl:<line>` of the
+`result` event, never an excerpt. A `report_path_missing` clause on the same attempt stays in
+`metrics.clauses` and the finding keeps this title and severity. Neither a key name nor any result text reaches a finding title,
+metric, evidence line, story, rescue brief or bug report at any disclosure level (the
+`reported.keys` list of 5.3 is the one place a result key is exported, and at share it lists
+pseudonyms, G-B1, GB-8). A story and the rescue brief say `<n> failure count(s)`
+or `being blocked`.
 
 Marker provenance (implemented in N1, 4.13.2): every "carries the ... marker"
 cell above (bash_backgrounded, bash_timeout, tool_json_error,
@@ -860,7 +908,7 @@ with no excerpt at all: `<transcript>:<line>: attempt <ordinal> started`.
 
 The main attempt of a session run is scanned by the tooling detectors
 (bash_*, tool_json_error, structured_output_failure, codex_write_denied,
-classifier_unavailable, git_cwd_mismatch) and never by mislabeled_kill or
+classifier_unavailable, git_cwd_mismatch, permission_denied) and never by mislabeled_kill or
 missing_artifact. Whether a main-session interrupt was human is not
 knowable from the transcript (a `-p` session has no human either); v0.1
 records this as a documented limit rather than guessing.
@@ -1161,8 +1209,8 @@ one wasted-time rule stated at 4.3's `wasted_time` row).
 Session: "session ran `<T>`; `<N>` subagents, `<K>` interrupted (`<U>`
 unattributed); retries not observable." (unchanged from v0.1's session
 summary line, `report._session_summary_line`) plus the same failed-sentence
-when one applies -- `attempt_failed` is workflow-only today, so this never
-actually fires on a session, but the two account builders share the one
+when one applies -- (G1c, v0.3.1) a session subagent that reported failure is one
+`attempt_failed` finding, so the two account builders share the one
 failed-clause function rather than duplicating it, and likewise the one
 wasted-clause function: the same "`<W>` was spent on retries and attempts that
 ended without a result." follows when the session's `wasted_seconds` is above 0
@@ -1178,7 +1226,7 @@ then indented lines in this order. Exact strings (the owner reviews them):
   in both cases the risk population is complete and every population ledger is
   complete with no `observed`, `claimed_target`, or `attempted` entry
   (`severity.work_risk` is `none`, 4.13.4), and, for a session, every subagent
-  outside the population has `returned_to_parent` true (4.13.1). Nothing follows
+  outside the population has `return_state` `returned` (4.13.1). Nothing follows
   it. (The old single sentence said "killed or failed attempts wrote no paths"
   even when nothing had been killed or failed.)
 - `WORK AT RISK  unknown: the tool could not establish which attempts were at
@@ -1208,10 +1256,11 @@ then indented lines in this order. Exact strings (the owner reviews them):
   occurs. That phrase list is joined with "; " to the discovery words when both
   `unassignable_attempt` and `discovery_incomplete` apply, and the same words end
   the `the list of attempts at risk may be incomplete:` line below.
-- `WORK AT RISK  unknown: <k> subagent(s) never returned a result to the main
-  session; the tool cannot say what it (they) wrote.` when the population is
-  empty and complete but the session guard fails, followed by one line per such
-  subagent, `  <id>  no result returned to the main session`.
+- `WORK AT RISK  unknown: <k> subagent(s) have no established return (<breakdown>);
+  the tool cannot say what they wrote.` (`1 subagent has ... what it wrote`) when
+  the population is empty and complete but the session guard fails, followed by
+  one line per such subagent, `  <name>  <reason>`; the breakdown and the
+  reasons are the W1 words in the paragraph below the numbered list (v0.3.1).
 - otherwise `WORK AT RISK  <n> attempt(s) at risk: <p> path(s) named, <c>
   commit(s) reported` ending `.` when every population ledger is complete and the
   population is complete, else `; the tool cannot see all of what was written.`
@@ -1227,8 +1276,10 @@ then indented lines in this order. Exact strings (the owner reviews them):
 Then, for a non-`none` block, in order:
 
 1. One line per population attempt, `  <id>  <clause>; <clause>`, the id being
-   `a:<alias>` at share, the real agent id at local and raw (`main` for a session
-   main thread). Clauses, each only when its count is above zero: `wrote <n>
+   (G6, v0.3.1) the agent as the AGENT table names it at that level: `a:<alias>
+   (agent-3)` at share, `<real id> (<label>)` at local and raw (`main` for a session
+   main thread; an empty label shows the id alone). The same naming is used by every
+   subagent line below. Clauses, each only when its count is above zero: `wrote <n>
    path(s) (file tools)` (distinct `observed` paths), `named <n> path(s) in write
    commands` (`claimed_target`), `tried <n> path(s) with no confirmed result`
    (`attempted`), `ran <k> shell command(s) that may have written more` (Bash and
@@ -1259,9 +1310,20 @@ Then, for a non-`none` block, in order:
    --short in the repository the agent worked in`, and at local and raw only one
    `    hint: an attempt ran in <cwd>` line per distinct absolute cwd of the
    unknown group's attempts (first seen order, at most three).
-5. For a session, when some subagent outside the population has `returned_to_parent`
-   not true: `  <k> subagent(s) outside this list never returned a result to the
-   main session: <ids>` (aliases at share).
+5. For a session, when some subagent outside the population has `return_state`
+   other than `returned` (W1, v0.3.1): `  <k> subagent(s) outside this list have no
+   established return: <names>` (`1 subagent ... has`), names as in item 1.
+
+When the population is empty, complete, and a session subagent has no established return, the
+block is `WORK AT RISK  unknown: <k> subagent(s) have no established return (<breakdown>); the
+tool cannot say what they wrote.` (`1 subagent has ... what it wrote`), then one `  <name>
+<reason>` line per such subagent. The breakdown lists, in this order and omitting zero counts,
+`<n> reported failed`, `<n> reported killed`, `<n> possibly running` (`pending` or `unknown`
+and the child's transcript modified within 600 seconds), `<n> no return evidence found` (stale
+and `pending`, or `unknown`/`no_evidence`: a readable parent with nothing for this child or its
+latest round; ` in its parent agent` is appended to the per-child reason of a nested child),
+`<n> return could not be established` (stale and any other `unknown` reason). The per-child
+reason is the same phrase. The words `never returned` appear nowhere.
 
 No rendering prints a repository path or a real id at `share`.
 
@@ -1309,12 +1371,18 @@ different renderer, untouched by this unit).
 
 AGENT table: `AGENT`, `PHASE` (kept only when at least one logical agent of
 this run actually carries a nonempty phase; a session's subagents never do,
-so a session's table never shows it), `ATTEMPTS`, `END` (one of
+so a session's table never shows it), `ATTEMPTS`, `RESUMES` (G9, v0.3.1: only when some
+subagent of a session run has `resumes` above 0; the count, blank for 0), `END` (one of
 `completed`, `killed`, `failed`, `stopped by parent`, `interrupted`,
-`superseded`, `no result`, `unknown`, derived from the final attempt's own
+`superseded`, `no result`, `possibly running`, `unknown`, derived from the final attempt's own
 `outcome` and, for a `killed` outcome, its `interrupt.cause`: `parent_stop`
 reads `stopped by parent`, `human` reads `interrupted`, `runtime`/
-`unattributed` read `killed`; **(v0.3, N2, 4.13.3, implemented in N2)** a
+`unattributed` read `killed`; (G1, v0.3.1) a session subagent's END comes from its
+effective end (5.3b): `completed`, `failed` and `killed` as proven by its return state (a kill
+sentinel still reads by its interrupt cause), and `open` or `unknown` read `possibly running`
+when the child's transcript was modified within 600 seconds (`UNKNOWN_QUIET_SECONDS`) and
+`unknown` otherwise; a proven state is never changed by the modification time; **(v0.3, N2,
+4.13.3, implemented in N2)** a
 workflow attempt whose own per-key journal occurrence was never closed by a
 `result`/`failed` event -- still open at the end of the journal the reader
 actually read -- reads `no result` instead of whatever `completed` the
@@ -1329,10 +1397,11 @@ unreadable included, N8 fix 1, S1), since the count is then a lower
 bound, `N` when every ledger is complete, `?` when no attempt has a ledger and no attempt's
 facts could be established at all; every shell call leaves its ledger partial, C-15, so a
 shell-only write reads `1+`),
-`COMMITS` (the union of `commits`, no `?` marker; FA6: `N+` when any of the agent's
-attempts has a positive `commit_commands_without_id`, since the count is then a
-lower bound: a call containing a commit command reported no id, so a commit may
-have happened), `WASTED`
+`COMMITS` (the union of `commits`; FA6: when any of the agent's attempts has a positive
+`commit_commands_without_id`, the cell is `?` if no commit id is known (G4, v0.3.1: it was `0+`)
+and `N+` if at least one id is known, since the count is then a lower bound: a completed shell
+call contained a commit command but reported no commit id, so a commit may have happened),
+`WASTED`
 (FA5: the one wasted-time rule of 4.3's `wasted_time` row, per agent: the
 wall-clock of every attempt of this agent but the last, plus every attempt of it
 whose outcome is `killed`, `failed`, or `superseded` at any position, each
@@ -1346,9 +1415,18 @@ column is `max(10, len(longest truncated label) + 2)` wide, so two separator spa
 always sit outside the longest label; PHASE likewise truncates at 22 (first 19 and
 `...`) with width `max(11, len(longest truncated phase) + 2)`. The share labels
 (`agent-N`, `phase-N`) stay within 10 and 11, so a share table is byte-for-byte what
-it was. Legend (P4): when any PATHS or COMMITS cell of the table ends in `+`, one
+it was. Legend (P4, G4): when any PATHS or COMMITS cell of the table ends in `+`, one
 line directly under the table reads `+ is a lower bound: incomplete evidence may hide
-more paths or commits.` and is otherwise absent.
+more paths or commits.`; when any COMMITS cell is `?`, one line after it reads `COMMITS ? a completed
+shell call contained a commit command but reported no commit id` (G-B1, GB-4: it names its column). Each is otherwise absent, the
+`+` line comes first when both appear, and a `?` in the PATHS column adds no legend. The legend
+says what the call contained, never that a commit ran or that the command printed anything: a
+command such as `false && git commit -q -m x; true` or `git diff --quiet || git commit -q -m x`
+contains a commit command whether or not the commit executed.
+
+Two subagents of a session with the same label share one AGENT-table name at share (`agent-N`,
+5.1); the `WORK AT RISK` line's id tells them apart (G-B1: the corpus check of 4.13.9 therefore
+compares children by identity, never by that rendered name).
 
 STORIES: one entry per logical agent that has at least one non-info finding
 (or, under `--verbose`, at least one finding of any severity), worst
@@ -1370,7 +1448,11 @@ rules below cover:
   appended to the clause above (or stands alone as "stopped by the parent"
   when there is no silent_retry clause to attach to).
 - `attempt_failed`: "attempt `<n>` failed: `<cause phrase>`[, resets
-  `<t>`]" per finding, `n` the failing attempt's own ordinal.
+  `<t>`]" per finding, `n` the failing attempt's own ordinal. (G1c, v0.3.1) The cause
+  phrases gain `launch_result_failed`: `its launch result reported failure` and
+  `task_notification_failed`: `its task notification reported failure`, used by the
+  account, the story, WHAT TO DO, the scan reason and the rescue brief exactly as the
+  workflow causes are; a session subagent's finding title is `<label> failed: <phrase>`.
 - `claim_contradiction`: "attempt `<n>` completed but reported `<clauses>`"
   per finding, clauses rebuilt from `metrics.clauses`/`metrics.claims`
   (the same phrases `detectors/claim_contradiction.py`'s own title uses),
@@ -1378,11 +1460,18 @@ rules below cover:
 - facts: "Wrote `<p>` paths, reported `<c>` commits." when `p` or `c` is
   nonzero; "wrote no paths" (no trailing period, a fragment) when both are
   known to be 0 and the agent's final attempt was killed; omitted
-  otherwise.
+  otherwise. (v0.3.1, G4b) The commit part follows the COMMITS cell: when a
+  completed call contained a commit command and reported no id it reads
+  `reported <c>+ commits` if some id is known and `commit count unknown (a
+  commit command reported no id)` if none is, and the clause is then shown
+  even when `p` is 0. This holds for every sentence that states a commit
+  count: the watch KILL line (4.12) and the scan runtime-kill reason (4.8),
+  which say only `commit count unknown` to stay short.
 - a tooling detector (`bash_backgrounded`, `bash_timeout`,
   `tool_json_error`, `structured_output_failure`, `codex_write_denied`,
-  `classifier_unavailable`, `git_cwd_mismatch`) attributed to the agent:
-  "`<n>` `<short phrase>`", every present one joined by `"; "`.
+  `classifier_unavailable`, `git_cwd_mismatch`, `permission_denied`) attributed to the agent:
+  "`<n>` `<short phrase>`", every present one joined by `"; "` (`permission_denied`:
+  "`<n>` tool call(s) denied").
 
 A finding with no `agent_id` (`wasted_time` always; `missing_artifact` when
 it names no attempt) backs the one `run` story instead, its text simply
@@ -1460,8 +1549,8 @@ session with 0 subagents and a CLEAN verdict is never a candidate, only
 counted in the totals. The one-line reason is deterministic, first that
 applies: an `attempt_failed` clause naming the cause(s) and a reset time
 when one exists; a runtime-kill clause naming paths named (N8b, K4.4: the `paths_at_risk` count, `N+`
-when its ledgers are partial) and commits
-when a `mislabeled_kill` finding's cause is `runtime`; the top major-or-
+when its ledgers are partial) and commits (`<c>+ commits` or `commit count unknown` by 4.7's
+G4b rule) when a `mislabeled_kill` finding's cause is `runtime`; the top major-or-
 critical detector as `<detector> x<n>`; `<n> subagents interrupted` for a
 session; else `clean`. The next command adds `--observe` only when a
 killed or failed attempt is known to have written a path and the run ended
@@ -2189,9 +2278,23 @@ the sentence is `NO KILLED OR FAILED ATTEMPT: the tool could not establish which
 at risk; see WORK AT RISK in agent-postmortem run <run id>.` (never `0 attempt(s)`), with the
 same exit 4, JSON, and no brief. A truly clean run with a parent transcript still exits 0.
 
+(R1, v0.3.1.) A session with no rescue unit in which some subagent has a `return_state` other
+than `returned` (4.13.1) prints, in `rescue plan` and `rescue status` alike and before any other
+no-unit sentence, `NO RESCUE UNIT: <k> subagent(s) have no established return (<breakdown>); run
+agent-postmortem run <run id> to see WORK AT RISK` (`1 subagent has`), the breakdown being the
+one of 4.7's WORK AT RISK over every such subagent, and exits 4; it never prints `NOTHING TO
+RESCUE` or `NOTHING TO RESCUE YET`. When real units exist the text keeps its units and prints no
+such line. Both JSON shapes carry two top-level keys at every disclosure level: `empty_state`
+(null whenever `units` is not empty; otherwise `nothing_to_rescue`, `nothing_yet`,
+`no_rescue_unit_unestablished_returns`, or `unchecked_risk`, the last being the branch of the
+paragraph above) and `return_breakdown` (null unless `empty_state` is
+`no_rescue_unit_unestablished_returns`; else an object of five integers `reported_failed`,
+`reported_killed`, `possibly_running`, `no_return_evidence`, `not_established`). A workflow
+rescue carries both keys, `empty_state` set by the same rule over its existing branches.
+
 Exit codes, ordered (N5c-2; the first condition that applies wins): 1 a
 usage error, or a configuration error (4.10); 2 no such run; 4 a possibly-live
-run, a "NOTHING TO RESCUE YET" run, a finished all-completed run whose 4.13.1 risk
+run, a "NOTHING TO RESCUE YET" run, a `NO RESCUE UNIT` session (R1), a finished all-completed run whose 4.13.1 risk
 population is not empty or not complete (the `NO KILLED OR FAILED ATTEMPT` sentence), a run
 whose lifecycle terminal is `unknown` (4.13.3), or any `UNKNOWN` fact anywhere in the packet (an unchecked
 observation, a refused or unknown group's path, a path state of `UNKNOWN`, an
@@ -2402,7 +2505,7 @@ is KILL, FAILED, OK, then DONE, then QUIET (N8b, K5.3):
 ```
 START  <run id>: <A> agents started so far, <T> attempts.
 KILL   <agent> attempt <n> after <s>s of silence; restarted as attempt <n+1>.
-       attempt <n> wrote <p> paths, reported <c> commits.  -> agent-postmortem rescue plan <run id>
+       attempt <n> wrote <p> path(s), reported <c> commit(s).  -> agent-postmortem rescue plan <run id>
        (<p>+ in text when the attempt's ledger is partial, N8 fix 1, S-m5; JSON keeps the integer)
 FAILED <agent> attempt <n>: <cause phrase>.
 OK     <agent> attempt <n> returned a result.
@@ -2809,39 +2912,134 @@ Workflow. Any such diagnostic makes the run's discovery not clean, so
 when the population is empty. A view of named subagents
 (`load_session_view`) names its children itself and reconciles nothing.
 
-**Return evidence (S11, N5c-1).** `Attempt.returned_to_parent` (4.1) is the one
-predicate behind "WORK AT RISK none" for a session (4.7): a session's none
-requires every subagent outside the risk population to have returned a result
-to its parent, because a child killed with no kill sentinel is outside the
-population and can still have left writes. Rows: Agent success and Task
-success (true, through either id location or both), the same result written
-twice (true), no result, an error result, the rejected shape, two different
-results for one launch, a second result naming another child, conflicting or
-non-string ids, a duplicated launch id with one otherwise valid result, a launch
-id shared with another tool block, one child named by two launches, a
-`tool_use`-shaped block in a user entry, a SendMessage block, and a child with
-no launch (all false). An async launch (N5 fix 1, S2: status `async_launched` or
-`isAsync` true) is false unless an accepted `completed` task notification names
-the child and the launch (task-id and tool-use-id); false for no notification, a
-`failed`, `killed`, or unrecognized status, a quoted (unaccepted) envelope, a
-notification naming another child or another tool-use-id, and conflicting
-notifications; the notification is read from the session transcript through the
-parent index, only when some result is async. A synchronous result whose status
-is not `completed` is false.
+**Return evidence (S11, N5c-1; v0.3.1 G-A).** `Attempt.return_state`, `return_reason` and
+`resumes` (4.1) are the one predicate behind "WORK AT RISK none" for a session (4.7), the
+exported `outcome` of a session subagent (E1, 5.3b), the AGENT END word, `attempt_failed` for a
+reported failure (4.3), the rescue no-unit state (4.11) and the hook's finished rule (7.2). A
+session's none requires every subagent outside the risk population to have `return_state`
+`returned`, because a child killed with no kill sentinel is outside the population and can still
+have left writes. `returned_to_parent` is exactly `return_state == "returned"`. The kill sentinel,
+`interrupt` and the internal whole-transcript `outcome` are unchanged. The table below is the
+whole decision; whatever it does not assign is `unknown`.
 
-*Return-specific notification boundary (field milestone F, FA3).* A completion
-notification counts toward a return only when its physical line is after the
-Agent or Task launch's own `tool_use` line. A fast child can finish before the
-parent records the launch result line (observed once in 382 async launches), so
-a notification between the launch `tool_use` and its result line is accepted;
-one before the `tool_use` line cannot be about that launch and is ignored (it is
-not a pair member, so it neither returns the child nor conflicts). This is a
-different boundary from the lifecycle's: 4.13.3's notification boundary for a
-Workflow generation's terminal evidence stays after the launch `result_line`,
-unchanged. The three physical orderings of one launch, pinned for both
-predicates: a notification before the `tool_use` is not a return and not
-lifecycle evidence; between the `tool_use` and the result it is a return and not
-lifecycle evidence; after the result it is both.
+*T0 measured shapes only.* The reader recognizes exactly the shapes observed in the corpus and
+written here; every other presence or type is `unknown`/`malformed` for the child it names (or
+for every child named by either target field of a request): subagent meta that is unreadable or
+not a JSON object; `parentAgentId` present and not a non-empty string, or equal to the child's own
+id; `spawnDepth` present and not an integer of 1 or more (a boolean is not an integer); any agent
+id, `resumedAgentId` or status that is present and not a string; a launch `toolUseResult`
+that is present and not an object, except the exact rejected shape (an error block with a string
+`toolUseResult`, itself `malformed` for a child it names); a SendMessage with neither `to` nor
+`recipient`, with either present and not a string, or with `to` and `recipient` naming two
+different children of the session (GA-7: a value that is not the id of a child of the session is
+an agent name, never a contradiction); an Agent, Task or SendMessage `tool_use` block whose `id` is
+present and not a string (a number, null or a boolean; GA-4): the id cannot key a launch or a
+request, so the block is kept as a bounded malformed-use fact and makes `unknown`/`malformed`
+every child named by its `to` or `recipient` and every child named by a string `agentId` or
+`resumedAgentId` of a result whose `tool_use_id` is the same non-string value; a
+non-rejected SendMessage result whose `toolUseResult` is neither the resume shape (an object with
+`success` true and a string `resumedAgentId`) nor the measured queued shape (an object with
+`success` true, a string `message` starting `Message queued for delivery`, and no
+`resumedAgentId`). (GA-7) A resume's `resumedAgentId` decides the child. A `to` or `recipient`
+that differs from it is a contradiction, `unknown`/`malformed` for both children, only when that
+value is the id of another child of the session (a subagent transcript or meta file of the
+session); any other value is an agent name (SendMessage's own usage says to refer to agents by
+name) and is no contradiction. Measured: 45 resumes, every one with `resumedAgentId` equal to `to`.
+
+*T1 launcher.* The child's launch is looked up in its launcher transcript: the main transcript
+when `parentAgentId` is absent and `spawnDepth` is absent or 1; the transcript of the subagent
+named by a string `parentAgentId` equal to another subagent's id of this session (nested), read as
+evidence only and never as an analyzed attempt. A string naming no other subagent of the session,
+or `spawnDepth` 2 or more with no `parentAgentId`, is `unknown`/`parent_missing`. A launcher (or
+the main transcript) that cannot be read is `unknown`/`parent_unreadable`. Notifications always
+come from the MAIN transcript's accepted notifications (4.13.3), for every depth: a nested child's
+completion notification is delivered to the main transcript, naming the child as task-id and the
+launcher subagent's Agent `tool_use` id as tool-use-id.
+
+*T2 launch.* Candidate launches are the Agent or Task `tool_use` blocks of the launcher whose
+result names the child (a string `agentId` in the `tool_result` block or in the entry's
+`toolUseResult`), plus those whose id an accepted main notification with task-id equal to the
+child names as tool-use-id (a nested launch often has no structured result: 18 of 38 observed).
+None is `unknown`/`no_evidence`. More than one, or two distinct results (results identical as
+parsed JSON count once), is `unknown`/`conflict`. With the one launch: an error result is
+`unknown`/`malformed`; a result naming another agent as well is `unknown`/`conflict`; `isAsync`
+true together with a terminal `status` (`completed`, `failed`, `killed`, `stopped`, `cancelled`)
+is `unknown`/`malformed`; asynchronous (`status` `async_launched`, `isAsync` true with no
+`status`, or no string id in the result and the launch linked only by a notification) leaves round
+1 to the notifications; synchronous with `status` `completed` or no `status` key makes round 1
+`returned`; `failed` makes it `reported_failed`; `killed`, `stopped`, `cancelled` make it
+`reported_killed` (4.13.3's stopped class); any other status string is
+`unknown`/`status_unrecognized`.
+
+*T3 resume rounds.* A SendMessage `tool_use` in ANY inspected transcript of the session (main or
+a subagent) whose exactly-one non-error result (identical results count once) is the resume shape
+with `resumedAgentId` equal to the child resumed it: a new round keyed by the request's `tool_use`
+id, and `resumes` counts it. Its `to` and `recipient`, where present, are checked by T0 (GA-7).
+A transcript that is a sender of this rule (the main transcript, an analyzed subagent's, the
+child's launcher) and cannot be read at all (an open or read failure) makes EVERY child of the
+session `unknown`/`parent_unreadable` (GA-1): any child could be the target of a resume request
+hidden in it. A malformed or half-written line inside a readable transcript does not: a live
+transcript often ends in a half-written line (whether the cut falls between characters or inside
+one), and the run is already INCOMPLETE with a diagnostic.
+Recorded limits: a resume request inside an unparsable line is invisible, and a request addressed
+by an agent name that has no result cannot be attributed to a child and touches none. Every launch and resume key must be carried by exactly one `tool_use` block across the
+transcripts read, else `unknown`/`conflict`. Rounds are ordered by the parsed timestamp of their
+`tool_use` entry and the launch must be first; a missing or unparsable timestamp on a resume (or
+on the launch when the child has a resume), a resume not later than the launch, or two rounds
+with the same instant is `unknown`/`ambiguous`. A request that targets the child and was
+delivered in the measured queued shape ("message queued for delivery", observed 14 times) joined
+the running round: no round, no effect. One whose every result is an error was rejected: no effect.
+One targeting the child with no result, or with several distinct results, is
+`unknown`/`delivery_unknown`. A request naming another child does not touch this one.
+
+*T4 notifications.* Exactly the 4.13.3 accepted notifications of the main transcript (whole
+envelope with one task-id, one tool-use-id and one status; the two delivery forms; the origin
+cutoff; triplet dedup) whose task-id is the child. A notification with no tool-use-id is not
+accepted there, so it is ignored here. Each must name the launch or one of the child's resume
+requests, else `unknown`/`conflict`; it belongs to that round (a resumed round's notification
+names the SendMessage's own `tool_use` id). A notification must lie after its round's request: by
+physical line when the request is in the main transcript, by parsed entry timestamp otherwise;
+before it (or equal to it), or not orderable, is `unknown`/`ambiguous` (FA3 for the launch is the
+same-transcript case). Status words: `completed`; `failed`; `killed`, `stopped`, `cancelled` all
+mean killed; any other string is unrecognized.
+
+*T5 decision*, on the latest round only: its notifications all `completed` is `returned`; all
+`failed` is `reported_failed`; all killed is `reported_killed`; mixed is `unknown`/`conflict`;
+any unrecognized is `unknown`/`status_unrecognized`; none is the T2 synchronous value when the
+latest round is a synchronous round 1, else `pending`/`none`. When the latest round is a
+synchronous round 1 that also has notifications, the T2 value and the notifications' value must
+be equal, else `unknown`/`conflict`. Earlier rounds never decide. Any `unknown` from T0 to T4
+wins. The decision never reads a file's modification time.
+
+A SendMessage block is never a launch; it is a resume request (T3). Conflicting notifications
+are conflicts within the latest round only. For a view of named subagents (`load_session_view`),
+the senders of T3 are the main transcript, the launcher and the named subagents; a resume issued
+from another transcript is outside the view (a stated limit that only the hook meets).
+
+The row set the tests pin: every T0 shape (unreadable meta, meta not an object, an empty,
+non-string or self parent, a string, zero, boolean, fractional, null or negative depth, a
+non-string second id, a launch result that is a list or null, a null status, a request with no
+target or a null target, a mismatched resume target marking both children, and each non-measured
+SendMessage result shape); parent absent, nested readable, nested unreadable, parent naming no
+subagent, depth two without a parent; no launch, two launches, two distinct results, an error
+result, the rejected shape, a result naming another agent, async with a terminal status,
+synchronous completed, no status, failed, killed, stopped, cancelled, unrecognized, asynchronous
+with no notification; a delivered resume, a resumed round's notification, an earlier round that
+never decides, a queued request, a rejected request, a request with no result, two distinct
+results, a request for another child, a resume from a third transcript, a resume key carried by
+two blocks, a launch with no timestamp, a resume older than the launch, an unparsable timestamp,
+equal timestamps, rounds ordered by time and not by line; a notification naming nothing, naming a
+queued request, before its request (main and nested), without a tool-use-id, failed, killed
+spellings, mixed, unrecognized, doubled delivery, a quoted envelope, another child's
+notification; a synchronous value and a different or the same notification.
+
+*Return-specific notification boundary (field milestone F, FA3).* A notification naming the
+launch's own id counts only when its physical line is after the launch `tool_use` line, in the
+launcher transcript when that is the main transcript. A fast child can finish before the parent
+records the launch result line (observed once in 382 async launches), so a notification between
+the `tool_use` and its result line is accepted; one before the `tool_use` line is
+`unknown`/`ambiguous` (T4). This is a different boundary from the lifecycle's: 4.13.3's notification boundary for a
+Workflow generation's terminal evidence stays after the launch `result_line`, unchanged.
 
 **Workflow discovery reconciliation (S1, N4 fix).** A workflow run's journal
 names its attempts; the run directory is also listed for the files it holds.
@@ -3299,6 +3497,7 @@ excludes.
 | `git_not_repo` | `command_output` | a `tool_result` paired to a `Bash` tool_use | `line1` starts with `fatal: not a git repository`, or `line1` matches `^Exit code [0-9]+$` and `line2` starts with `fatal: not a git repository` |
 | `sandbox_write_denied` | `codex_companion` | a `tool_result` paired to a `Bash` tool_use whose command runs codex as a program (4.3); or an assistant `text` block of an attempt that has such a call | some line of the flattened text starts with `[codex]` and contains `WRITE_DENIED` or `read-only sandbox`; or (tool_result shape only) `line1` starts with `WRITE_DENIED` |
 | `shell_guard_block` | `codex_companion` | a `tool_result` paired to a `Bash` tool_use whose command runs codex as a program | some line matches `SHELL_GUARD_BLOCK_REGEX` from its first character |
+| `permission_denied` (G7, v0.3.1) | `harness_tool_notice` | a `tool_result` block with `is_error` true, paired to any tool (a result without `is_error` true yields no hit, not even a negative one) | the flattened text starts with exactly one of the four sentences below; no wrapper is accepted |
 | `usage_limit_session`, `usage_limit_weekly` | `runtime_assistant` | the attempt's own final transcript entry, an `assistant` entry | the flattened text starts with the marker string |
 | `machine_sleep`, `api_error` | `runtime_assistant` | same | the flattened text starts with the marker string |
 
@@ -3316,6 +3515,25 @@ function; detectors import ids, never fragments. `Event.markers` (4.1)
 stays for compatibility and is no longer read by any detector; every
 detector that reads `Event.markers` today (4.3's table) migrates to
 `MarkerHit` in N1.
+
+**`permission_denied` grammar (G7, v0.3.1).** After the leading whitespace is stripped, the text
+starts with exactly one of: `Permission for this action was denied by the Claude Code auto mode
+classifier.` (kind `auto mode`); `The user doesn't want to proceed with this tool use.` (kind
+`user`); `Permission for this command was denied by a built-in Claude Code safety check, not by the
+user.` (kind `safety check`); or `Permission to use ` followed by a tool name matching `[A-Za-z0-9_]+` (so `mcp__x__y` counts; an empty name does
+not), ` with command `, any text that may span lines, and ` has been denied.` where that last
+period ends a line (the first such line; kind `permission rule`; a command of any length counts,
+and so does a multi-line command, G-B1, GB-3; a text whose sentence is followed by more words on
+the same line does not). Not counted: a result without `is_error` true;
+the sentence anywhere but the start, `<tool_use_error>` wrapped, after `Exit code N`, or as part of
+a Bash output or a file; `Blocked: sleep`; hook errors; the `granted`, `required` and `unavailable`
+variants. A genuine denial of a read-only command counts: unlike the self-quote guard of 4.3, the
+text here is the runtime's own reply to the call, so `read_only_output` is not consulted. One
+`MarkerHit` per candidate block; the detector reads anchored hits and classifies each by the start
+of the event's text. Evidence is up to 5 pointers `<transcript>:<line>`, printed with the code
+`[permission_denied]`, never an excerpt: the permission-rule sentence carries the denied command,
+which no level prints. The session-end hook does not run this detector (it is not in the seven
+tooling detectors of 7.2) and it does not notify.
 
 **N1 acceptance tests.** For every canonical id: one positive case and one
 payload-negative case (the fragment inside file content printed by `cat` or
@@ -3610,14 +3828,14 @@ cited where it applies.
 | Detector | Rule |
 |---|---|
 | `workflow_failed` | `terminal failed`: major |
-| `attempt_failed` | `recovered no` or `unknown`: major; `recovered yes`: minor |
+| `attempt_failed` | `recovered no` or `unknown`: major; `recovered yes`: minor (a reported failure of a session subagent: `recovered unknown`, major) |
 | `silent_retry` | `recovered no` or `unknown`: major; `recovered yes` and `work_risk present` or `unknown`: major; `recovered yes` and `work_risk none`: minor |
 | `mislabeled_kill` | cause `runtime` or `unattributed` with silence >= 300 s (the existing 4.4 rule) and the attempt is the key's last attempt: major; the same cause and a long silence on a non-final attempt: minor (`silent_retry` carries the loss); `parent_stop`, `human`, or a short or unknown silence: info at any position (position never lifts a short or unknown silence above info; N5 fix 1) |
-| `claim_contradiction` | the `tests`/`ok`/`ready`/`blockers` clause: major; the `report_path` clause with `absence absent_now`: info (D2); `absence unknown`: info |
+| `claim_contradiction` | the `tests`/`ok`/`ready`/`blockers`/`self_reported_failure`/`self_reported_blocked` clause: major; the `report_path` clause with `absence absent_now`: info (D2); `absence unknown`: info |
 | `missing_artifact` | `obligation prompt_path` with `absence absent_now`: info (D2); `absence unknown`: info |
 | `structured_output_failure` | `recovered no` or `unknown`: major; `recovered yes`: minor |
 | `codex_write_denied` | minor, one finding per attempt, `rule_ids` exactly `["R-CODEX-CONTRACT", "R-ASSERT-ARTIFACT"]` |
-| `bash_backgrounded`, `bash_timeout`, `tool_json_error`, `classifier_unavailable`, `git_cwd_mismatch` | minor |
+| `bash_backgrounded`, `bash_timeout`, `tool_json_error`, `classifier_unavailable`, `git_cwd_mismatch`, `permission_denied` (G7, v0.3.1) | minor |
 | `wasted_time` | info |
 
 An info-severity `missing_artifact` or `claim_contradiction(report_path)`
@@ -3913,6 +4131,20 @@ every detector's own severity inputs and rule alongside its existing row
   `unknown`); run ids are printed as the id-shaped values `scan` prints and
   never a directory, a path, or a session UUID. With one matching run there
   is no line. Stdout is identical to `run <selected path>`.
+- **The caller's own workflows (G5, v0.3.1).** One shared resolver
+  (`reader.caller_workflow_paths`) serves `run --here` and `scan --here`. When
+  `CLAUDE_CODE_SESSION_ID` is a canonical UUID, exactly one session run under the
+  root has a transcript stem equal to it (compared in lowercase), AND that session
+  run itself passes the containment test above for the caller's directory, the
+  workflow runs in that session's own directory (`<project>/<session>/subagents/
+  workflows/wf_*`) join the set of runs `--here` matches, whatever their own cwd
+  sets hold. In `run --here` they count in the `<n> runs worked here` line and
+  appear in its `also` list (the own session is still the selection); in
+  `scan --here` they are rows, with `--kind workflow` too. With the variable
+  absent or malformed, naming no session or two sessions, or naming a session
+  that does not itself work here, nothing changes. Another session's workflows
+  never join. The variable stays a hint: it adds only runs owned by a run that
+  already matched the caller's directory.
 - `run` accepts a session UUID, a transcript stem, or an agent alias
   (4.13.5) as its `RUN_ID` argument, in addition to every form 4.8 already
   accepts. **(D18)** Resolution is across every run under the root: an
@@ -4095,6 +4327,26 @@ notification (4.13.3); no "none" `WORK AT RISK` line with a `partial`
 ledger (4.13.1); no "ended" or "abandoned" word printed from mtime alone
 (4.13.3); no raw path in `share` output (4.13.5). It informs; it never
 gates a release.
+
+(v0.3.1, G8) Eight more invariants, each reported with its checked and violation counts:
+(6) an independent five-valued return state (all children, nested, resumed; both directions)
+equals the reader's; (7) the exported `outcome` of a session child equals the independent E1
+mapping and `counts.interrupted` equals the number of kill sentinels; (8) no child, compared by
+identity and not by its rendered name, has an exported outcome `completed` (its effective end) while
+the W1 guard lists it (return state not `returned`, outside the risk population); (9) no session `WORK AT RISK  none` while a
+child is not `returned`; (10) the denial sentences a raw walk of the transcripts finds (through the
+shared `markers.denial_kind`, and separately by independent regexes) equal the `permission_denied`
+counts; (11) an attempt with a G3 `SelfReport` or a legacy major clause has exactly one major
+`claim_contradiction`, and one with neither has none; (12) `rescue` prints no `NOTHING TO RESCUE`
+for a session with a child not `returned`; (13) every workflow of a session the caller's variable
+names is in `run --here` and `scan --here`, reported with the count already included without the
+variable. The independent side walks raw transcripts with its own code and imports only the shared
+G3 and G7 predicates; its permission-rule regex is written independently and reads the same
+multi-line form. The invariant logic lives in `tests/g_corpus_support.py` and the independent return
+implementation in `tests/g_independent_return.py` (code only, tracked, exercised by
+`tests/test_g_corpus.py`); the real-corpus runner stays in the maintainer's private tooling. It is a
+maintainer check, not a shipped feature. The check stays advisory; the synthetic suite is the
+release gate.
 
 ### 4.13.10 Risks (standing table; each risk is covered by the tests of the milestone that names it, no code of its own)
 
@@ -4760,8 +5012,10 @@ surface through its wasted_time finding). Attempt: agent_id, key digest
 embeds its label verbatim), label pseudonym, phase pseudonym, agent_type
 (built-in or pseudonym), ordinal, outcome, first_ts, last_ts, usage totals,
 event_count, interrupt {cause, silence_seconds}, reported (null, or {type:
-'dict', keys, claims} / {type: 'text', text_length}; `reported` is not a
-structured name field, so the whole thing goes through the plain Redactor
+'dict', keys, claims} / {type: 'text', text_length}; at share (G-B1, GB-8) `keys` lists the
+pseudonyms `key-1`..`key-N`, numbered in order of first appearance within one render and stable
+within it (a result key is a user-authored identifier like a label); at local and raw `keys` lists
+the real names; `reported` is not a structured name field, so the whole thing goes through the plain Redactor
 via `redact_value`, the same as an evidence line or a metrics value -- a
 `report_path` claim is the one exception (M1 review finding 1): the plain
 Redactor call itself substitutes it with its `path-N` pseudonym (5.1),
@@ -5150,7 +5404,7 @@ population the list is empty.
 | `status` | str | `COMPLETE`\|`INCOMPLETE` | no | none |
 | `claude_version` | str | -- | yes | none |
 | `started_at` / `ended_at` | str | ISO 8601 | yes | none |
-| `counts` | object | `{agents: int, attempts: int, interrupted: int}` | no | none |
+| `counts` | object | `{agents: int, attempts: int, interrupted: int}`; `interrupted` counts every attempt with an `interrupt` (the kill sentinel), whatever its cause and whatever its `outcome` (E1, v0.3.1) | no | none |
 | `diagnostics` | array[str] | -- | no (`[]`) | plain `redact()` |
 | `attempts` | array | `Attempt` entries, below | no (`[]` allowed) | -- |
 | `lifecycle` | object | below | yes -- null for a session row (D11); never null for a workflow row once N2 lands | -- |
@@ -5174,12 +5428,15 @@ population the list is empty.
 | `phase` | str | `phase-N` | no | positional, unchanged |
 | `agent_type` | str | built-in literal or `type-N` (share); the real type (local/raw) | yes -- null when the attempt has no type | pseudonym, 5.1 |
 | `ordinal` | int | >= 1 | no | none |
-| `outcome` | str | `completed`\|`failed`\|`killed`\|`superseded`\|`unknown` | no | none |
+| `outcome` | str | `completed`\|`failed`\|`killed`\|`superseded`\|`unknown`\|`open`. A workflow attempt: the journal state machine's outcome (unchanged). A session subagent (E1, v0.3.1): its effective end, one public meaning, what the evidence establishes: the kill sentinel -> `killed`; else `returned` -> `completed`, `reported_failed` -> `failed`, `reported_killed` -> `killed`, `pending` -> `open`, `unknown` -> `unknown`. The internal whole-transcript outcome stays private and keeps driving the risk population, ledgers, WASTED and rescue units | no | none |
+| `return_state` | str | `returned`\|`reported_failed`\|`reported_killed`\|`pending`\|`unknown` for a session subagent (4.13.1); null for a workflow attempt and the main thread | yes | none |
+| `return_reason` | str | `none`\|`no_evidence`\|`conflict`\|`malformed`\|`delivery_unknown`\|`ambiguous`\|`parent_unreadable`\|`parent_missing`\|`status_unrecognized` for a session subagent; null otherwise | yes | none |
+| `resumes` | int | >= 0; delivered resume requests (4.13.1 T3); 0 for a workflow attempt | no | none |
 | `first_ts` / `last_ts` | str | ISO 8601 | yes | none |
 | `usage` | object | token totals | no | none |
 | `event_count` | int | -- | no | none |
 | `interrupt` | object | `{cause: str, silence_seconds: float\|null}` | yes | plain `redact()` |
-| `reported` | object | `{type:"dict", keys, claims}` \| `{type:"text", text_length: int}` | yes | plain `redact()`; `claims.report_path` -> `path-N` |
+| `reported` | object | `{type:"dict", keys, claims}` \| `{type:"text", text_length: int}` | yes | plain `redact()`; `claims.report_path` -> `path-N`; at share `keys` lists `key-1`..`key-N` (G-B1, GB-8) |
 | `facts` | object | the 7-field `AttemptFacts` shape of 5.3a | yes -- null only when no transcript exists | `paths_written`/`in_flight[].path`/`cwds` -> `path-N` |
 | `ledger` | object | `{completeness, reasons, entries}`, below | no -- every attempt has one (4.1, 4.13.1) | -- |
 
@@ -5306,9 +5563,11 @@ way the others are.
 | `disclosure` | str | `share`\|`local`\|`raw` | no | none |
 | `run` | object | `{run_id, kind, finished, possibly_live}` -- `finished` is `bool \| null` (null for a session), lifecycle-backed (4.13.3), not mtime-backed | no | `run_id` none |
 | `nothing_to_rescue` | bool | -- | no | none |
+| `empty_state` | str | null whenever `units` is not empty; else `nothing_to_rescue`\|`nothing_yet`\|`no_rescue_unit_unestablished_returns`\|`unchecked_risk` (4.11, R1) | yes | none |
+| `return_breakdown` | object | null unless `empty_state` is `no_rescue_unit_unestablished_returns`; else `{reported_failed, reported_killed, possibly_running, no_return_evidence, not_established}`, five ints (4.7's breakdown classes) | yes | none |
 | `groups` | array | the `observation.groups[]` objects of `run --observe` (N5c-1, above), the unknown group left out when it names no path; each `paths[]` row names its group by index in this array | no (`[]` allowed) | the path namespace of the level |
 | `units` | array | below | no (`[]` allowed) | -- |
-| `brief` | object | `{killed, failed, already_exists}`, 5.3a, unchanged | yes -- null for a possibly-live run, a nothing-to-rescue run, or a run with an unchecked risk population | per 5.3a |
+| `brief` | object | `{killed, failed, already_exists}`, 5.3a, unchanged | yes -- null for a possibly-live run, a nothing-to-rescue run, a session with no rescue unit and an unestablished return, or a run with an unchecked risk population | per 5.3a |
 | `exit_code` | int | 4.11's own table, D13's lifecycle-unknown addition | no | none |
 
 `units[]` entry keeps 5.3a's shape (`{agent, phase, attempts, end, task,
@@ -5358,6 +5617,8 @@ row's unit that is killed, failed, or superseded.
 | `not_counted` | array | `{line: int, reason: str, category: str}` plus `excerpt: str` under the evidence rule | no (`[]` allowed) | `excerpt` absent unless `local`/`raw` with `--evidence` (not merely null); `category` is the matched rule's own fixed spelling (`git checkout`) or the word `command` (N3b C1), never transcript text |
 | `never_matches` | array | `{line: int, category: str}` plus `excerpt: str` under the evidence rule | no (`[]` allowed) | same rules as above |
 | `transcript_unknown` | bool | -- | no | none |
+| `empty_state` | str | as in `rescue plan --json`, from the same rule over `units` | yes | none |
+| `return_breakdown` | object | as in `rescue plan --json` | yes | none |
 | `exit_code` | int | 4.11's own table, D13's lifecycle-unknown addition | no | none |
 
 **`watch --json`:** carries no `schema` key and no `disclosure` key, in
@@ -5663,9 +5924,13 @@ collide or share a unit's analyzed state.
 - Every unit is re-statted on every check, including one already
   `analyzed`: unchanged, it is left exactly as it was; changed (appended
   to after being analyzed, or deleted and recreated under the same unit
-  id), it goes back to `running` with `stable_checks` reset to 0, keeping
-  its `reported` ids so an already-surfaced finding is never re-notified
-  just because the surrounding content moved. Fingerprint comparison
+  id), it is re-opened with `stable_checks` reset to 0 and (GA-8, v0.3.1)
+  its finished evidence is re-evaluated in the same check: evidence that is
+  still terminal (a rejected, queued or result-less request that left the
+  child `returned`, a status word replaced by another terminal one) analyzes
+  the unit again at once, evidence that is not terminal leaves it `running`.
+  It keeps its `reported` ids, so an already-surfaced finding is never
+  re-notified just because the surrounding content moved. Fingerprint comparison
   always happens first: an unchanged `running`/`unknown` unit only advances
   `stable_checks` and is never reparsed, unless this is the one check that
   crosses the unknown threshold below (that check still needs one real
@@ -5685,16 +5950,33 @@ collide or share a unit's analyzed state.
   subagent unit is `finished` only with authoritative
   evidence: its own last transcript line is the kill sentinel (a trailing
   line that fails to parse as JSON at all means not finished, never
-  "finished as of the last valid line"), or the parent main transcript
-  already carries this agent's id on the Agent tool's result -- for a real
-  transcript, that id lives on the entry itself
-  (`entry["toolUseResult"]["agentId"]`), with a `tool_result` block naming
-  it a fallback for a differently-shaped transcript (a light index of the
-  main transcript -- agent ids seen either way, alongside the kill-sentinel
-  timestamps interrupt attribution already needs -- built once per hook
-  invocation and shared across every subagent unit checked in it), or the
-  payload's `background_tasks` names it with a
-  status meaning done. An assistant text entry with no `tool_use` is never
+  "finished as of the last valid line"), or (H1, v0.3.1) the child's `return_state`
+  (4.13.1, T0 to T5, computed from the main transcript and, for a nested child, its launcher
+  transcript read as evidence only) is `returned`, `reported_failed` or `reported_killed`, or the
+  payload's `background_tasks` names it with a status meaning done. (GA-2, plan H1 amended) The
+  payload's finished status stays positive hook evidence: it is the runtime's own live view, newer
+  than the transcript, and the unit's analysis (the child's own transcript, for findings) does not
+  have to wait for the notification. The stored `analyzed` state is internal (a hook only notifies
+  new findings; `run` is authoritative). When the notification arrives, the main-side digest in
+  the fingerprint changes and the unit is re-opened and re-evaluated at once, so a later
+  `reported_failed` is analyzed and notified. A payload entry naming the child as running still
+  wins over every other signal. The launcher is never added
+  to the analyzed view's attempts, and its diagnostics and findings never reach the child's unit.
+  The unit fingerprint is the child transcript and meta (as before) plus one digest entry of the
+  appended evidence for this child in the main transcript (its launch and resume `tool_use` ids,
+  lines, timestamps and result classes, and its accepted notifications' ids, statuses and lines),
+  (GA-3) the child's current `(return_state, return_reason)`, a stable token for each of the main
+  transcript, the meta file and a nested launcher that cannot be read, and one token when the
+  decision itself raised (a read failure that leaves every file's size and mtime unchanged still
+  re-opens the unit),
+  and, when nested, the launcher transcript's size, `mtime_ns` and inode. A resumed child writes
+  to its own transcript, so a resume always re-opens its unit; a round still in progress then
+  reads `pending` and stays open until its notification. Transcripts are append-only logs:
+  rewriting an existing line is not a runtime shape and is out of scope for hooks (`run`
+  recomputes from scratch every time). A resume issued from a third transcript (observed once)
+  is invisible to the hook's reads: the child's own writes re-open the unit and the main
+  notification naming that request is an unknown id (T4 `conflict`), so the unit stays open;
+  `run` is authoritative. An assistant text entry with no `tool_use` is never
   evidence on its own: it is also the ordinary shape of an agent still
   waiting for its next turn. A `background_tasks` entry naming the agent id
   as still active is checked first and overrides every other signal. A
@@ -6207,11 +6489,15 @@ later events go positional).
 
 ### 8.1 Package
 
-`pyproject.toml`: name `agent-postmortem`, version `0.3.0`, console scripts
+`pyproject.toml`: name `agent-postmortem`, version `0.3.1`, console scripts
 `agent-postmortem` and `postmortem`, `requires-python >= 3.11`, no runtime
 dependencies, `[project.optional-dependencies].dev = ["pytest>=8",
 "ruff>=0.6"]`, classifiers, URLs (Homepage, Issues, Changelog). The wheel
 ships `agent_postmortem/demo/**` and `agent_postmortem/hooks/*.mjs`.
+
+Not in 0.3.1 (non-goals, also in the CHANGELOG): round-scoped paths, risk and WASTED for resumed
+children; a `main` row for the main thread's commits; TaskStop of a background shell; PATHS for
+writes inside inline Python or a script.
 
 ### 8.2 Demo
 

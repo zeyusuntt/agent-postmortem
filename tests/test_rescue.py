@@ -427,7 +427,7 @@ def test_json_allowlist_and_shape(tmp_path, monkeypatch, capsys):
 
     assert set(payload) == {
         "schema", "disclosure", "run", "nothing_to_rescue", "groups", "units", "brief",
-        "exit_code",
+        "exit_code", "empty_state", "return_breakdown",  # G-A R1
     }
     assert payload["schema"] == 3
     assert set(payload["run"]) == {"run_id", "kind", "finished", "possibly_live"}
@@ -1121,7 +1121,7 @@ def test_status_json_shape(tmp_path, monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert set(payload) == {
         "schema", "disclosure", "run", "units", "not_counted", "never_matches",
-        "transcript_unknown", "exit_code",
+        "transcript_unknown", "exit_code", "empty_state", "return_breakdown",  # G-A R1
     }
     unit = payload["units"][0]
     assert set(unit) == {

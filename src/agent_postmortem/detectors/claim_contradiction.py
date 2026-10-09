@@ -16,6 +16,13 @@ Severity (docs/DESIGN.md 4.3, 4.13.4): a tests, suite, ok, ready, or blockers
 clause is major; a report_path clause is info (the path is absent now, which
 says nothing about the end of the run). A finding takes the highest of its
 clauses, and a finding of report_path clauses alone carries the D2 title.
+
+G3 (v0.3.1): when no tests, suite, ok, ready or blockers clause holds, a result
+that carries a failure count of its own or `blocked: true` (the attempt's private
+claims.SelfReport, decided once by the reader through the shared predicate) adds the
+clause self_reported_failure or self_reported_blocked, major. Such a finding has a
+fixed title and a bare journal pointer as its evidence: no key name and no result
+text reaches it.
 """
 
 from __future__ import annotations
@@ -24,11 +31,20 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from .. import severity as severity_rules
+from ..claims import SelfReport
 from ..models import Finding, Run, TitleParts
 from .base import KINDS_WORKFLOW_ONLY, Detector, make_finding_id
 
 ID = "claim_contradiction"
 SEVERITY = "major"
+
+# Every clause this detector can emit (docs/DESIGN.md 4.13.4); severity.VOCAB["clause"] has
+# exactly these, and each has a row in severity.RULES.
+CLAUSE_IDS = (
+    "tests_failed", "suite_failed", "ok_false", "ready_false", "blockers",
+    "report_path_missing", "self_reported_failure", "self_reported_blocked",
+)
+_LEGACY_MAJOR = frozenset({"tests_failed", "suite_failed", "ok_false", "ready_false", "blockers"})
 
 # A report_path is checked on disk only while the file could still be
 # expected to exist. Reports land in temp directories that are cleaned up
@@ -72,10 +88,14 @@ def _report_path_state(claims: dict) -> str | None:
     return None if state == "present_now" else state
 
 
-def _clauses(claims: dict, check_report_path: bool = True) -> list[tuple[str, str, str]]:
+def _clauses(
+    claims: dict, check_report_path: bool = True, self_report: SelfReport | None = None,
+) -> list[tuple[str, str, str]]:
     """(clause id, human phrase, absence) for every clause of docs/DESIGN.md 4.3
     that holds over claims, in a fixed order. `absence` is "none" for every clause
-    but report_path_missing (not applicable)."""
+    but report_path_missing (not applicable). A non-empty `self_report` adds its one
+    clause (G3) only when no legacy major clause holds, so an attempt carries exactly
+    one major finding either way."""
     clauses: list[tuple[str, str, str]] = []
 
     tests_failed = claims.get("tests_failed")
@@ -108,7 +128,26 @@ def _clauses(claims: dict, check_report_path: bool = True) -> list[tuple[str, st
         if state is not None:
             clauses.append(("report_path_missing", "a report_path that does not exist", state))
 
+    if self_report and not any(clause_id in _LEGACY_MAJOR for clause_id, _p, _a in clauses):
+        if self_report.failed_counts > 0:
+            n = self_report.failed_counts
+            clauses.append((
+                "self_reported_failure", f"{n} {_plural(n, 'failure count')}", "none",
+            ))
+        else:
+            clauses.append(("self_reported_blocked", "being blocked", "none"))
+
     return clauses
+
+
+def _self_report_title(self_report: SelfReport) -> str:
+    """The fixed G3 title: no label, no key name, no value (the same at every level)."""
+    if self_report.failed_counts > 0:
+        n = self_report.failed_counts
+        return (
+            f"completed, but its own returned result reports failures in {n} {_plural(n, 'field')}"
+        )
+    return "completed, but its own returned result reports it was blocked"
 
 
 _ABSENT_TEMPLATE = (
@@ -148,13 +187,22 @@ class ClaimContradiction:
             if not isinstance(reported, dict) or reported.get("type") != "dict":
                 continue
             claims = reported.get("claims", {})
-            clauses = _clauses(claims, check_report_path)
+            self_report = attempt._self_report
+            if not isinstance(self_report, SelfReport):
+                self_report = None
+            clauses = _clauses(claims, check_report_path, self_report)
             if not clauses:
                 continue
 
             phrases = "; ".join(phrase for _clause_id, phrase, _absence in clauses)
             title_parts = None
-            if all(clause_id == "report_path_missing" for clause_id, _p, _a in clauses):
+            self_clause = any(
+                clause_id in ("self_reported_failure", "self_reported_blocked")
+                for clause_id, _p, _a in clauses
+            )
+            if self_clause:
+                title = _self_report_title(self_report)
+            elif all(clause_id == "report_path_missing" for clause_id, _p, _a in clauses):
                 title_parts = _report_path_title_parts(claims["report_path"], clauses[0][2])
                 title = title_parts.raw()
             else:
@@ -168,7 +216,17 @@ class ClaimContradiction:
             ])
             excerpt = " ".join(phrases.split())[:160]
             line = attempt.reported_line
-            evidence = [f"journal.jsonl:{line}: {excerpt}"] if line is not None else []
+            if self_clause:
+                evidence = [f"journal.jsonl:{line}"] if line is not None else []
+            else:
+                evidence = [f"journal.jsonl:{line}: {excerpt}"] if line is not None else []
+            metrics = {
+                "clauses": [clause_id for clause_id, _phrase, _absence in clauses],
+                "claims": claims,
+            }
+            if self_clause:
+                metrics["self_reported_failure_counts"] = self_report.failed_counts
+                metrics["self_reported_blocked"] = self_report.blocked
 
             findings.append(
                 Finding(
@@ -179,10 +237,7 @@ class ClaimContradiction:
                     run_id=run.run_id,
                     agent_id=attempt.agent_id,
                     evidence=evidence,
-                    metrics={
-                        "clauses": [clause_id for clause_id, _phrase, _absence in clauses],
-                        "claims": claims,
-                    },
+                    metrics=metrics,
                     rule_id=None,
                     finding_id=make_finding_id(
                         run.run_id, ID, attempt.agent_id, evidence[0] if evidence else None

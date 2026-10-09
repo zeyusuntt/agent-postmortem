@@ -248,7 +248,8 @@ def test_attempt_failed_is_registered_and_workflow_only():
     from agent_postmortem.detectors import all_detectors
 
     detector = next(d for d in all_detectors() if d.id == "attempt_failed")
-    assert detector.kinds == frozenset({"workflow"})
+    # G-A (G1c): a session subagent that reported failure is a finding too (was workflow only)
+    assert detector.kinds == frozenset({"workflow", "session"})
 
 
 def test_reset_time_keeps_a_time_zone_name_readable():

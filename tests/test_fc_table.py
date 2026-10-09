@@ -54,7 +54,7 @@ def _table(out: str) -> list[str]:
     start = next(i for i, line in enumerate(lines) if line.startswith("AGENT"))
     rows = [lines[start]]
     for line in lines[start + 1:]:
-        if not line.strip() or line.startswith("+ is a lower bound"):
+        if not line.strip() or line.startswith(("+ is a lower bound", "COMMITS ?")):
             break
         rows.append(line)
     return rows
@@ -286,7 +286,9 @@ def test_p4_a_missing_transcript_partial_shows_the_legend(
 def test_p4_a_commit_without_an_id_shows_the_legend(tmp_path, capsys, level, flags):
     run, _ = _attempt_facts(tmp_path, _call("git add -A; git commit -q -m x"))
     out = _out(capsys, run.path, *flags)
-    assert "0+" in " ".join(_table(out))
+    table = _table(out)
+    column = table[0].index("COMMITS")  # G-B G4: the COMMITS cell was "0+"
+    assert [row[column:column + 9].strip() for row in table[1:]] == ["?"]
     assert _legend_follows_the_table(out)
 
 
@@ -381,9 +383,9 @@ def test_p4_a_commits_plus_alone_earns_the_legend():
     from tests.n5b_helpers import model_attempt, model_workflow_run
 
     facts = AttemptFacts(
-        paths_written=[], in_flight=[], commits=[], cwds=[], background_unfinished=0,
+        paths_written=[], in_flight=[], commits=["abc1234"], cwds=[], background_unfinished=0,
         last_tool=None, seconds_since_last_tool_at_end=None, commit_commands_without_id=2,
-    )
+    )  # G-B G4: one known id (with none the cell is `?` and earns the other legend)
     attempt = model_attempt(1, ledger=Ledger([], "complete", []), facts=facts)
     run = model_workflow_run([attempt])
     redactor = Redactor(context=DisclosureContext(level="local"))
@@ -392,7 +394,7 @@ def test_p4_a_commits_plus_alone_earns_the_legend():
     assert rows[-1] == LEGEND
     assert len(rows) == 3
     cells = rows[1].split()
-    assert "0+" in cells and cells.count("0+") == 1
+    assert "1+" in cells and cells.count("1+") == 1
 
 
 def test_p3_the_table_scrubs_an_unregistered_label_and_phase_before_measuring_them():

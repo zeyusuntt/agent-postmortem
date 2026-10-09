@@ -257,13 +257,18 @@ def test_a_run_that_is_not_live_never_gets_either_live_line(tmp_path, monkeypatc
     assert "UNIT" in out and "BRIEF FOR A RELAUNCH" in out
 
 
-def test_a_finished_clean_run_still_gets_the_cheerful_sentence(tmp_path, monkeypatch, capsys):
+def test_a_finished_run_whose_child_has_no_launch_says_no_rescue_unit_not_the_cheerful_sentence(
+    tmp_path, monkeypatch, capsys,
+):
     root = tmp_path / "root"
     target = _session_with_killed_child(root, 1, live=False, kill=False)
     _no_config(monkeypatch, tmp_path)
     monkeypatch.setenv(ENV, uid(1))
     _code, out, _err = _plan(capsys, target)
-    assert CHEERFUL in out or "NOTHING TO RESCUE YET: the run has not finished" in out
+    # G-A (R1): the child has no launch in the parent transcript, so its return is not
+    # established and the session says NO RESCUE UNIT (was: the cheerful or the not-finished line)
+    assert "NO RESCUE UNIT: 1 subagent has no established return" in out
+    assert CHEERFUL not in out
     assert NOTHING_YET_LIVE not in out
 
 

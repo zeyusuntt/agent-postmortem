@@ -11,6 +11,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": "nothing_yet",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -39,6 +41,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -56,6 +60,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": "nothing_yet",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -73,6 +79,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": false,
+  "empty_state": "nothing_yet",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -90,6 +98,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": false,
+  "empty_state": "nothing_yet",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -118,6 +128,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": false,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -135,6 +147,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": false,
+  "empty_state": "nothing_yet",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -163,6 +177,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": false,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -191,6 +207,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": false,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -208,6 +226,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": "unchecked_risk",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -246,6 +266,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -364,6 +386,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -402,6 +426,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -419,6 +445,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": "unchecked_risk",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -436,6 +464,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": "unchecked_risk",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -453,6 +483,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": "unchecked_risk",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -531,6 +563,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -548,6 +582,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": "nothing_yet",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -565,6 +601,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": "nothing_yet",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -582,6 +620,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": "unchecked_risk",
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -610,6 +650,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -638,6 +680,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>
@@ -666,6 +710,8 @@ exit=4
   "not_counted": [],
   "never_matches": [],
   "transcript_unknown": true,
+  "empty_state": null,
+  "return_breakdown": null,
   "exit_code": 4
 }
 <<<STDERR>>>

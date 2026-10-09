@@ -228,6 +228,7 @@ def test_attempt_and_run_to_dict_have_exactly_these_keys(tmp_path):
         "agent_id", "key", "label", "phase", "agent_type", "meta", "transcript_path", "events",
         "first_ts", "last_ts", "ordinal", "outcome", "usage", "interrupt", "reported",
         "reported_line", "tool_calls", "facts", "marker_hits", "journal_state", "ledger",
+        "return_state", "return_reason", "resumes",
     }
     assert set(run.to_dict()) == {
         "run_id", "kind", "path", "project_slug", "session_id", "claude_version", "journal",

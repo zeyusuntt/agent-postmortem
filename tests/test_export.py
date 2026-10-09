@@ -31,7 +31,7 @@ COUNTS_KEYS = {"agents", "attempts", "interrupted"}
 ATTEMPT_KEYS = {
     "agent_id", "key", "label", "phase", "agent_type", "ordinal", "outcome",
     "first_ts", "last_ts", "usage", "event_count", "interrupt", "reported",
-    "facts", "ledger",
+    "facts", "ledger", "return_state", "return_reason", "resumes",  # G-A: 5.3b attempt table
 }
 INTERRUPT_KEYS = {"cause", "silence_seconds"}
 REPORTED_DICT_KEYS = {"type", "keys", "claims"}

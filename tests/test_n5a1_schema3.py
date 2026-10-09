@@ -39,6 +39,7 @@ LIFECYCLE = {"terminal", "source", "activity", "generations"}
 ATTEMPT = {
     "agent_id", "key", "label", "phase", "agent_type", "ordinal", "outcome", "first_ts",
     "last_ts", "usage", "event_count", "interrupt", "reported", "facts", "ledger",
+    "return_state", "return_reason", "resumes",  # G-A: 5.3b attempt table
 }
 LEDGER = {"completeness", "reasons", "entries"}
 LEDGER_ENTRY = {"effect", "basis", "completion", "path", "repo", "line"}
@@ -53,6 +54,7 @@ SCAN_ROW = {
 }
 PLAN_TOP = {
     "schema", "disclosure", "run", "nothing_to_rescue", "groups", "units", "brief", "exit_code",
+    "empty_state", "return_breakdown",  # G-A R1
 }
 PLAN_RUN = {"run_id", "kind", "finished", "possibly_live"}
 PLAN_UNIT = {
@@ -63,7 +65,7 @@ PLAN_PATH = {"path", "group", "observation", "ledger", "attempts", "later_write_
 PATH_LEDGER = {"attempt", "effect", "basis", "completion", "line"}
 STATUS_TOP = {
     "schema", "disclosure", "run", "units", "not_counted", "never_matches",
-    "transcript_unknown", "exit_code",
+    "transcript_unknown", "exit_code", "empty_state", "return_breakdown",  # G-A R1
 }
 STATUS_UNIT = {
     "agent", "repo", "checks_declared", "last_counted_run", "word", "writes_after",

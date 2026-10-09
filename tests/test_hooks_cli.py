@@ -551,6 +551,11 @@ def test_check_groups_multiple_finished_subagents_of_one_session_into_one_line(m
     )
     transcript.write_text(
         '{"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2026-01-01T00:00:00Z"}\n'
+        # G-A (H1): a return needs the launch itself, so the two Agent launches are recorded
+        '{"type":"assistant","message":{"role":"assistant","content":['
+        '{"type":"tool_use","id":"toolu_0","name":"Agent","input":{}},'
+        '{"type":"tool_use","id":"toolu_1","name":"Agent","input":{}}]},'
+        '"timestamp":"2026-01-01T00:00:00Z"}\n'
         '{"type":"user","message":{"role":"user","content":[' + tool_result_blocks + ']},'
         '"timestamp":"2026-01-01T00:00:01Z"}\n',
         encoding="utf-8",
@@ -745,14 +750,20 @@ def test_check_deleted_and_recreated_unit_is_re_evaluated(monkeypatch, capsys, t
     _run(monkeypatch, capsys, "check", payload)
     key = _session_key(session_dir.parent.parent, session_dir.name)
     unit_id = "subagents/workflows/wf_00000000-752"
-    assert _state_data()["sessions"][key]["units"][unit_id]["state"] == "analyzed"
+    first = _state_data()["sessions"][key]["units"][unit_id]
+    assert first["state"] == "analyzed"
 
     (unit_dir / "journal.jsonl").unlink()
     (unit_dir / "agent-af200000000000001.jsonl").unlink(missing_ok=True)
     _write_journal("af200000000000002")
     _run(monkeypatch, capsys, "check", payload)
     unit = _state_data()["sessions"][key]["units"][unit_id]
-    assert unit["state"] == "running"
+    # G-A1 (GA-8): the re-opened unit re-evaluates its finished evidence in the same check, and
+    # the recreated journal is still finished, so it is analyzed again at once under a new
+    # fingerprint (was: parked as `running`)
+    assert unit["fingerprint"] != first["fingerprint"]
+    assert unit["state"] == "analyzed"
+    assert unit["stable_checks"] == 0
 
 
 # --- workflow-launched ---------------------------------------------------

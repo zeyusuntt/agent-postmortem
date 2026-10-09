@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import commands, disclosure, ledger, reader, severity
 from .detectors.base import attempt_seconds, format_duration, wasted_attempts
-from .models import Attempt, Finding, Run, TitleParts, raw_diagnostic
+from .models import Attempt, Finding, Run, TitleParts, effective_end, raw_diagnostic
 from .redact import Pseudonyms, Redactor
 from .rules import RULES, rules_for
 
@@ -698,6 +698,9 @@ _CAUSE_PHRASES = {
     "api_error": "a server error occurred",
     "interrupted": "interrupted before finishing",
     "unattributed": "cause not recorded in the transcript",
+    # docs/DESIGN.md 4.3 (G1c, v0.3.1): a session subagent that reported failure
+    "launch_result_failed": "its launch result reported failure",
+    "task_notification_failed": "its task notification reported failure",
 }
 
 
@@ -892,7 +895,8 @@ def _unassignable_words(run: Run, redactor: Redactor) -> str:
     phrases = []
     for reason, attempts in groups.items():
         named = [
-            _attempt_ident(attempt, run, redactor) for attempt in attempts[:_MAX_UNASSIGNABLE_NAMED]
+            _attempt_ident(attempt, run, redactor, with_label=False)
+            for attempt in attempts[:_MAX_UNASSIGNABLE_NAMED]
         ]
         words = _UNASSIGNABLE_REASON_WORDS.get(reason, _UNASSIGNABLE_REASON_WORDS["before_launch"])
         phrases.append(
@@ -916,12 +920,17 @@ def _run_reason_words(run: Run, redactor: Redactor) -> str:
     return "; ".join(words)
 
 
-def _attempt_ident(attempt: Attempt, run: Run, redactor: Redactor) -> str:
+def _attempt_ident(
+    attempt: Attempt, run: Run, redactor: Redactor, *, with_label: bool = True,
+) -> str:
     """The attempt's id in WORK AT RISK: `main` for a session main thread, else
     the agent id as the level shows it (a:<alias> at share)."""
     if attempt is run.main:
         return "main"
-    return identity_value("agent", attempt.agent_id, redactor) or "agent"
+    ident = identity_value("agent", attempt.agent_id, redactor) or "agent"
+    # docs/DESIGN.md 4.7 (G6, v0.3.1): one name per agent, as the AGENT table names it
+    label = redactor.names.agent(attempt.label) if with_label and attempt.label else ""
+    return f"{ident} ({label})" if label else ident
 
 
 def _attempt_clauses(attempt: Attempt) -> list[str]:
@@ -977,8 +986,80 @@ def _unreturned_subagents(run: Run, population: list[Attempt]) -> list[Attempt]:
     inside = {id(attempt) for attempt in population}
     return [
         attempt for attempt in run.attempts
-        if id(attempt) not in inside and attempt.returned_to_parent is not True
+        if id(attempt) not in inside and attempt.return_state != "returned"
     ]
+
+
+# docs/DESIGN.md 4.7 (W1, v0.3.1): the classes of a session subagent with no established return,
+# in breakdown order: (key, phrase)
+RETURN_CLASSES = (
+    ("reported_failed", "reported failed"),
+    ("reported_killed", "reported killed"),
+    ("possibly_running", "possibly running"),
+    ("no_return_evidence", "no return evidence found"),
+    ("not_established", "return could not be established"),
+)
+
+
+def transcript_recent(attempt: Attempt) -> bool:
+    """The child's transcript was modified within UNKNOWN_QUIET_SECONDS (600 s) of now. A file
+    that cannot be statted is not recent."""
+    path = attempt.transcript_path
+    if path is None:
+        return False
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return False
+    return reader.activity_word(mtime) == "recent"
+
+
+def return_class(attempt: Attempt) -> str:
+    """The W1 class of a session subagent whose return_state is not `returned`."""
+    state = attempt.return_state
+    if state == "reported_failed":
+        return "reported_failed"
+    if state == "reported_killed":
+        return "reported_killed"
+    if state in ("pending", "unknown") and transcript_recent(attempt):
+        return "possibly_running"
+    if state == "pending" or (state == "unknown" and attempt.return_reason == "no_evidence"):
+        return "no_return_evidence"
+    return "not_established"
+
+
+def _is_nested(attempt: Attempt) -> bool:
+    return isinstance(attempt.meta, dict) and isinstance(attempt.meta.get("parentAgentId"), str)
+
+
+def return_reason_phrase(attempt: Attempt) -> str:
+    klass = return_class(attempt)
+    phrase = dict(RETURN_CLASSES)[klass]
+    if klass == "no_return_evidence" and _is_nested(attempt):
+        phrase += " in its parent agent"
+    return phrase
+
+
+def unestablished_returns(run: Run) -> list[Attempt]:
+    """Every session subagent whose return_state is not `returned` (empty for a workflow)."""
+    if run.kind != "session":
+        return []
+    return [attempt for attempt in run.attempts if attempt.return_state != "returned"]
+
+
+def return_breakdown(attempts: list[Attempt]) -> dict[str, int]:
+    counts = {key: 0 for key, _phrase in RETURN_CLASSES}
+    for attempt in attempts:
+        counts[return_class(attempt)] += 1
+    return counts
+
+
+def breakdown_text(counts: dict[str, int]) -> str:
+    return ", ".join(f"{counts[key]} {phrase}" for key, phrase in RETURN_CLASSES if counts[key])
+
+
+def _have(k: int) -> str:
+    return "has" if k == 1 else "have"
 
 
 def _shell_arg(text: str, level: str) -> str:
@@ -1079,16 +1160,17 @@ def _work_at_risk_lines(run: Run, observation, redactor: Redactor) -> list[str]:
 
     def subagent_lines() -> list[str]:
         return [
-            f"  {_attempt_ident(attempt, run, redactor)}  no result returned to the main session"
+            f"  {_attempt_ident(attempt, run, redactor)}  {return_reason_phrase(attempt)}"
             for attempt in unreturned
         ]
 
     if not population and run.risk_population_completeness == "complete":
         k = len(unreturned)
         verb = "it" if k == 1 else "they"
+        breakdown = breakdown_text(return_breakdown(unreturned))
         return [
-            f"WORK AT RISK  unknown: {k} {_plural(k, 'subagent')} never returned a result to "
-            f"the main session; the tool cannot say what {verb} wrote.",
+            f"WORK AT RISK  unknown: {k} {_plural(k, 'subagent')} {_have(k)} no established "
+            f"return ({breakdown}); the tool cannot say what {verb} wrote.",
             *subagent_lines(),
         ]
     if not population:
@@ -1138,8 +1220,8 @@ def _work_at_risk_lines(run: Run, observation, redactor: Redactor) -> list[str]:
         k = len(unreturned)
         ids = ", ".join(_attempt_ident(attempt, run, redactor) for attempt in unreturned)
         lines.append(
-            f"  {k} {_plural(k, 'subagent')} outside this list never returned a result to "
-            f"the main session: {ids}"
+            f"  {k} {_plural(k, 'subagent')} outside this list {_have(k)} no established "
+            f"return: {ids}"
         )
     return lines
 
@@ -1274,6 +1356,16 @@ def _agent_end(final: Attempt | None, run: Run) -> str:
     that simply has not (yet) ended in the kill sentinel."""
     if final is None:
         return "unknown"
+    if final.return_state is not None:
+        # G1 (v0.3.1): a session subagent ends as its effective end says; a proven state is
+        # never changed by the modification time
+        end = effective_end(final)
+        if end in ("open", "unknown"):
+            return "possibly running" if transcript_recent(final) else "unknown"
+        if end == "killed" and final.outcome == "killed":
+            cause = final.interrupt.cause if final.interrupt is not None else None
+            return _AGENT_END_KILLED_CAUSE.get(cause, "killed")
+        return end
     if (
         final.outcome == "completed"
         and run.kind == "workflow"
@@ -1346,12 +1438,28 @@ def _commit_commands_without_id(attempts) -> int:
     return total
 
 
+def _commits_words(known: int, without_id: int) -> str:
+    """docs/DESIGN.md 4.7 (G4b): a commit count in a short clause, by the COMMITS cell's rule:
+    `<c>+ commits` when some id is known and a call with a commit command reported none,
+    `commit count unknown` when no id is known at all."""
+    if without_id > 0:
+        return f"{known}+ commits" if known else "commit count unknown"
+    return f"{known} {_plural(known, 'commit')}"
+
+
+def _reported_commits(known: int, without_id: int) -> str:
+    """docs/DESIGN.md 4.7 (G4b): the commit part of the STORIES facts clause."""
+    if without_id > 0 and not known:
+        return "commit count unknown (a commit command reported no id)"
+    return f"reported {_commits_words(known, without_id)}"
+
+
 def _commits_display(agent, commits_count: int) -> str:
-    """The AGENT table's COMMITS cell: the count of known commit ids, `N+` when
-    any attempt of the agent has a call that contains a commit command and reported no
-    id (a lower bound: a commit may have happened, docs/DESIGN.md 4.7, FA6)."""
+    """The AGENT table's COMMITS cell: the count of known commit ids; when any attempt of the
+    agent has a completed call that contains a commit command and reported no id (a commit may
+    have happened, docs/DESIGN.md 4.7, FA6, G4): `?` when no id is known, `N+` otherwise."""
     if _commit_commands_without_id(agent.attempts) > 0:
-        return f"{commits_count}+"
+        return "?" if commits_count == 0 else f"{commits_count}+"
     return str(commits_count)
 
 
@@ -1367,6 +1475,9 @@ def _runtime_owned_kill(attempt) -> bool:
 _MAX_LABEL = 40
 _MAX_PHASE = 22
 _LOWER_BOUND_LEGEND = "+ is a lower bound: incomplete evidence may hide more paths or commits."
+_COMMIT_UNKNOWN_LEGEND = (
+    "COMMITS ? a completed shell call contained a commit command but reported no commit id"
+)
 
 
 def _truncate_shown(text: str, limit: int) -> str:
@@ -1397,9 +1508,15 @@ def _agent_table(run: Run, redactor: Redactor) -> list[str]:
     header = f"{'AGENT':<{label_width}}"
     if show_phase:
         header += f"{'PHASE':<{phase_width}}"
-    header += f"{'ATTEMPTS':<10}{'END':<19}{'KILLED':<8}{'PATHS':<7}{'COMMITS':<9}WASTED"
+    # docs/DESIGN.md 4.7 (G9, v0.3.1): a RESUMES column only when some subagent was resumed
+    show_resumes = run.kind == "session" and any(a.resumes > 0 for a in run.attempts)
+    header += f"{'ATTEMPTS':<10}"
+    if show_resumes:
+        header += f"{'RESUMES':<9}"
+    header += f"{'END':<19}{'KILLED':<8}{'PATHS':<7}{'COMMITS':<9}WASTED"
     lines = [header]
     lower_bound = False
+    commit_unknown = False
 
     for agent, label, phase in zip(run.agents, labels, phases):
         attempts = sorted(agent.attempts, key=lambda a: a.ordinal)
@@ -1409,17 +1526,24 @@ def _agent_table(run: Run, redactor: Redactor) -> list[str]:
         paths_display, commits_count = _agent_facts_totals(agent)
         commits_display = _commits_display(agent, commits_count)
         lower_bound = lower_bound or paths_display.endswith("+") or commits_display.endswith("+")
+        commit_unknown = commit_unknown or commits_display == "?"
 
         row = f"{label:<{label_width}}"
         if show_phase:
             row += f"{phase:<{phase_width}}"
+        row += f"{len(attempts):<10}"
+        if show_resumes:
+            resumes = sum(a.resumes for a in attempts)
+            row += f"{resumes if resumes else '':<9}"
         row += (
-            f"{len(attempts):<10}{_agent_end(final, run):<19}{killed:<8}"
+            f"{_agent_end(final, run):<19}{killed:<8}"
             f"{paths_display:<7}{commits_display:<9}{format_duration(wasted_seconds)}"
         )
         lines.append(redactor.scrub_local_line(row))
     if lower_bound:  # P4
         lines.append(_LOWER_BOUND_LEGEND)
+    if commit_unknown:  # G4
+        lines.append(_COMMIT_UNKNOWN_LEGEND)
     return lines
 
 
@@ -1496,12 +1620,14 @@ _TOOLING_STORY_PHRASES = {
     "codex_write_denied": "sandbox write denials",
     "classifier_unavailable": "classifier outages",
     "git_cwd_mismatch": "git cwd mismatches",
+    "permission_denied": "tool calls denied",
 }
 
 _CLAIM_CLAUSE_PHRASES = {
     "ok_false": "ok is false",
     "ready_false": "ready is false",
     "report_path_missing": "a report_path that does not exist",
+    "self_reported_blocked": "being blocked",
 }
 
 
@@ -1524,6 +1650,9 @@ def _claim_contradiction_phrases(metrics: dict) -> list[str]:
         elif clause_id == "blockers":
             n = claims.get("blockers_count", 0)
             phrases.append(f"{n} {_plural(n, 'blocker')}")
+        elif clause_id == "self_reported_failure":
+            n = metrics.get("self_reported_failure_counts", 0)
+            phrases.append(f"{n} {_plural(n, 'failure count')}")
         else:
             phrases.append(_CLAIM_CLAUSE_PHRASES.get(clause_id, clause_id))
     return phrases or ["a contradiction"]
@@ -1626,15 +1755,14 @@ def _agent_story_pieces(agent, agent_findings: list[Finding]) -> list:
     facts_known = path_count is not None
     paths_count = path_count or 0
     was_killed = final is not None and final.outcome == "killed"
-    if paths_count or commits_count:
+    without_id = _commit_commands_without_id(agent.attempts)
+    if paths_count or commits_count or without_id:
         # a partial ledger makes the count a lower bound (docs/DESIGN.md 4.13.8)
         paths_word = (
             f"{paths_count}+ paths" if paths_partial
             else f"{paths_count} {_plural(paths_count, 'path')}"
         )
-        clauses.append(
-            f"Wrote {paths_word}, reported {commits_count} {_plural(commits_count, 'commit')}."
-        )
+        clauses.append(f"Wrote {paths_word}, {_reported_commits(commits_count, without_id)}.")
     elif facts_known and was_killed and not paths_partial:
         clauses.append("Wrote no paths.")
 
@@ -1642,6 +1770,8 @@ def _agent_story_pieces(agent, agent_findings: list[Finding]) -> list:
     for detector_id, phrase in _TOOLING_STORY_PHRASES.items():
         for finding in by_detector.get(detector_id, []):
             count = finding.metrics.get("count", 1)
+            if detector_id == "permission_denied":
+                phrase = f"tool {_plural(count, 'call')} denied"
             tooling_bits.append(f"{count} {phrase}")
     if tooling_bits:
         clauses.append("; ".join(tooling_bits))
@@ -2063,10 +2193,14 @@ def attention_reason(run: Run, findings: list[Finding]) -> str:
         paths_word = (
             f"{n_paths} {_plural(n_paths, 'path')}" if paths_complete else f"{n_paths}+ paths"
         )
+        # docs/DESIGN.md 4.8 (G4b): the same attempts _risk_paths_and_commits walks
+        without_id = _commit_commands_without_id(
+            [a for a in run.attempts if a.outcome in _RISK_OUTCOMES]
+        )
         return (
             f"{k} {_plural(k, 'attempt')} killed by the runtime, "
             f"{paths_word} named, "
-            f"{len(commits)} {_plural(len(commits), 'commit')}"
+            f"{_commits_words(len(commits), without_id)}"
         )
 
     top = _scan_top_detector(findings)
@@ -2321,7 +2455,14 @@ def _export_attempt(attempt: Attempt, redactor: Redactor, view: "EvidenceView") 
     # Redactor via redact_value -- structural redaction only, same as an
     # evidence line or a metrics value. This is what redacts a report_path
     # claim (a path) without a pseudonym ever touching it.
-    reported = redact_value(attempt.reported, redactor) if attempt.reported is not None else None
+    shown_reported = attempt.reported
+    if isinstance(shown_reported, dict) and isinstance(shown_reported.get("keys"), list):
+        # docs/DESIGN.md 5.3 (G-B1, GB-8): result keys are user-authored identifiers; at share
+        # they print as key-N, in order of first appearance within this render.
+        shown_reported = {
+            **shown_reported, "keys": [redactor.names.key(key) for key in shown_reported["keys"]],
+        }
+    reported = redact_value(shown_reported, redactor) if shown_reported is not None else None
     # docs/DESIGN.md 5.3's v0.2 reader changes: facts is exported, tool_calls
     # is not (a command is private, never leaves the tool). facts holds
     # paths (paths_written, in_flight[].path, cwds) that go through the same
@@ -2352,7 +2493,11 @@ def _export_attempt(attempt: Attempt, redactor: Redactor, view: "EvidenceView") 
         "phase": redactor.names.phase(attempt.phase),
         "agent_type": agent_type,
         "ordinal": attempt.ordinal,
-        "outcome": attempt.outcome,
+        # docs/DESIGN.md 5.3b (E1): a session subagent's exported outcome is its effective end
+        "outcome": effective_end(attempt),
+        "return_state": attempt.return_state,
+        "return_reason": attempt.return_reason,
+        "resumes": attempt.resumes,
         "first_ts": _iso(attempt.first_ts),
         "last_ts": _iso(attempt.last_ts),
         "usage": attempt.usage,
@@ -2515,7 +2660,7 @@ def export_run(
     exported_findings = [
         _export_finding(finding, redactor, silenced_detectors, view) for finding in findings
     ]
-    interrupted = sum(1 for attempt in run.attempts if attempt.outcome == "killed")
+    interrupted = sum(1 for attempt in run.attempts if attempt.interrupt is not None)
 
     payload = {
         "run": {

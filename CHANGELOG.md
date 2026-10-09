@@ -5,6 +5,63 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1]
+
+A second field round on real runs. Session subagents get a proven return state, the report stops
+counting things it cannot see, and four checks the first round missed are added.
+
+Five rules changed after review. When any transcript that could hold a resume request
+cannot be read, every child's return is unknown. A resume addressed to an agent name, in `to` or
+`recipient`, is no longer a contradiction; only another child's id is. A tool-use id that is not a
+string makes the children it names unknown. A hook unit that was re-opened is analyzed again at
+once. A transcript whose last line was cut inside a multibyte character is a half-written line,
+like one cut in plain text: the run gets a diagnostic and the rest of the transcript is still read.
+
+### Changed
+
+- A session subagent's end comes from what its parent recorded (a returned result, a failed or
+  killed task notification, a resume), not only from its own transcript. The AGENT table gains a
+  `RESUMES` column when some subagent was resumed, WORK AT RISK names a subagent with no
+  established return in one words-only line, and `rescue` says `NO RESCUE UNIT` instead of
+  `NOTHING TO RESCUE` when a child has no established return. A child that reported failure is an
+  `attempt_failed` finding.
+- `claim_contradiction` also fires when a completed attempt's returned result carries a top-level
+  `<name>_failed` count above 0 (an integer, not a boolean; `tests_failed` and `suite_failed` keep
+  their own clauses) or `blocked: true`. Major, with a fixed title (`reports failures in <n> field(s)`, `n` the number
+  of such fields) that names neither the key nor any result text. `blockers_fixed`, `blocker_kind`, `blocked_reason`, nested keys and
+  `blocked: "yes"` count for nothing.
+- The COMMITS cell reads `?` when a completed shell call contained a commit command but reported no
+  commit id and no other id is known (it read `0+`), with a legend line under the table that starts
+  `COMMITS ?`. With at
+  least one known id it still reads `N+`. The STORIES sentence, the scan reason for a runtime kill
+  and the `watch` KILL line follow the same rule: `N+ commits`, or `commit count unknown` where
+  they said `0 commits`.
+- `run --here` and `scan --here`: when `CLAUDE_CODE_SESSION_ID` names the only session with that
+  transcript name and that session itself worked in this directory, the workflow runs it started
+  are included, whatever directory their agents worked in. Another session's workflows never are.
+- At the default share level, `reported.keys` in the JSON lists `key-1`, `key-2` and so on instead of
+  the result's own key names (numbered in order of first appearance within one report). `--local`
+  and `--no-redact` keep the real names.
+
+### Added
+
+- Detector `permission_denied` (minor): a tool result with `is_error` that starts with one of the
+  runtime's four denial sentences. One finding per attempt, the session main thread included, with
+  the four counts and up to 5 `file:line` pointers. A rule denial may span lines (a multi-line
+  command) and name an `mcp__` tool. The denied command is never printed. It is not
+  run by the session-end hook.
+- The maintainer's advisory corpus check gains invariants 6 to 13 (an independent return state, the
+  exported outcome, the WORK AT RISK guard, denial counts, claim coverage, rescue wording, `--here`).
+  It is a maintainer check, not a shipped feature: its logic is test support under `tests/` and the
+  runner over real runs is not part of the package.
+
+### Not in this release
+
+- Round-scoped paths, risk and WASTED for resumed children.
+- A `main` row for the main thread's commits.
+- Stopping a background shell with TaskStop.
+- PATHS for writes inside inline Python or a script.
+
 ## [0.3.0]
 
 0.3 rebuilds the evidence under every verdict: severity, WORK AT RISK, and the

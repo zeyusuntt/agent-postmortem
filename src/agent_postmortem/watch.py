@@ -215,11 +215,12 @@ def _last_user_index(events: list) -> int | None:
     return last
 
 
-def _parse_kill(path: Path) -> tuple[bool, float | None, int, int, bool]:
-    """(is_kill, silence_seconds, paths_written, commits, paths_partial) for one attempt's
-    transcript, from a single full parse (`paths_partial`, N8 fix 1 S-m5: the attempt's ledger
-    is partial, so `paths_written` is a lower bound): is_kill is whether its last user
-    event is the kill sentinel; silence_seconds is computed the same way the
+def _parse_kill(path: Path) -> tuple[bool, float | None, int, int, bool, int]:
+    """(is_kill, silence_seconds, paths_written, commits, paths_partial, commits_without_id) for
+    one attempt's transcript, from a single full parse (`paths_partial`, N8 fix 1 S-m5: the
+    attempt's ledger is partial, so `paths_written` is a lower bound; `commits_without_id`,
+    G4b: completed calls with a commit command that reported no id): is_kill is whether its
+    last user event is the kill sentinel; silence_seconds is computed the same way the
     interrupt machinery does (reader._build_interrupt): the gap from the
     last meaningful event before the sentinel (detectors.base.
     meaningful_event_before) to the sentinel itself, None when a timestamp
@@ -231,10 +232,10 @@ def _parse_kill(path: Path) -> tuple[bool, float | None, int, int, bool]:
     )
     kill_index = _last_user_index(events)
     if kill_index is None:
-        return False, None, 0, 0, False
+        return False, None, 0, 0, False, 0
     kill_event = events[kill_index]
     if not kill_event.text.startswith(KILL_SENTINEL_PREFIX):
-        return False, None, 0, 0, False
+        return False, None, 0, 0, False, 0
 
     preceding = meaningful_event_before(_EventsHolder(events), kill_index)
     silence: float | None = None
@@ -247,7 +248,8 @@ def _parse_kill(path: Path) -> tuple[bool, float | None, int, int, bool]:
     paths = len(facts.paths_written) if facts is not None else 0
     commits = len(facts.commits) if facts is not None else 0
     partial = ledger.build_ledger(tool_calls, path.name, state).completeness == "partial"
-    return True, silence, paths, commits, partial
+    without_id = report._commit_commands_without_id([SimpleNamespace(facts=facts)])
+    return True, silence, paths, commits, partial, without_id
 
 
 def _cause_phrase_for_failed(path: Path) -> tuple[str, str | None]:
@@ -666,9 +668,21 @@ def watch_run(
         _sleep(min(interval, remaining))
 
 
+def _paths_words(paths: int, partial: bool) -> str:
+    return f"{paths}+ paths" if partial else f"{paths} {report._plural(paths, 'path')}"
+
+
+def _commit_words(commits: int, without_id: int) -> str:
+    """docs/DESIGN.md 4.12 (G4b): `reported <c> commit(s)`, `reported <c>+ commits`, or
+    `commit count unknown`, by the COMMITS cell's rule (4.7)."""
+    words = report._commits_words(commits, without_id)
+    return words if without_id > 0 and not commits else f"reported {words}"
+
+
 def _emit_kill_line(
     run_id: str, names: _AgentNames, previous, current, silence: float | None, paths: int,
     commits: int, json_mode: bool, out, *, paths_partial: bool = False,
+    commits_without_id: int = 0,
 ) -> None:
     agent = names.name(previous)
     silence_int = None if silence is None else round(silence)
@@ -698,9 +712,9 @@ def _emit_kill_line(
         print(
             _line(
                 "",
-                f"attempt {previous.ordinal} wrote {paths}{'+' if paths_partial else ''} paths, "
-                f"reported {commits} "
-                f"commits.  -> agent-postmortem rescue plan {run_id}",
+                f"attempt {previous.ordinal} wrote {_paths_words(paths, paths_partial)}, "
+                f"{_commit_words(commits, commits_without_id)}.  "
+                f"-> agent-postmortem rescue plan {run_id}",
             ),
             file=out,
         )
@@ -722,7 +736,7 @@ def _try_emit_kill(
     transcript_path = _transcript_path(run_dir, previous.agent_id)
     if not transcript_path.exists():
         return "retry"
-    is_kill, silence, paths, commits, partial = _parse_kill(transcript_path)
+    is_kill, silence, paths, commits, partial, without_id = _parse_kill(transcript_path)
     if not is_kill:
         return "not_a_kill"
     if _rate_limited(previous.key, now, last_print):
@@ -730,7 +744,7 @@ def _try_emit_kill(
 
     _emit_kill_line(
         run_id, names, previous, current, silence, paths, commits, json_mode, out,
-        paths_partial=partial,
+        paths_partial=partial, commits_without_id=without_id,
     )
     last_print[previous.key] = now
     return "emitted"

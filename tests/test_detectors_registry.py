@@ -69,7 +69,8 @@ def test_silent_retry_is_workflow_only():
 
 def test_attempt_failed_is_workflow_only():
     attempt_failed = next(d for d in all_detectors() if d.id == "attempt_failed")
-    assert attempt_failed.kinds == frozenset({"workflow"})
+    # G-A (G1c): both kinds now (was workflow only)
+    assert attempt_failed.kinds == frozenset({"workflow", "session"})
 
 
 def test_claim_contradiction_is_workflow_only():

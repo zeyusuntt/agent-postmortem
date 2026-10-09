@@ -18,17 +18,19 @@ assembly (docs/DESIGN.md section 4.2).
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import commands, disclosure, ledger, markers
+from . import commands, disclosure, ledger, markers, returns
+from .claims import self_reported_problems
 from .detectors.base import attribute_interrupt, meaningful_event_before
 from .markers import (
     API_ERROR,
@@ -355,6 +357,83 @@ def discover_runs(
     return refs
 
 
+# docs/DESIGN.md 4.1 (G-C, GC-1): a final physical line with no trailing newline whose bytes
+# are not valid UTF-8 is a half-written line (a live write cut inside a character); an
+# undecodable byte anywhere else is the N4 C2 rule. A transcript is read strictly, the cost it
+# always had; only a strict read that fails to decode, on a file whose last line is torn, goes
+# on with errors="surrogateescape", where an undecodable byte shows up as one U+DC80..U+DCFF
+# character in its line (GC-1b: scanning every line cost 4.3 s of CPU on a 248-run scan).
+_UNDECODABLE_BYTE_RE = re.compile("[\udc80-\udcff]")
+_TAIL_STEP = 65536
+
+
+def _ends_in_torn_line(path: Path) -> bool:
+    """Whether the bytes after the file's last line break are not valid UTF-8: a final line
+    with no newline, cut inside a character. Reads backwards from the end of the file."""
+    chunks: list[bytes] = []
+    try:
+        with path.open("rb") as handle:
+            position = handle.seek(0, os.SEEK_END)
+            while position > 0:
+                step = min(_TAIL_STEP, position)
+                position -= step
+                handle.seek(position)
+                chunk = handle.read(step)
+                cut = max(chunk.rfind(b"\n"), chunk.rfind(b"\r"))
+                if cut >= 0:
+                    chunks.append(chunk[cut + 1 :])
+                    break
+                chunks.append(chunk)
+    except OSError:
+        return False
+    tail = b"".join(reversed(chunks))
+    try:
+        tail.decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    return False
+
+
+def _transcript_lines(path: Path):
+    """(line_no, line, torn) for every physical line of a transcript, read strictly. When the
+    strict read fails to decode and the file's last line is torn, the read goes on from the
+    first line it had not given yet, with errors="surrogateescape": the torn last line comes
+    back once, with an empty `line` and torn True; an undecodable byte on any other line raises
+    UnicodeDecodeError, as the strict read did. OSError propagates."""
+    given = 0
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line_no, line in enumerate(handle, start=1):
+                given = line_no
+                yield line_no, line, False
+        return
+    except UnicodeDecodeError:
+        if not _ends_in_torn_line(path):
+            raise
+    with path.open("r", encoding="utf-8", errors="surrogateescape") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            if line_no <= given:
+                continue
+            if _UNDECODABLE_BYTE_RE.search(line):
+                if line.endswith("\n"):
+                    raise UnicodeDecodeError(
+                        "utf-8", b"", 0, 1, "undecodable byte before the end of a transcript line"
+                    )
+                yield line_no, "", True
+            else:
+                yield line_no, line, False
+
+
+@contextlib.contextmanager
+def _transcript_reader(path: Path):
+    """_transcript_lines(path), closed on exit, so a caller that stops early closes the file."""
+    lines = _transcript_lines(path)
+    try:
+        yield lines
+    finally:
+        lines.close()
+
+
 def _has_timestamped_conversation(path: Path) -> bool:
     """Whether path carries at least one 'user' or 'assistant' entry with a
     parseable timestamp (docs/DESIGN.md 4.2's definition of a session run).
@@ -370,8 +449,8 @@ def _has_timestamped_conversation(path: Path) -> bool:
     if not _is_file(path) or path.suffix != ".jsonl":
         return False
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
+        with _transcript_reader(path) as lines:
+            for _line_no, line, _torn in lines:
                 line = line.strip()
                 if not line:
                     continue
@@ -411,8 +490,8 @@ def _sniff_session_file(path: Path) -> bool:
     if not _is_file(path) or path.suffix != ".jsonl":
         return False
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
+        with _transcript_reader(path) as lines:
+            for _line_no, line, _torn in lines:
                 line = line.strip()
                 if not line:
                     continue
@@ -670,9 +749,16 @@ def _load_workflow(path: Path) -> Run:
         # nothing of its own to report).
         reported = None
         reported_line = None
+        self_report = None
         if closed_by == "completed" and journal_attempt is not None:
             reported = _build_reported(journal_attempt.closing_entry)
             reported_line = journal_attempt.closing_line
+            # docs/DESIGN.md 4.3 (G3): only the shared predicate's answer survives, never a key
+            # name or a value
+            self_report = self_reported_problems(
+                journal_attempt.closing_entry.get("result")
+                if isinstance(journal_attempt.closing_entry, dict) else None
+            )
 
         attempt = Attempt(
             agent_id=agent_id,
@@ -690,6 +776,7 @@ def _load_workflow(path: Path) -> Run:
             usage=_sum_usage(events),
             reported=reported,
             reported_line=reported_line,
+            _self_report=self_report,
             tool_calls=tool_calls,
             marker_hits=marker_hits,
             # docs/DESIGN.md 4.1 (N4b-1): the state machine's own closure,
@@ -1266,15 +1353,10 @@ def _load_session_from_paths(
     agents: list[LogicalAgent] = []
     attempts: list[Attempt] = []
 
-    # docs/DESIGN.md 4.13.1 (N5 fix 1, S2): the accepted task notifications of the session
-    # transcript come from the parent index (4.13.3's one acceptance rule), read once and only
-    # when some child's launch result is asynchronous.
-    notification_memo: list[list] = []
-
-    def accepted_notifications() -> list:
-        if not notification_memo:
-            notification_memo.append(ParentIndex.for_path(main_path)._accepted_notifications())
-        return notification_memo[0]
+    # docs/DESIGN.md 4.13.1 (G-A): the facts every analyzed child's transcript recorded, for the
+    # return decision (resume requests may come from any transcript of the session).
+    child_facts: dict[Path, returns.ReturnFacts] = {}
+    child_meta: list[tuple[Attempt, str, dict, bool]] = []
 
     for agent_path in agent_paths:
         agent_path = Path(agent_path)
@@ -1286,6 +1368,7 @@ def _load_session_from_paths(
         meta_path = agent_path.with_name(f"{agent_path.stem}.meta.json")
         meta_start = len(diagnostics)
         meta = _load_meta_file(meta_path, diagnostics)
+        meta_bad = len(diagnostics) > meta_start
         discovery["meta"].extend(discovery_part(diagnostics[meta_start:]))
         label = meta.get("description", "")
         if not isinstance(label, str):
@@ -1297,10 +1380,14 @@ def _load_session_from_paths(
 
         transcript_start = len(diagnostics)
         sub_state = ledger.TranscriptState()
+        sub_log = _LaunchLog()
         (
             events, sub_version, _, sub_unreadable, sub_over_threshold, sub_tool_calls,
             sub_marker_hits,
-        ) = _read_transcript_tracked(agent_path, diagnostics, state=sub_state)
+        ) = _read_transcript_tracked(agent_path, diagnostics, state=sub_state, launch_log=sub_log)
+        sub_log.facts.path = agent_path
+        sub_log.facts.unreadable = sub_unreadable
+        child_facts[agent_path] = sub_log.facts
         discovery["transcripts"].extend(discovery_part(diagnostics[transcript_start:]))
         incomplete = incomplete or sub_unreadable or sub_over_threshold
         incomplete = incomplete or any(call.ambiguous for call in sub_tool_calls)
@@ -1334,16 +1421,7 @@ def _load_session_from_paths(
         attempt.facts = _build_attempt_facts(
             sub_tool_calls, outcome, sub_last_ts, agent_path, sub_unreadable
         )
-        # docs/DESIGN.md 4.1 (S11, N5c-1): return evidence from the parent
-        # snapshot of this very load, by the transcript file's own id; without a
-        # launch log nothing can show a return, so the field fails closed.
-        launch_log_of_main = main_attempt._launch_log
-        attempt.returned_to_parent = (
-            launch_log_of_main.child_returned(
-                agent_path.stem.removeprefix("agent-"), accepted_notifications,
-            )
-            if isinstance(launch_log_of_main, _LaunchLog) else False
-        )
+        child_meta.append((attempt, agent_path.stem.removeprefix("agent-"), meta, meta_bad))
         if outcome == "killed":
             attempt.interrupt = _build_interrupt(attempt)
         attempts.append(attempt)
@@ -1371,6 +1449,8 @@ def _load_session_from_paths(
         finished=None,
         discovery=discovery,
     )
+    if child_meta:
+        _assign_return_states(main_path, child_facts, child_meta)
     parent_index = _parent_index_for(run)
     _attribute_interrupts(run, parent_index)
     if reconcile:
@@ -1389,6 +1469,145 @@ def _load_session_from_paths(
         )
     ledger.attach_ledgers(run)
     return run
+
+
+def _read_evidence_facts(path: Path) -> "returns.ReturnFacts":
+    """The return facts of a transcript read as evidence only (never an analyzed attempt): a
+    nested child's launcher, or any other session transcript that may hold a resume request. A
+    transcript that is not a file, or cannot be read, is `unreadable`."""
+    log = _LaunchLog()
+    if not _is_file(path):
+        facts = returns.ReturnFacts(path, unreadable=True)
+        return facts
+    result = _read_transcript_tracked(path, [], launch_log=log)
+    facts = log.facts
+    facts.path = path
+    facts.unreadable = result[3]
+    return facts
+
+
+class _SessionReturns:
+    """The return decision of the session subagents of one main transcript (docs/DESIGN.md
+    4.13.1, T0 to T5): the main transcript's facts and accepted notifications come from its
+    ParentIndex (incremental, shared with the hooks); a nested child's launcher and every other
+    transcript read for a resume request are evidence only."""
+
+    def __init__(self, main_path: Path, loaded: "dict[Path, returns.ReturnFacts]"):
+        self.main_path = Path(main_path)
+        self.index = ParentIndex.for_path(self.main_path)
+        self.main = self.index.facts
+        self.main_unreadable = self.index._unreadable_diagnostic is not None
+        self.loaded = loaded
+        self._evidence: dict[Path, returns.ReturnFacts] = {}
+        self.subagents = _session_dir(self.main_path) / "subagents"
+        ids: set[str] = set()
+        if _is_dir(self.subagents):
+            patterns = (("agent-*.jsonl", ".jsonl"), ("agent-*.meta.json", ".meta.json"))
+            for pattern, suffix in patterns:
+                for found in self.subagents.glob(pattern):
+                    ids.add(found.name.removeprefix("agent-").removesuffix(suffix))
+        self.siblings = frozenset(ids)
+        self._notes = [
+            returns.Note(n.line_no, n.task_id, n.tool_use_id, n.status, n.ts)
+            for n in self.index._accepted_notifications()
+        ]
+
+    def path_of(self, agent_id: str) -> Path:
+        return self.subagents / f"agent-{agent_id}.jsonl"
+
+    def facts_of(self, agent_id: str) -> "returns.ReturnFacts":
+        path = self.path_of(agent_id)
+        if path in self.loaded:
+            return self.loaded[path]
+        if path not in self._evidence:
+            self._evidence[path] = _read_evidence_facts(path)
+        return self._evidence[path]
+
+    def notes_of(self, agent_id: str) -> "list[returns.Note]":
+        return [n for n in self._notes if n.task_id == agent_id]
+
+    def launcher_facts(self, key: str) -> "returns.ReturnFacts":
+        return self.main if key == "main" else self.facts_of(key)
+
+    def digest_for(self, agent_id: str) -> str:
+        return returns.main_side_digest(agent_id, self.main, self.notes_of(agent_id))
+
+    def decide(self, agent_id: str, meta: dict, meta_bad: bool):
+        """(Decision, the launcher's facts or None)."""
+        key, reason = returns.launcher_of(meta, self.siblings, agent_id)
+        issuers = [self.main, *self.loaded.values()]
+        launcher = None
+        if key is not None and not meta_bad:
+            launcher = self.launcher_facts(key)
+            if not any(launcher is f for f in issuers):
+                issuers.append(launcher)
+
+        def early(reason_word: str):
+            return returns.Decision(
+                returns.UNKNOWN, reason_word,
+                returns.resume_count(agent_id, issuers, self.siblings),
+            ), launcher
+
+        if meta_bad:
+            return early("malformed")
+        if key is None:
+            return early(reason)
+        # GA-1: a transcript that may hold a resume request and cannot be read at all hides
+        # which child it resumed, so every child of the session is unknown (a malformed or
+        # half-written line inside a readable transcript is only a recorded limit, 4.13.1)
+        if self.main_unreadable or any(f.unreadable for f in issuers):
+            return early("parent_unreadable")
+        return returns.decide(
+            agent_id, launcher, self.main, self.notes_of(agent_id), issuers, self.siblings
+        ), launcher
+
+
+def _assign_return_states(
+    main_path: Path, child_facts: "dict[Path, returns.ReturnFacts]", children: list,
+) -> None:
+    """Set return_state, return_reason, resumes, returned_to_parent and return_evidence on
+    every session subagent attempt (docs/DESIGN.md 4.1, 4.13.1)."""
+    context = _SessionReturns(main_path, child_facts)
+    for attempt, agent_id, meta, meta_bad in children:
+        decision, launcher = context.decide(agent_id, meta, meta_bad)
+        attempt.return_state = decision.state
+        attempt.return_reason = decision.reason
+        attempt.resumes = decision.resumes
+        attempt.returned_to_parent = decision.state == returns.RETURNED
+        if decision.evidence is not None:
+            source, line, in_launcher = decision.evidence
+            where = launcher.path if in_launcher and launcher is not None else Path(main_path)
+            attempt.return_evidence = (source, where, line)
+
+
+def session_child_return(main_path: Path, agent_path: Path, cache: dict | None = None):
+    """(Decision, main-side digest, launcher transcript path or None, unreadable tokens) of one
+    session subagent, from the main transcript and, when it is nested, its launcher read as
+    evidence only (docs/DESIGN.md 7.2's finished rule and fingerprint). The child's own
+    transcript is not read, only its meta file. `cache`, a dict the caller owns for one hook
+    invocation, keeps the main transcript's context so its notifications are listed once."""
+    agent_path = Path(agent_path)
+    agent_id = agent_path.stem.removeprefix("agent-")
+    meta_path = agent_path.with_name(f"{agent_path.stem}.meta.json")
+    diagnostics: list[str] = []
+    meta = _load_meta_file(meta_path, diagnostics)
+    key = ("returns", Path(main_path))
+    context = cache.get(key) if cache is not None else None
+    if context is None:
+        context = _SessionReturns(Path(main_path), {})
+        if cache is not None:
+            cache[key] = context
+    decision, launcher = context.decide(agent_id, meta, bool(diagnostics))
+    path = launcher.path if launcher is not None and launcher is not context.main else None
+    # GA-3: which inputs could not be read, as stable tokens for the hook's fingerprint
+    unreadable = tuple(
+        token for token, bad in (
+            ("main", context.main_unreadable),
+            ("meta", bool(diagnostics)),
+            ("launcher", path is not None and launcher.unreadable),
+        ) if bad
+    )
+    return decision, context.digest_for(agent_id), path, unreadable
 
 
 def load_session(path: Path) -> Run:
@@ -1718,11 +1937,16 @@ def _flatten_for_markers(content: object) -> str:
     return flat.lstrip(" \t\r\n")
 
 
-def _tool_result_shapes(tool_name: str | None, is_codex_bash: bool) -> set[str]:
+def _tool_result_shapes(
+    tool_name: str | None, is_codex_bash: bool, is_error: bool = False,
+) -> set[str]:
     """Which marker-registry shape tags a tool_result block paired to
     tool_name (and, for a Bash call, whether its own command runs codex as a
-    program) is a candidate block for (docs/DESIGN.md 4.13.2)."""
+    program; whether the block has is_error true) is a candidate block for
+    (docs/DESIGN.md 4.13.2)."""
     shapes: set[str] = set()
+    if is_error:
+        shapes.add(markers.SHAPE_TOOL_RESULT_ERROR)
     if tool_name == "Bash":
         shapes.add(markers.SHAPE_TOOL_RESULT_BASH)
         if is_codex_bash:
@@ -1800,7 +2024,7 @@ def _user_entry_marker_hits(
             command = tool_commands.get(tool_use_id) if tool_use_id is not None else None
             is_codex_bash = tool_name == "Bash" and markers.runs_codex_program(command)
             block_text = _flatten_for_markers(block.get("content"))
-            shapes = _tool_result_shapes(tool_name, is_codex_bash)
+            shapes = _tool_result_shapes(tool_name, is_codex_bash, block.get("is_error") is True)
             hits.extend(
                 _marker_hits_for_text(
                     block_text, shapes,
@@ -2012,22 +2236,30 @@ class _LaunchLog:
         # where kind is the launch result's status class: 'plain' (no status),
         # 'completed', 'async' (async_launched or isAsync true), or 'other'
         self.results: dict[str, list[tuple[object, object, bool, str | None, bool, str]]] = {}
+        # docs/DESIGN.md 4.13.1 (G-A): the facts the return decision reads (returns.ReturnFacts)
+        self.facts = returns.ReturnFacts()
 
     def clear(self) -> None:
         self.launches.clear()
         self.use_counts.clear()
         self.results.clear()
+        self.facts = returns.ReturnFacts()
 
     def record_use(
         self, tool_name: str | None, tool_id: object, line_no: int,
-        resume_from: str | None = None,
+        resume_from: str | None = None, ts: datetime | None = None, tool_input: object = None,
     ) -> None:
+        self.facts.note_use(tool_name, tool_id, line_no, ts, tool_input)
         if isinstance(tool_id, str):
             self.use_counts[tool_id] = self.use_counts.get(tool_id, 0) + 1
         if tool_name in _LAUNCH_TOOLS:
             self.launches.append((tool_name, tool_id, line_no, resume_from))
 
-    def record_result(self, tool_use_id: str, block: dict, tool_use_result: object) -> None:
+    def record_result(
+        self, tool_use_id: str, block: dict, tool_use_result: object,
+        tur_present: bool = True, line_no: int = 0,
+    ) -> None:
+        self.facts.note_result(tool_use_id, block, tool_use_result, tur_present, line_no)
         block_agent = block["agentId"] if "agentId" in block else _ABSENT
         entry_agent = (
             tool_use_result["agentId"]
@@ -2203,8 +2435,8 @@ def _fork_scan(path: Path) -> tuple[int, bool]:
     own = path.stem
     last_foreign = 0
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            for line_no, line in enumerate(handle, start=1):
+        with _transcript_reader(path) as lines:
+            for line_no, line, _torn in lines:
                 # cheap prefilter: an entry with a top-level sessionId spells the key
                 # literally, so a line without it is never decoded here
                 if '"sessionId"' not in line:
@@ -2291,9 +2523,21 @@ def _read_transcript(
     final_entry_type: str | None = None
     final_entry_line_no: int | None = None
 
-    with transcript_path.open("r", encoding="utf-8") as handle:
-        for line_no, line in enumerate(handle, start=1):
+    with _transcript_reader(transcript_path) as lines:
+        for line_no, line, torn in lines:
             if line_no <= skip_through_line:
+                continue
+            if torn:
+                # docs/DESIGN.md 4.1 (G-C, GC-1): a final line cut inside a character is a
+                # half-written line, like an ASCII one; the diagnostic quotes none of it
+                total_lines += 1
+                bad_lines += 1
+                diagnostics.append(
+                    f"{transcript_path.name}:{line_no}: half-written last line (cut inside a "
+                    "character)"
+                )
+                if state is not None:
+                    state.undecodable = True
                 continue
             line = line.strip()
             if not line:
@@ -2545,7 +2789,12 @@ def _user_events(
             # results arrive in either order) from this tool_result's own
             # FULL text, before _excerpt bounds it.
             if launch_log is not None and isinstance(tool_use_id, str):
-                launch_log.record_result(tool_use_id, block, entry.get("toolUseResult"))
+                launch_log.record_result(
+                    tool_use_id, block, entry.get("toolUseResult"),
+                    "toolUseResult" in entry, line_no,
+                )
+            elif launch_log is not None:
+                launch_log.facts.note_bad_result(tool_use_id, block, entry.get("toolUseResult"))
             if tool_call_index is not None and isinstance(tool_use_id, str):
                 call = tool_call_index.get(tool_use_id)
                 if call is not None:
@@ -2671,7 +2920,8 @@ def _assistant_events(
                     launch_input.get("resumeFromRunId") if isinstance(launch_input, dict) else None
                 )
                 launch_log.record_use(
-                    tool_name, tool_id, line_no, resume if isinstance(resume, str) else None
+                    tool_name, tool_id, line_no, resume if isinstance(resume, str) else None,
+                    ts=ts, tool_input=launch_input,
                 )
             raw_input = block.get("input", {})
             input_obj = _as_object(raw_input, path, line_no, diagnostics, "tool_use input")
@@ -2871,6 +3121,7 @@ class _NotificationCandidate:
     line_no: int
     form: str  # 'queue' | 'user_with_origin' | 'user_no_origin'
     content: object  # the raw (unparsed) envelope candidate text
+    ts: datetime | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -2879,6 +3130,7 @@ class _Notification:
     task_id: str
     tool_use_id: str
     status: str
+    ts: datetime | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -3034,6 +3286,9 @@ class ParentIndex:
         # frozen): == frozenset() still holds for an empty one, and nothing
         # else needs it immutable.
         self.tool_result_agent_ids: set[str] = set(tool_result_agent_ids)
+        # docs/DESIGN.md 4.13.1 (G-A): launches, resume requests and their results, for the
+        # return decision of a session subagent; incremental like everything else here
+        self.facts = returns.ReturnFacts(path)
         # (docs/DESIGN.md 4.13.3, v0.3 N1) every Generation this index could
         # build from the transcript seen so far, across every run any launch
         # here is associated with (association rules 2-5 collapse into a
@@ -3206,6 +3461,7 @@ class ParentIndex:
         self.kill_timestamps = []
         self.compaction_timestamps = []
         self.tool_result_agent_ids = set()
+        self.facts = returns.ReturnFacts(self.path)
         self.generations = []
         self.ambiguous_launches = []
         self._raw_diagnostics = []
@@ -3252,6 +3508,7 @@ class ParentIndex:
             "kill_timestamps": list(self.kill_timestamps),
             "compaction_timestamps": list(self.compaction_timestamps),
             "tool_result_agent_ids": set(self.tool_result_agent_ids),
+            "facts": self.facts,
             "generations": list(self.generations),
             "ambiguous_launches": list(self.ambiguous_launches),
             "_raw_diagnostics": list(self._raw_diagnostics),
@@ -3493,7 +3750,7 @@ class ParentIndex:
             # forms -- never subject to the origin-line ordering rule.
             if entry.get("operation") == "enqueue" and isinstance(entry.get("content"), str):
                 self._notification_candidates.append(
-                    _NotificationCandidate(line_no, "queue", entry["content"])
+                    _NotificationCandidate(line_no, "queue", entry["content"], ts)
                 )
             return
 
@@ -3507,6 +3764,7 @@ class ParentIndex:
                 if not isinstance(block, dict) or block.get("type") != "tool_use":
                     continue
                 name = block.get("name")
+                self.facts.note_use(name, block.get("id"), line_no, ts, block.get("input"))
                 if name == "TaskStop":
                     input_obj = block.get("input")
                     input_dict = input_obj if isinstance(input_obj, dict) else {}
@@ -3548,14 +3806,14 @@ class ParentIndex:
             self._first_origin_line = line_no
         if has_origin and origin.get("kind") == "task-notification":
             self._notification_candidates.append(
-                _NotificationCandidate(line_no, "user_with_origin", message.get("content"))
+                _NotificationCandidate(line_no, "user_with_origin", message.get("content"), ts)
             )
         elif not has_origin:
             # docs/DESIGN.md 4.13.3: counted only once the first line in the
             # transcript carrying 'origin' is known, at generation-build
             # time (_accepted_notifications); recorded provisionally here.
             self._notification_candidates.append(
-                _NotificationCandidate(line_no, "user_no_origin", message.get("content"))
+                _NotificationCandidate(line_no, "user_no_origin", message.get("content"), ts)
             )
 
         if isinstance(content, list):
@@ -3575,7 +3833,13 @@ class ParentIndex:
                 # the same place an Agent-tool result does (docs/DESIGN.md
                 # 7.2's D-A).
                 raw_tool_use_id = block.get("tool_use_id")
+                if not isinstance(raw_tool_use_id, str):
+                    self.facts.note_bad_result(raw_tool_use_id, block, entry.get("toolUseResult"))
                 if isinstance(raw_tool_use_id, str):
+                    self.facts.note_result(
+                        raw_tool_use_id, block, entry.get("toolUseResult"),
+                        "toolUseResult" in entry, line_no,
+                    )
                     raw_result = entry.get("toolUseResult")
                     self._results_by_id.setdefault(raw_tool_use_id, []).append((
                         line_no, raw_result, ts, _is_rejected_launch(block, raw_result),
@@ -3607,7 +3871,9 @@ class ParentIndex:
             if envelope is None:
                 continue
             task_id, tool_use_id, status = envelope
-            parsed.append(_Notification(candidate.line_no, task_id, tool_use_id, status))
+            parsed.append(
+                _Notification(candidate.line_no, task_id, tool_use_id, status, candidate.ts)
+            )
 
         best: dict[tuple[str, str, str], _Notification] = {}
         for notification in parsed:
@@ -4112,6 +4378,37 @@ def run_matches_cwd(run: Run, caller: str) -> bool:
         except (ValueError, OSError):
             continue
     return False
+
+
+def caller_workflow_paths(
+    root: Path, session_id: str | None, caller: str | None,
+) -> frozenset[Path]:
+    """The workflow run directories `--here` adds for the caller's own session (docs/DESIGN.md
+    4.13.6, G5): the `wf_*` directories under `<project>/<session>/subagents/workflows` of the one
+    session run under `root` whose transcript stem equals `session_id` (a canonical UUID,
+    lowercase), when that session run itself passes `run_matches_cwd` for `caller`. Empty for no
+    id, no caller directory, no or several such session runs, a session that does not work here,
+    or a session that cannot be loaded."""
+    if session_id is None or caller is None or not _UUID_RE.fullmatch(session_id):
+        return frozenset()
+    owners = [
+        ref for ref in discover_runs(Path(root), kinds=frozenset({"session"}))
+        if ref.path.stem.lower() == session_id.lower()
+    ]
+    if len(owners) != 1:
+        return frozenset()
+    owner = owners[0]
+    try:
+        run = load_run(owner)
+    except NotARun:
+        return frozenset()
+    if not run_matches_cwd(run, caller):
+        return frozenset()
+    workflows = owner.path.parent / owner.path.stem / "subagents" / "workflows"
+    try:
+        return frozenset(path for path in workflows.glob("wf_*") if _is_dir(path))
+    except OSError:
+        return frozenset()
 
 
 def agent_id_candidates(ref: RunRef) -> frozenset[str]:

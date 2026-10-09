@@ -1409,7 +1409,10 @@ class Pseudonyms:
     # direct `names.check(value)` call, the same pattern `path` already uses
     # for a report_path claim or an observation path), so it needs no
     # apply()/apply_paths()-style substring pass of its own.
-    _CATEGORIES = _NAME_CATEGORIES + ("path", "check")
+    # docs/DESIGN.md 5.3 (G-B1, GB-8): "key" is a result key name in `reported.keys`: a
+    # user-authored identifier like a label, pseudonymized at share only (key-N), substituted at
+    # the single point the export builds that list, so it needs no substring pass.
+    _CATEGORIES = _NAME_CATEGORIES + ("path", "check", "key")
 
     def __init__(
         self,
@@ -1441,7 +1444,7 @@ class Pseudonyms:
             return value
         if self.real_names and category in self._NAME_CATEGORIES:
             return self.local_text(value)
-        if self.real_names and category == "check":
+        if self.real_names and category in ("check", "key"):
             return value
         mapping = self._maps[category]
         if value not in mapping:
@@ -1536,6 +1539,12 @@ class Pseudonyms:
         an embedded path -- is replaced wholesale by default, not merely
         redacted in place."""
         return self._pseudonym("check", value)
+
+    def key(self, value: str | None) -> str | None:
+        """A result key name of `reported.keys` (docs/DESIGN.md 5.3, G-B1): its own "key"
+        namespace, `key-1`.. in order of first appearance within the render; the real name at
+        local and raw."""
+        return self._pseudonym("key", value)
 
     def apply(self, text: str) -> str:
         """Replace every name (agent/desc/phase/type/target -- never path,

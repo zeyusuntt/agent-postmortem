@@ -1028,12 +1028,14 @@ def _pick_run_here(root: Path) -> _HereChoice | None:
     if caller is None:
         return None
     matches: list[tuple[reader.RunRef, Run]] = []
+    # docs/DESIGN.md 4.13.6 (G5): the workflows of the caller's own session join the set
+    owned = reader.caller_workflow_paths(root, _caller_session_id(), caller)
     for ref in reader.discover_runs(root):
         try:
             run = reader.load_run(ref)
         except reader.NotARun:
             continue
-        if reader.run_matches_cwd(run, caller):
+        if ref.path in owned or reader.run_matches_cwd(run, caller):
             matches.append((ref, run))
     if not matches:
         return None
@@ -1363,7 +1365,7 @@ def _accumulate_scan_totals(totals: dict, run: Run, findings: list[Finding]) -> 
         totals["session"]["runs"] += 1
         totals["session"]["subagents"] += len(run.attempts)
         totals["session"]["interrupted"] += sum(
-            1 for attempt in run.attempts if attempt.outcome == "killed"
+            1 for attempt in run.attempts if attempt.interrupt is not None
         )
     else:
         totals["workflow"]["runs"] += 1
@@ -1418,6 +1420,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # docs/DESIGN.md 4.13.6 (N6): --here is a filter on the runs themselves, applied before
     # rows, totals, the 7-day totals, and the triage candidates are computed.
     here_caller = _working_directory() if args.here else None
+    # docs/DESIGN.md 4.13.6 (G5): the workflows of the caller's own session join the set
+    here_owned = (
+        reader.caller_workflow_paths(root, _caller_session_id(), here_caller)
+        if args.here else frozenset()
+    )
 
     now = report._now()
     seven_days_ago = now - timedelta(days=7)
@@ -1453,7 +1460,10 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         run_started = run.started_at
         if since_date is not None and run_started is not None and run_started.date() < since_date:
             continue
-        if args.here and (here_caller is None or not reader.run_matches_cwd(run, here_caller)):
+        if args.here and (
+            here_caller is None
+            or (ref.path not in here_owned and not reader.run_matches_cwd(run, here_caller))
+        ):
             continue
 
         findings = _run_findings(run)

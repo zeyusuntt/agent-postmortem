@@ -27,6 +27,7 @@ SILENCE = ("long", "short", "unknown")
 POSITION = ("final", "non_final")
 CLAUSE = (
     "tests_failed", "suite_failed", "ok_false", "ready_false", "blockers", "report_path_missing",
+    "self_reported_failure", "self_reported_blocked",  # G-B S1
 )
 ABSENCE = ("present_now", "absent_now", "unknown", "none")
 OBLIGATION = ("none", "prompt_path", "claimed_path")
@@ -46,6 +47,7 @@ INPUTS = {
     "tool_json_error": ((), ()),
     "classifier_unavailable": ((), ()),
     "git_cwd_mismatch": ((), ()),
+    "permission_denied": ((), ()),  # G-B G7
     "wasted_time": ((), ()),
 }
 
@@ -80,7 +82,7 @@ def _expected(detector: str, values: tuple) -> str:
         return ERROR
     if detector == "codex_write_denied" or detector in (
         "bash_backgrounded", "bash_timeout", "tool_json_error", "classifier_unavailable",
-        "git_cwd_mismatch",
+        "git_cwd_mismatch", "permission_denied",
     ):
         return "minor"
     if detector == "wasted_time":
@@ -102,6 +104,7 @@ HIGHEST = {
     "tool_json_error": "minor",
     "classifier_unavailable": "minor",
     "git_cwd_mismatch": "minor",
+    "permission_denied": "minor",
     "wasted_time": "info",
 }
 

@@ -165,6 +165,77 @@ MACHINE_SLEEP = ("API Error: Your computer went to sleep",)
 # (agent-af100000000000004.jsonl, last line).
 API_ERROR = ("API Error: Server error mid-response",)
 
+# The runtime's own replies when a tool call is refused (G7, v0.3.1; Claude Code 2.1.251 to
+# 2.1.280). Each is the whole text of an `is_error` tool result, or its start: the permission-rule
+# sentence carries the denied command, so only its fixed head and tail are fixed here. Carried by
+# the in-memory runs tests/test_g_denied.py builds.
+PERMISSION_DENIED_AUTO_MODE = (
+    "Permission for this action was denied by the Claude Code auto mode classifier."
+)
+PERMISSION_DENIED_USER = "The user doesn't want to proceed with this tool use."
+PERMISSION_DENIED_SAFETY_CHECK = (
+    "Permission for this command was denied by a built-in Claude Code safety check, "
+    "not by the user."
+)
+PERMISSION_DENIED_RULE_HEAD = "Permission to use "
+PERMISSION_DENIED_RULE_TAIL = " has been denied."
+# The sentence may span lines (a multi-line command): the first ` has been denied.` that ends a line
+# closes it (G-B1, GB-3). The tool name is `[A-Za-z0-9_]+` and never empty.
+_PERMISSION_RULE_RE = re.compile(
+    r"Permission to use [A-Za-z0-9_]+ with command .*? has been denied\.[ \t\r]*(?:\n|\Z)",
+    re.DOTALL,
+)
+
+DENIAL_AUTO_MODE = "auto_mode"
+DENIAL_USER = "user"
+DENIAL_PERMISSION_RULE = "permission_rule"
+DENIAL_SAFETY_CHECK = "safety_check"
+
+
+def denial_kind(text: str) -> str | None:
+    """Which denial a tool result's text is (docs/DESIGN.md 4.13.2, G7), or None. `text` has had
+    its leading whitespace stripped. The text must START with exactly one of the four sentences;
+    the permission-rule sentence may span lines and ends at the first ` has been denied.` that ends
+    a line (docs/DESIGN.md 4.13.2). No wrapper is accepted."""
+    if text.startswith(PERMISSION_DENIED_AUTO_MODE):
+        return DENIAL_AUTO_MODE
+    if text.startswith(PERMISSION_DENIED_USER):
+        return DENIAL_USER
+    if text.startswith(PERMISSION_DENIED_SAFETY_CHECK):
+        return DENIAL_SAFETY_CHECK
+    if text.startswith(PERMISSION_DENIED_RULE_HEAD):
+        if _PERMISSION_RULE_RE.match(text):
+            return DENIAL_PERMISSION_RULE
+    return None
+
+
+def denial_prefix_kind(text: str) -> str | None:
+    """The kind by the start of a (possibly truncated) text only: for an event text already
+    anchored by `denial_kind` on the full block."""
+    text = text.lstrip(" \t\r\n")
+    for kind, sentence in (
+        (DENIAL_AUTO_MODE, PERMISSION_DENIED_AUTO_MODE),
+        (DENIAL_USER, PERMISSION_DENIED_USER),
+        (DENIAL_SAFETY_CHECK, PERMISSION_DENIED_SAFETY_CHECK),
+        (DENIAL_PERMISSION_RULE, PERMISSION_DENIED_RULE_HEAD),
+    ):
+        if text.startswith(sentence):
+            return kind
+    return None
+
+
+def _candidate_permission_denied(text: str) -> bool:
+    return (
+        "denied by the Claude Code auto mode classifier" in text
+        or PERMISSION_DENIED_USER in text
+        or "denied by a built-in Claude Code safety check" in text
+        or (PERMISSION_DENIED_RULE_HEAD in text and PERMISSION_DENIED_RULE_TAIL in text)
+    )
+
+
+def _predicate_permission_denied(text: str, shape: str) -> bool:
+    return denial_kind(text) is not None
+
 
 # === Marker provenance registry (docs/DESIGN.md 4.13.2, v0.3 N1) ===========
 #
@@ -181,6 +252,8 @@ SHAPE_TOOL_RESULT_STRUCTURED_OUTPUT = "tool_result_structured_output"
 SHAPE_ASSISTANT_CODEX_ATTEMPT = "assistant_codex_attempt"  # an assistant
 # entry's whole text, only when the attempt also has a Bash call running
 # codex as a program somewhere
+SHAPE_TOOL_RESULT_ERROR = "tool_result_error"  # a tool_result block with is_error true,
+# whatever tool it is paired to (G7)
 SHAPE_FINAL_ASSISTANT_ENTRY = "final_assistant_entry"  # the attempt's own
 # last transcript entry, only when that entry is an assistant entry
 
@@ -375,6 +448,14 @@ REGISTRY: dict[str, MarkerSpec] = {
             fragments=(),
             is_candidate=_candidate_shell_guard_block,
             predicate=_predicate_shell_guard_block,
+        ),
+        MarkerSpec(
+            id="permission_denied",
+            producer="harness_tool_notice",
+            shapes=(SHAPE_TOOL_RESULT_ERROR,),
+            fragments=(),
+            is_candidate=_candidate_permission_denied,
+            predicate=_predicate_permission_denied,
         ),
         MarkerSpec(
             id="usage_limit_session",

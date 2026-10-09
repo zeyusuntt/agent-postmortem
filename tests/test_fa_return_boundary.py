@@ -85,7 +85,9 @@ def test_fa3_an_early_failed_notification_is_ignored_and_a_later_completed_one_r
         _notice(X, "toolu_1", "completed", "origin"),
     ]
     main = _session(tmp_path, entries, children=[X])
-    assert [a.returned_to_parent for a in reader.load_session(main).attempts] == [True]
+    # G-A rev 6 (T4, FA3): a notification naming the launch before its tool_use line is
+    # ambiguous evidence, so the child is not established as returned (was: ignored, True).
+    assert [a.returned_to_parent for a in reader.load_session(main).attempts] == [False]
 
 
 def test_fa3_the_view_of_named_subagents_uses_the_same_boundary(tmp_path):

@@ -259,7 +259,7 @@ def test_claim_contradiction_is_registered_and_workflow_only():
 _ATTEMPT_EXPORT_KEYS = {
     "agent_id", "key", "label", "phase", "agent_type", "ordinal", "outcome",
     "first_ts", "last_ts", "usage", "event_count", "interrupt", "reported",
-    "facts", "ledger",
+    "facts", "ledger", "return_state", "return_reason", "resumes",  # G-A: 5.3b attempt table
 }
 
 

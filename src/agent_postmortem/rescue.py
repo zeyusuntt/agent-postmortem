@@ -192,6 +192,10 @@ class RescuePlan:
     # docs/DESIGN.md 4.11 (N8b, K4.2): true only for a workflow run in which two attempts of
     # different keys overlapped in time; the relaunch brief's fan-out caveat prints only then.
     fan_out_overlap: bool = False
+    # docs/DESIGN.md 4.11 (R1, v0.3.1): why a plan with no unit has none, and for a session whose
+    # children have no established return the five-class breakdown; None whenever units exist
+    empty_state: str | None = None
+    return_breakdown: dict | None = None
 
 
 # --- building the packet ------------------------------------------------------
@@ -556,10 +560,12 @@ def _read_raw_line_text(path: Path, line_no: int) -> str | None:
     first 300 characters, both under the caller's own control. Read-only;
     returns None on any parse trouble rather than raising."""
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            for current, line in enumerate(handle, start=1):
+        with reader._transcript_reader(path) as lines:
+            for current, line, torn in lines:
                 if current != line_no:
                     continue
+                if torn:
+                    return None
                 line = line.strip()
                 if not line:
                     return None
@@ -576,7 +582,7 @@ def _read_raw_line_text(path: Path, line_no: int) -> str | None:
                 else:
                     text = reader._flatten_block_text(content)
                 return reader._strip_harness_noise(text)
-    except OSError:
+    except (OSError, UnicodeError):
         return None
     return None
 
@@ -746,6 +752,32 @@ def empty_unit_state(run: Run) -> tuple[str, int]:
     return "ok", 0
 
 
+NO_UNIT_UNESTABLISHED = "no_rescue_unit_unestablished_returns"
+
+
+def no_unit_state(run: Run, *, live: bool = False) -> tuple[str, dict | None]:
+    """docs/DESIGN.md 4.11 (R1): (empty_state, return_breakdown) of a run with no unit. A session
+    with a subagent whose return is not established first; then the F6/N8 branches."""
+    unestablished = report.unestablished_returns(run)
+    if unestablished:
+        return NO_UNIT_UNESTABLISHED, report.return_breakdown(unestablished)
+    state, _count = empty_unit_state(run)
+    if state == "risk":
+        return "unchecked_risk", None
+    if state == "ok" and not live:
+        return "nothing_to_rescue", None
+    return "nothing_yet", None
+
+
+def _no_unit_sentence(run_id: str, breakdown: dict) -> str:
+    k = sum(breakdown.values())
+    return (
+        f"NO RESCUE UNIT: {k} {report._plural(k, 'subagent')} {report._have(k)} no established "
+        f"return ({report.breakdown_text(breakdown)}); run agent-postmortem run {run_id} to see "
+        "WORK AT RISK"
+    )
+
+
 def nothing_to_rescue_ok(run: Run) -> bool:
     """True exactly when `empty_unit_state` is 'ok': the one predicate for the cheerful
     sentence and the exit 0 of both `rescue plan` and `rescue status` (K4.3, S2)."""
@@ -815,7 +847,11 @@ def build_plan(
 
     empty_state, unchecked_count = empty_unit_state(run) if not units else ("yet", 0)
     unchecked = empty_state == "risk"
-    nothing_to_rescue = not units and not unchecked
+    plan_state, plan_breakdown = (
+        no_unit_state(run, live=possibly_live) if not units else (None, None)
+    )
+    unestablished = plan_state == NO_UNIT_UNESTABLISHED
+    nothing_to_rescue = not units and not unchecked and not unestablished
     # docs/DESIGN.md 4.11 (F6 hardening): "every attempt completed" is a
     # claim about a FINISHED run where every attempt's own outcome is
     # 'completed' -- not merely one with no killed/failed/superseded unit,
@@ -826,7 +862,7 @@ def build_plan(
     # docs/DESIGN.md 4.11, 4.13.11 (N5c-2): a lifecycle terminal `unknown` is an UNKNOWN
     # fact of the whole run, whatever the units say.
     lifecycle_unknown = _lifecycle_unknown(run)
-    if possibly_live or lifecycle_unknown or unchecked:
+    if possibly_live or lifecycle_unknown or unchecked or unestablished:
         exit_code = 4
     elif nothing_to_rescue:
         exit_code = 0 if all_completed else 4
@@ -857,6 +893,8 @@ def build_plan(
         observation=observation,
         fan_out_overlap=_fan_out_overlap(run),
         unchecked_attempts=unchecked_count if unchecked else None,
+        empty_state=plan_state,
+        return_breakdown=plan_breakdown,
     )
 
 
@@ -1277,6 +1315,9 @@ def render_plan_text(
     if plan.possibly_live and plan.units:
         # FB3: who may still be writing the listed files decides the wording.
         blocks.append(_LIVE_OWN if _is_callers_session(run, caller_session) else _LIVE_OTHER)
+    if plan.empty_state == NO_UNIT_UNESTABLISHED:
+        blocks.append(redactor(_no_unit_sentence(plan.run_id, plan.return_breakdown)))
+        return "\n".join(blocks) + "\n"
     if plan.nothing_to_rescue:
         # docs/DESIGN.md 4.11: "every attempt completed" is a claim about a
         # finished run. A possibly-live run with no qualifying unit yet is a
@@ -1487,16 +1528,15 @@ def plan_to_json(
             "possibly_live": plan.possibly_live,
         },
         "nothing_to_rescue": plan.nothing_to_rescue,
+        "empty_state": plan.empty_state,
+        "return_breakdown": plan.return_breakdown,
         "groups": (
             report.export_observation_groups(plan.observation, redactor, omit_empty_unknown=True)
             if plan.observation is not None else []
         ),
         "units": [_export_unit(unit, plan, redactor, view) for unit in plan.units],
         "brief": (
-            brief if (
-                not plan.possibly_live and not plan.nothing_to_rescue
-                and plan.unchecked_attempts is None
-            ) else None
+            brief if (not plan.possibly_live and plan.units) else None
         ),
         "exit_code": plan.exit_code,
     }
@@ -1567,6 +1607,9 @@ class RescueStatus:
     nothing_to_rescue_ok: bool = False
     # N8 fix 1, S2: see RescuePlan.unchecked_attempts.
     unchecked_attempts: int | None = None
+    # docs/DESIGN.md 4.11 (R1): see RescuePlan.empty_state
+    empty_state: str | None = None
+    return_breakdown: dict | None = None
 
 
 def _never_list_match(command: str) -> bool:
@@ -1850,7 +1893,10 @@ def build_status(run: Run, cfg: config_module.Config, observation) -> RescueStat
     # a check); else 0.
     # K4.3: no unit at all exits 0 only for a finished run whose every attempt completed.
     empty_state, empty_count = empty_unit_state(run) if not unit_statuses else ("yet", 0)
-    empty_not_ok = not unit_statuses and empty_state != "ok"
+    status_state, status_breakdown = no_unit_state(run) if not unit_statuses else (None, None)
+    empty_not_ok = not unit_statuses and (
+        empty_state != "ok" or status_state == NO_UNIT_UNESTABLISHED
+    )
     if any(u.word == "NONZERO_OBSERVED" for u in unit_statuses):
         exit_code = 3
     elif (
@@ -1868,6 +1914,8 @@ def build_status(run: Run, cfg: config_module.Config, observation) -> RescueStat
         exit_code=exit_code, listed_paths=tuple(all_listed),
         nothing_to_rescue_ok=empty_state == "ok",
         unchecked_attempts=empty_count if empty_state == "risk" else None,
+        empty_state=status_state,
+        return_breakdown=status_breakdown,
     )
 
 
@@ -1967,7 +2015,9 @@ def render_status_text(
     if evidence and redactor.level == "share":
         blocks.append(report.EXCERPT_NOTE)
     if not status.units:
-        if status.unchecked_attempts is not None:
+        if status.empty_state == NO_UNIT_UNESTABLISHED:
+            blocks.append(redactor(_no_unit_sentence(status.run_id, status.return_breakdown)))
+        elif status.unchecked_attempts is not None:
             blocks.append(_unchecked_sentence(status.unchecked_attempts, status.run_id))
         elif status.nothing_to_rescue_ok:
             blocks.append("NOTHING TO RESCUE: every attempt completed.")
@@ -2028,5 +2078,7 @@ def status_to_json(
             for row in status.never_matches
         ],
         "transcript_unknown": status.transcript_unknown,
+        "empty_state": status.empty_state,
+        "return_breakdown": status.return_breakdown,
         "exit_code": status.exit_code,
     }

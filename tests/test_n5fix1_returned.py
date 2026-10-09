@@ -63,7 +63,7 @@ ROWS = [
      [_async(), _queue_notification_entry(T0, _envelope(X, "toolu_1", "completed"))], True),
     ("isAsync true with status completed and an accepted completed notification",
      [_launch_result("toolu_1", result={"agentId": X, "status": "completed", "isAsync": True}),
-      _notice(X, "toolu_1", "completed")], True),
+      _notice(X, "toolu_1", "completed")], False),  # G-A T2: async with a terminal status is malformed (was True)
     ("async with no notification", [_async()], False),
     ("isAsync true with status completed and no notification",
      [_launch_result("toolu_1", result={"agentId": X, "status": "completed", "isAsync": True})],
@@ -163,9 +163,11 @@ def _unpaired_write(number, repo):
 
 
 @pytest.mark.parametrize("notice,expected_unknown", [
-    pytest.param(None, True, id="no notification"),
-    pytest.param("failed", True, id="failed notification"),
-    pytest.param("completed", False, id="completed notification"),
+    # G-A (W1): the unknown cases now say why; the child's transcript is fresh, so a child with
+    # no notification reads `possibly running`, one that reported failure `reported failed`
+    pytest.param(None, "possibly running", id="no notification"),
+    pytest.param("failed", "reported failed", id="failed notification"),
+    pytest.param("completed", None, id="completed notification"),
 ])
 def test_an_async_child_is_in_work_at_risk_unless_a_completed_notification_returned_it(
     notice, expected_unknown, tmp_path, capsys,
@@ -181,8 +183,8 @@ def test_an_async_child_is_in_work_at_risk_unless_a_completed_notification_retur
     cli.main(["run", str(main), "--raw"])
     out = capsys.readouterr().out
     if expected_unknown:
-        assert "WORK AT RISK  unknown: 1 subagent never returned a result" in out
-        assert f"  {ids[0]}  no result returned to the main session" in out
+        assert "WORK AT RISK  unknown: 1 subagent has no established return" in out
+        assert f"  {ids[0]}  {expected_unknown}" in out
     else:
         assert "WORK AT RISK  none:" in out
 
