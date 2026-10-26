@@ -608,7 +608,14 @@ def test_concurrent_subprocess_updates_lose_no_increment(tmp_path):
     the parent creates only once all 4 have signalled) plus a 5ms sleep
     inside the locked mutation force real overlap: without both, 4 fast
     processes can simply never contend for the lock at the same instant,
-    and this test would pass even against a broken, unlocked update()."""
+    and this test would pass even against a broken, unlocked update().
+
+    A worker retries an update that raised StateLocked. The lock is polled,
+    not queued, so on a slow machine one waiter can lose every race for
+    longer than the 2s timeout (GitHub's macOS runners did, on 3.11 and 3.12);
+    StateLocked is raised before anything is read or written, so a retry
+    cannot double-count, and the property under test is still that no
+    increment is lost."""
     state_home = tmp_path / "xdg-state"
     src_dir = str(Path(__file__).resolve().parents[1] / "src")
     go_file = tmp_path / "go"
@@ -638,7 +645,12 @@ def test_concurrent_subprocess_updates_lose_no_increment(tmp_path):
             return fn
 
         for i in range(25):
-            state.update(bump(f"counter-{{i}}"))
+            while True:
+                try:
+                    state.update(bump(f"counter-{{i}}"))
+                    break
+                except state.StateLocked:
+                    pass
         """
     )
 
