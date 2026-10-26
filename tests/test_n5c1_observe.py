@@ -25,6 +25,7 @@ from tests.n5c1_helpers import (
     build_run,
     git,
     init_repo,
+    without_filter_neutralizers,
     write_step,
 )
 
@@ -213,18 +214,19 @@ def test_a_checked_group_runs_the_full_guarded_sequence_with_scrubbed_environmen
     observe.observe_groups(run)
     git_path = shutil.which("git")
     assert all(argv[0] == git_path for argv in spy.calls)
-    assert [argv[1:] for argv in spy.calls] == [
+    assert [without_filter_neutralizers(argv[1:]) for argv in spy.calls] == [
         ["--version"],
         ["-C", str(repo), "rev-parse", "--show-toplevel"],
         ["-C", str(repo), "rev-parse", "HEAD"],
-        ["-C", str(repo), "config", "--get-regexp", r"^filter\..*\.(clean|process)$"],
+        ["-C", str(repo), "config", "--show-scope", "--get-regexp",
+         r"^filter\..*\.(clean|process)$"],
         ["-C", str(repo), "--no-optional-locks", "-c", "core.fsmonitor=false", "status",
          "--porcelain=v2", "-z", "--no-renames", "--ignore-submodules=all", "--", "tracked.txt"],
     ]
     for env in spy.envs:
         assert set(env) <= {
             "PATH", "HOME", "GIT_OPTIONAL_LOCKS", "GIT_PAGER", "PAGER", "GIT_TERMINAL_PROMPT",
-            "LC_ALL",
+            "LC_ALL", "GIT_ALLOW_PROTOCOL", "GIT_NO_LAZY_FETCH",
         }
         assert env["GIT_OPTIONAL_LOCKS"] == "0" and env["LC_ALL"] == "C"
 

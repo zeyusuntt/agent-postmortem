@@ -5,6 +5,49 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2]
+
+Repository checks now work on machines with Git LFS, and they never run a filter driver or a
+fetch the repository could steer. Before this, every `--observe` and `rescue status` check that
+reached `git status` on such a machine stopped at `guard refused`, including on GitHub's CI
+runners, which is why CI failed there after 0.3.1 was pushed.
+
+### Changed
+
+- The filter-driver guard reads where each clean or process filter driver is configured
+  (`git config --show-scope`). A driver from your own system or global git config, which is
+  where `git lfs install` puts Git LFS's, no longer stops `git status`; it is switched off for
+  that one call instead, so it never runs (a repository can steer even a driver it did not
+  configure: its attributes pick the driver, and Git LFS reads extension commands from the
+  repository's own config). A file routed through such a driver is compared without that
+  external filter (built-in conversions still apply), so a Git LFS file whose real content is
+  checked out reads dirty once its timestamp changes, even when its content did not. A driver the
+  repository configures (its `.git/config`, its worktree config, or a file either of those
+  includes), a line the guard cannot read, an unusual driver name, and a failed check all still
+  stop `status`.
+- README: the opening says what problem the tool answers; the quick start installs from GitHub,
+  since no PyPI release exists yet; the PyPI badges are gone until one does; the plugin section
+  says to install the command-line tool first; Why gives the retry count from a dated 0.3.1 scan
+  (12 of 130 workflow runs) instead of the 0.1 figures, and lists six upstream issues with their
+  status on 2026-10-26.
+
+### Fixed
+
+- In a partial clone, `git status` fetches a missing object on demand through the promisor
+  remote the repository configured, and an `ext::<command>` URL runs that command. Repository
+  checks now run git with `GIT_ALLOW_PROTOCOL=` (which refuses the transport on every supported
+  git version) and `GIT_NO_LAZY_FETCH=1` (on versions that know it), so the fetch is refused and
+  the check reports unchecked. This was possible since repository checks were added in 0.2.
+- `test_trend_still_counts_a_detector_silenced_by_config` ran on the real clock and failed from
+  2026-10-26 on, when its 2026-09-01 fixture left the default 8-week window. The clock is now
+  pinned inside the test.
+
+### Known limits
+
+- In a repository with a sparse index or a split index, git's own `status` can still store a
+  cached tree object or refresh the shared index file's timestamps during a repository check.
+  Tracked content and refs are not changed. Refusing these modes is left for a later change.
+
 ## [0.3.1]
 
 A second field round on real runs. Session subagents get a proven return state, the report stops

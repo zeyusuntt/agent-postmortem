@@ -1828,7 +1828,15 @@ stateless, like `rescue plan`/`rescue status`.
 `observe.py` (v0.2, unit M2b), standard library only, not called by the
 reader, a detector, or a hook -- wired only into `run --observe`. Read-only:
 it never writes an index, a stash, an object, or a config value, and it
-starts no process a repository's own configuration could steer.
+starts no process a repository's own configuration could steer. Known limit
+(review 2026-10-26, present since 4.9 was written): in two index modes git's
+own `status` still writes, and this module does not detect them. With a
+sparse index (`index.sparse`) that `status` must convert, git can store a new
+tree object, and with a split index git refreshes the `sharedindex.*` file's
+timestamps when it reads it. Both are git's own bookkeeping (a
+content-addressed object, file times), not a change to tracked content or
+refs; refusing these modes needs reading the index's extensions and is left
+for a later change.
 
 `observe_run(run, now=None) -> RepoObservation`. `now` defaults to
 `datetime.now(timezone.utc)`; tests pass it explicitly. `RepoObservation`:
@@ -1854,9 +1862,12 @@ Rules:
    directory, else `reason="cwd not found"`.
 4. The only argument lists this module ever runs: `git --version`;
    `git -C <dir> rev-parse --show-toplevel`; `git -C <dir> rev-parse HEAD`;
-   `git -C <dir> config --get-regexp ^filter\..*\.(clean|process)$`;
-   `git -C <dir> --no-optional-locks -c core.fsmonitor=false status
-   --porcelain=v2 -z --no-renames --ignore-submodules=all -- <paths...>`.
+   `git -C <dir> config --show-scope --get-regexp ^filter\..*\.(clean|process)$`;
+   `git -C <dir> --no-optional-locks -c core.fsmonitor=false
+   [-c filter.<name>.clean= -c filter.<name>.process=
+   -c filter.<name>.required=false]... status --porcelain=v2 -z
+   --no-renames --ignore-submodules=all -- <paths...>`, with one bracketed
+   group per driver the guard of rule 5 switches off, sorted by name.
    `git` itself is resolved to one absolute path with `shutil.which("git")`
    at the very start of `observe_run`, before any of the five calls; that
    same absolute path, never the bare string `"git"`, is argv[0] on every
@@ -1865,25 +1876,68 @@ Rules:
    a list (never a shell), `timeout=10`, `stdin=DEVNULL`, and an
    environment built from scratch: `PATH` and `HOME` copied from the
    current process, plus `GIT_OPTIONAL_LOCKS=0`, `GIT_PAGER=cat`,
-   `PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`, nothing else. A
-   timeout or non-zero exit (except `config --get-regexp` exiting 1, which
-   means no filter driver is configured) gives `checked=False` with a
-   reason naming the step; no exception ever escapes `observe_run`.
+   `PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`, `GIT_ALLOW_PROTOCOL=`
+   (empty: no transport protocol is allowed, whatever the repository's own
+   `protocol.*.allow` says), and `GIT_NO_LAZY_FETCH=1`, nothing else. The
+   last two exist because `status` in a partial clone fetches a missing
+   object on demand, through the promisor remote the repository configured,
+   and an `ext::<command>` URL runs that command. `GIT_ALLOW_PROTOCOL=`
+   refuses the transport in every supported version; `GIT_NO_LAZY_FETCH=1`
+   also refuses the fetch on git versions that know it (2.36 does not).
+   `status` then fails and the check is reported unchecked (found in review
+   2026-10-26, present since 4.9 was written). A
+   timeout or non-zero exit (except `config --show-scope --get-regexp`
+   exiting 1, which means no filter driver is configured) gives
+   `checked=False` with a reason naming the step; no exception ever escapes
+   `observe_run`.
 5. Guards, in order, first failure wins: git not on `PATH` (`shutil.which`);
    git older than 2.36 or its version unparsable; `rev-parse
    --show-toplevel` failing, meaning the cwd is not inside a git
    repository. A fourth guard, a clean or process filter driver configured
-   (`config --get-regexp` exits 0 with output), is checked only once there
+   at a scope the repository can steer, is checked only once there
    is at least one candidate path contained in the work tree (rule 6) --
    i.e. only when `status` is actually about to run -- and as the call
    immediately before `status`, with no other subprocess call in between:
    this is what keeps the window between the guard and the command it
    guards as small as this module can make it. `status` is never run when
-   that guard finds a filter driver configured. Known limit, documented
+   that guard finds such a driver, and `status` never runs any driver at
+   all. The guard reads each driver's scope (`--show-scope`, git 2.26 and
+   later, inside the 2.36 floor): every output line must be
+   `<scope>\t<key>` or `<scope>\t<key> <value>` (git drops the space when the
+   key has no value) with a key `filter.<name>.clean` or
+   `filter.<name>.process` whose name is letters, digits, `_`, `.`, and
+   `-`, starting with a letter or digit. A driver whose scope is `system`
+   or `global` is the person's own installation (`git lfs install` writes
+   Git LFS's drivers to the global config); it does not stop `status`, but
+   it is switched off for that one call with the `-c` group rule 4 shows
+   (an empty clean and process command, `required=false`), because a
+   repository can still steer a driver it did not configure: its
+   `.gitattributes` choose the driver, the driver runs in the work tree
+   (a `python3 -m <module>` command imports a module the work tree holds),
+   and Git LFS reads `lfs.extension.<name>.clean` commands from the
+   repository's `.git/config` and stores objects under `.git/lfs` when it
+   cleans. With the driver off, git compares a routed file without the
+   external filter (built-in conversions such as `ident` and line endings
+   still apply): for Git LFS, a file whose real content is checked out
+   where the index holds a pointer reads dirty once its timestamp changes,
+   even when its content did not, a conservative answer. The output is
+   split on `\n` alone (git ends each record with it; a value may hold other
+   Unicode line breaks). Any other scope (`local`, `worktree`, a file either
+   of those includes, `command`, `unknown`), any line that does not parse
+   (an empty or ordinary continuation line of a multi-line value included),
+   and any name outside that character set refuses; a continuation line that
+   happens to read like a `system` or `global` driver line only adds a
+   switch-off group for a driver name that may not exist, which changes
+   nothing. Exit 0 with
+   no output line, any exit other than 0 or 1, and a call that did not
+   complete are a failed check and refuse too. Before this change any
+   configured driver refused, so every check that reached `status` on a
+   machine with Git LFS configured was refused, CI's runners included.
+   Known limit, documented
    rather than fixed: nothing in the standard library stops a process with
    write access to this repository from editing `.git/config` to add a
    filter driver in the interval between this guard's own `config
-   --get-regexp` call returning and `status` actually starting -- closing
+   --show-scope --get-regexp` call returning and `status` actually starting -- closing
    that gap completely would need an isolation primitive (a sandboxed or
    otherwise non-repo-steerable git invocation) stronger than `subprocess`
    plus a scrubbed environment can provide. Treated as out of scope for a
@@ -6489,7 +6543,7 @@ later events go positional).
 
 ### 8.1 Package
 
-`pyproject.toml`: name `agent-postmortem`, version `0.3.1`, console scripts
+`pyproject.toml`: name `agent-postmortem`, version `0.3.2`, console scripts
 `agent-postmortem` and `postmortem`, `requires-python >= 3.11`, no runtime
 dependencies, `[project.optional-dependencies].dev = ["pytest>=8",
 "ruff>=0.6"]`, classifiers, URLs (Homepage, Issues, Changelog). The wheel
@@ -6546,17 +6600,25 @@ pypi.org and the TestPyPI dry run.
 
 ### 8.4 README
 
-First screen, in order: name, one-line tagline, badges (PyPI version, Python
-versions, CI, license), the demo output as a fenced code block (not a
-screenshot: it must stay text, so it can be diffed against a live
-`agent-postmortem demo` run -- 8.2, tests/test_readme.py), `uvx
-agent-postmortem scan`, a command table listing exactly which commands take
-`--json` and which take `--no-redact`. Then: Why (the 110 runs / 38 h
-number and links to anthropics/claude-code issues #88993, #84346, #85206,
-#65500), plugin install in two commands, what it detects (table from 4.3
-with the honesty rule from 4.4), privacy (what is redacted, what a pseudonym
-is, the one network action), how it was built, limits (internal format,
-observed versions, retries not observable in sessions).
+First screen, in order: name, a short tagline that names the problem (what
+the tool reads, what it reports, that it is local and read-only, and its
+status), badges (CI, license; PyPI version and Python versions only once a
+PyPI release exists, since a badge for a missing release renders broken),
+the demo output as a fenced code block (not a screenshot: it must stay text,
+so it can be diffed against a live `agent-postmortem demo` run -- 8.2,
+tests/test_readme.py), the install command that works for the current
+distribution (a GitHub install with `uv tool install git+...` until the
+first PyPI release, then `uvx agent-postmortem scan`), a command table
+listing exactly which commands take `--json` and which take `--no-redact`.
+Then: Why (the retry count from one dated scan, naming the version that
+produced it, and links to anthropics/claude-code issues with their status
+on that date: #88993, #85206, #98170, #104986, #84346, #65500; the 0.1
+figure of 110 runs / 38 h was dropped after 0.3.1, because the hours were
+summed attempt time rather than time lost and later versions count retries
+differently), plugin install in two commands after the CLI, what it detects
+(table from 4.3 with the honesty rule from 4.4), privacy (what is redacted,
+what a pseudonym is, the one network action), how it was built, limits
+(internal format, observed versions, retries not observable in sessions).
 
 ## 9. Rules library (v0.2, unit M6: proposals only)
 

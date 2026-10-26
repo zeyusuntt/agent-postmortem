@@ -1,6 +1,6 @@
 {
   "name": "agent-postmortem",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Post-mortem for multi-agent coding runs: proves what silently went wrong and drafts the rule that would have prevented it.",
   "author": {
     "name": "zeyusuntt",

@@ -42,6 +42,31 @@ __all__ = [
 BASE = datetime.now(timezone.utc) - timedelta(minutes=30)
 
 
+def without_filter_neutralizers(argv: list[str]) -> list[str]:
+    """`argv` with every exactly-formed `-c filter.<n>.clean= -c
+    filter.<n>.process= -c filter.<n>.required=false` group removed. observe adds
+    one such group per filter driver in the person's own system or global git
+    config (docs/DESIGN.md 4.9 rule 5), and a machine or CI runner with Git LFS
+    installed has one named `lfs`; every other argument stays, so a template
+    check still fails on anything else."""
+    kept: list[str] = []
+    i = 0
+    while i < len(argv):
+        group = argv[i:i + 6]
+        if len(group) == 6 and group[0::2] == ["-c", "-c", "-c"]:
+            name = group[1][len("filter."):-len(".clean=")]
+            if (
+                group[1] == f"filter.{name}.clean=" and name
+                and group[3] == f"filter.{name}.process="
+                and group[5] == f"filter.{name}.required=false"
+            ):
+                i += 6
+                continue
+        kept.append(argv[i])
+        i += 1
+    return kept
+
+
 def git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     result = subprocess.run(
         ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=10,

@@ -52,6 +52,21 @@ _CANDIDATE_OUTCOMES = frozenset({"killed", "failed", "superseded"})
 # the two hooks `git status`/`git add` can invoke.
 _FILTER_CONFIG_PATTERN = r"^filter\..*\.(clean|process)$"
 
+# The `--show-scope` scopes whose filter drivers the person installed for
+# themselves (rule 5): `git lfs install` writes Git LFS's drivers to the global
+# config, a system package to the system config. Such a driver is switched off
+# for the one `status` call (`_neutralize_filters`), never run. Every other
+# scope (`local`, `worktree`, a file either of those includes, `command`,
+# `unknown`) is one the observed repository can steer, so a driver there still
+# refuses `status`.
+_PERSON_FILTER_SCOPES = frozenset({"system", "global"})
+
+# A key `_filter_drivers` accepts, capturing the driver name. A name outside
+# this character set refuses `status` instead of being switched off: git splits
+# a `-c` argument at its first `=`, and a subsection name may hold spaces and
+# other characters this module would have to quote.
+_FILTER_KEY_RE = re.compile(r"^filter\.([A-Za-z0-9][A-Za-z0-9_.-]*)\.(clean|process)$")
+
 _GIT_VERSION_RE = re.compile(r"git version (\d+)\.(\d+)(?:\.(\d+))?")
 _MIN_GIT_VERSION = (2, 36, 0)
 
@@ -223,7 +238,11 @@ def _build_env() -> dict[str, str]:
     the current process, a fixed set of git-behavior variables, and nothing
     else -- no GIT_DIR, no GIT_WORK_TREE, no GIT_CONFIG_*, no
     GIT_EXTERNAL_DIFF, none of which this process happens to have set, but
-    none of which git should ever be handed even if it did."""
+    none of which git should ever be handed even if it did.
+    `GIT_ALLOW_PROTOCOL=` (no transport protocol allowed, overriding any
+    `protocol.*.allow` in the repository's config) and `GIT_NO_LAZY_FETCH=1`
+    stop `status` in a partial clone from fetching a missing object through a
+    transport the repository configured, such as `ext::<command>`."""
     env: dict[str, str] = {}
     path = os.environ.get("PATH")
     if path is not None:
@@ -236,6 +255,8 @@ def _build_env() -> dict[str, str]:
     env["PAGER"] = "cat"
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["LC_ALL"] = "C"
+    env["GIT_ALLOW_PROTOCOL"] = ""
+    env["GIT_NO_LAZY_FETCH"] = "1"
     return env
 
 
@@ -264,6 +285,66 @@ def _run_git(
         )
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
+
+
+def _filter_drivers(
+    git_path: str, cwd: str, env: dict[str, str],
+) -> tuple[bool | None, tuple[str, ...]]:
+    """Rule 5, guard 4. Returns (repo_driver, person_drivers). repo_driver is
+    None when the check itself failed; True when `status` must not run: a clean
+    or process filter driver comes from a scope the repository can steer, or a
+    line is not `<scope>\\t<key> <value>` with a key `_FILTER_KEY_RE` accepts;
+    False otherwise (exit 1, git's "no such key" for --get-regexp, means no
+    driver at all). person_drivers, given only with False, names each driver
+    from the person's own system or global config, sorted; `status` runs with
+    every one of them switched off, so no driver ever runs. A multi-line
+    value's continuation line never parses, so it can only add a refusal,
+    never hide the line its own scope opens with."""
+    result = _run_git(
+        git_path,
+        ["-C", cwd, "config", "--show-scope", "--get-regexp", _FILTER_CONFIG_PATTERN],
+        env,
+    )
+    if result is None:
+        return None, ()
+    if result.returncode == 1:
+        return False, ()
+    if result.returncode != 0:
+        return None, ()
+    # git ends each record with "\n" only, so split on it alone (str.splitlines
+    # would also split a value at U+2028 and other Unicode breaks) and drop only
+    # the final empty piece: an empty line inside the output is a multi-line
+    # value's continuation, which refuses like any other line that does not
+    # parse.
+    lines = result.stdout.split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    if not lines:
+        return None, ()
+    names: set[str] = set()
+    for line in lines:
+        scope, tab, rest = line.partition("\t")
+        match = _FILTER_KEY_RE.match(rest.split(" ", 1)[0])
+        if not tab or scope not in _PERSON_FILTER_SCOPES or match is None:
+            return True, ()
+        names.add(match.group(1))
+    return False, tuple(sorted(names))
+
+
+def _neutralize_filters(names: tuple[str, ...]) -> list[str]:
+    """The `-c` arguments that switch off each named driver for one `status`
+    call: an empty clean and process command, and `required=false` so git does
+    not stop on the missing driver. A file routed through one is then compared
+    as stored, without running anything (for Git LFS, a file whose timestamp
+    changed reads dirty even when its content did not)."""
+    args: list[str] = []
+    for name in names:
+        args += [
+            "-c", f"filter.{name}.clean=",
+            "-c", f"filter.{name}.process=",
+            "-c", f"filter.{name}.required=false",
+        ]
+    return args
 
 
 def _parse_git_version(version_text: str | None) -> tuple[int, int, int] | None:
@@ -406,33 +487,27 @@ def observe_run(run: Run, now: datetime | None = None) -> RepoObservation:
         )
 
     if contained:
-        # Rule 5, guard 4: no clean/process filter driver configured. Exit 0
-        # with output means at least one is; exit 1 (git's own "no such key"
-        # code for --get-regexp) means none is, the normal case. Run only
-        # when `status` is actually about to run, and as the call
-        # immediately before it -- no other subprocess call in between --
-        # so the window in which a repository-controlled process could
-        # install a filter driver between this guard and `status` is as
-        # small as this module can make it without a stronger isolation
-        # primitive than the standard library offers (the remaining race is
-        # documented in docs/DESIGN.md 4.9 as a known limit).
-        filter_result = _run_git(
-            git_path, ["-C", cwd, "config", "--get-regexp", _FILTER_CONFIG_PATTERN], env,
-        )
-        if filter_result is None:
+        # Rule 5, guard 4: no clean/process filter driver configured at a
+        # scope the repository can steer; a driver from the person's own
+        # system or global config, such as Git LFS's, is switched off for
+        # `status` instead of run. Run only when `status` is actually about
+        # to run, and as the call immediately before it -- no other
+        # subprocess call in between -- so the window in which a
+        # repository-controlled process could install a filter driver
+        # between this guard and `status` is as small as this module can
+        # make it without a stronger isolation primitive than the standard
+        # library offers (the remaining race is documented in
+        # docs/DESIGN.md 4.9 as a known limit).
+        repo_driver, person_drivers = _filter_drivers(git_path, cwd, env)
+        if repo_driver is None:
             return _not_checked(
-                "git config --get-regexp failed", git_version=git_version,
+                "git config --show-scope --get-regexp failed", git_version=git_version,
                 repo_root=toplevel, head=head,
             )
-        if filter_result.returncode == 0:
+        if repo_driver:
             return _not_checked(
                 "a clean or process filter driver is configured for this repository",
                 git_version=git_version, repo_root=toplevel, head=head,
-            )
-        if filter_result.returncode != 1:
-            return _not_checked(
-                "git config --get-regexp failed", git_version=git_version,
-                repo_root=toplevel, head=head,
             )
 
         rel_paths = [rel for _, rel in contained]
@@ -440,6 +515,7 @@ def observe_run(run: Run, now: datetime | None = None) -> RepoObservation:
             git_path,
             [
                 "-C", cwd, "--no-optional-locks", "-c", "core.fsmonitor=false",
+                *_neutralize_filters(person_drivers),
                 "status", "--porcelain=v2", "-z", "--no-renames",
                 "--ignore-submodules=all", "--", *rel_paths,
             ],
@@ -643,11 +719,11 @@ def _observe_named_group(
             repo_root=toplevel, head=head,
         )
 
-    # The filter-driver guard is the call immediately before `status`.
-    filter_result = _run_git(
-        git_path, ["-C", repo, "config", "--get-regexp", _FILTER_CONFIG_PATTERN], env,
-    )
-    if filter_result is None or filter_result.returncode != 1:
+    # The filter-driver guard is the call immediately before `status`; a
+    # driver from the person's own system or global config is switched off
+    # for `status`, never run.
+    repo_driver, person_drivers = _filter_drivers(git_path, repo, env)
+    if repo_driver is not False:
         return _unchecked(
             repo, group, REASON_GUARD, refused=False, session=session,
             repo_root=toplevel, head=head,
@@ -655,7 +731,8 @@ def _observe_named_group(
     status_result = _run_git(
         git_path,
         [
-            "-C", repo, "--no-optional-locks", "-c", "core.fsmonitor=false", "status",
+            "-C", repo, "--no-optional-locks", "-c", "core.fsmonitor=false",
+            *_neutralize_filters(person_drivers), "status",
             "--porcelain=v2", "-z", "--no-renames", "--ignore-submodules=all", "--",
             *[rel for _path, rel in contained],
         ],

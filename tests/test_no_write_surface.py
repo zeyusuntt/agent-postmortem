@@ -166,14 +166,14 @@ def _write_and_exec_sink_calls() -> list[tuple[str, int, str, ast.Call]]:
 _ALLOWED_SINK_CALLS = {
     ("hooks_cli.py", 266, "path.open"):
         "_iter_json_lines: read a unit's own journal/transcript line by line, mode 'r'",
-    ("observe.py", 256, "subprocess.run"):
+    ("observe.py", 277, "subprocess.run"):
         "observe.py's one documented git invocation point (docs/DESIGN.md 4.9 rule 4): "
         "git_path is always the shutil.which('git') result below, argv is always one of "
         "the five fixed templates rule 4 lists, never a shell, never repo-steerable",
-    ("observe.py", 346, "shutil.which"):
+    ("observe.py", 427, "shutil.which"):
         "resolve the git executable once (docs/DESIGN.md 4.9 rule 4, release finding F1); "
         "a read-only PATH lookup, writes nothing",
-    ("observe.py", 576, "shutil.which"):
+    ("observe.py", 652, "shutil.which"):
         "_GitSession.ready: the same one-time git lookup for the per-repository groups "
         "(docs/DESIGN.md 4.9, N5c-1); a read-only PATH lookup, writes nothing",
     # GC-1b: the session sniffers, _fork_scan (docs/DESIGN.md 4.2, FA4), _read_transcript, the

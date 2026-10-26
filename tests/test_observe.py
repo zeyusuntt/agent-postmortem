@@ -29,6 +29,7 @@ import pytest
 
 from agent_postmortem import cli, observe
 from agent_postmortem.models import Attempt, AttemptFacts, Run
+from tests.n5c1_helpers import without_filter_neutralizers
 
 OBSERVE_PATH = Path(observe.__file__)
 
@@ -397,7 +398,7 @@ def test_directory_that_is_not_a_git_repository_is_not_checked(tmp_path):
 
 _SELECTED_ENV_VARS = (
     "PATH", "HOME", "GIT_OPTIONAL_LOCKS", "GIT_PAGER", "PAGER",
-    "GIT_TERMINAL_PROMPT", "LC_ALL",
+    "GIT_TERMINAL_PROMPT", "LC_ALL", "GIT_ALLOW_PROTOCOL", "GIT_NO_LAZY_FETCH",
 )
 
 # The fake git records argv plus only this *selected* set of variables
@@ -440,6 +441,8 @@ def test_build_env_returns_exactly_the_required_variables(monkeypatch):
     assert env["PAGER"] == "cat"
     assert env["GIT_TERMINAL_PROMPT"] == "0"
     assert env["LC_ALL"] == "C"
+    assert env["GIT_ALLOW_PROTOCOL"] == ""
+    assert env["GIT_NO_LAZY_FETCH"] == "1"
 
 
 def test_build_env_omits_home_when_the_parent_process_has_none(monkeypatch):
@@ -473,7 +476,7 @@ def test_recorded_argv_matches_the_five_templates_and_selected_env_vars_are_exac
 
     templates_seen = set()
     for record in records:
-        argv = record["argv"]
+        argv = without_filter_neutralizers(record["argv"])
         if argv == ["--version"]:
             templates_seen.add("version")
         elif argv == ["-C", str(repo), "rev-parse", "--show-toplevel"]:
@@ -481,7 +484,8 @@ def test_recorded_argv_matches_the_five_templates_and_selected_env_vars_are_exac
         elif argv == ["-C", str(repo), "rev-parse", "HEAD"]:
             templates_seen.add("head")
         elif argv == [
-            "-C", str(repo), "config", "--get-regexp", r"^filter\..*\.(clean|process)$",
+            "-C", str(repo), "config", "--show-scope", "--get-regexp",
+            r"^filter\..*\.(clean|process)$",
         ]:
             templates_seen.add("config")
         elif argv[:8] == [
@@ -582,7 +586,7 @@ def test_filter_check_is_the_call_immediately_before_status_with_nothing_between
     records = [json.loads(line) for line in logfile.read_text().splitlines()]
     order = []
     for record in records:
-        argv = record["argv"]
+        argv = without_filter_neutralizers(record["argv"])
         if argv == ["--version"]:
             order.append("version")
         elif argv[:3] == ["-C", str(repo), "config"]:

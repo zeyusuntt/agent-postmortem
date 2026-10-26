@@ -1,9 +1,9 @@
 # agent-postmortem
 
-Turn the run directories a Claude Code Workflow leaves behind into a verdict, the work that is at risk, and the next step. Then guide the rescue without ever touching your files.
+Find out which "done" in a Claude Code run you can't trust. When the runtime kills a subagent, its transcript can record `[Request interrupted by user]` although no one pressed a key, and the run can still end as completed. agent-postmortem reads the logs Claude Code already writes under `~/.claude/projects`, after the run, and tells you which agents were killed and started over, which never returned, which said "done" while their own result reported failures, and what work they may have left half-written. Then it guides the rescue without touching your files.
 
-[![PyPI version](https://img.shields.io/pypi/v/agent-postmortem.svg)](https://pypi.org/project/agent-postmortem/)
-[![Python versions](https://img.shields.io/pypi/pyversions/agent-postmortem.svg)](https://pypi.org/project/agent-postmortem/)
+The command-line tool is local and read-only: Python standard library only, no LLM, no network access, and it never changes your files, transcripts, commits, or branches. (The Claude Code plugin's one network action, installing that tool, is described under Privacy; Limits notes two rare git index modes in which git's own `status` still updates its bookkeeping.) It covers Claude Code Workflow runs and ordinary sessions with subagents. Status: alpha, used so far on the maintainer's own machines. Claude Code only.
+
 [![CI](https://github.com/zeyusuntt/agent-postmortem/actions/workflows/ci.yml/badge.svg)](https://github.com/zeyusuntt/agent-postmortem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -34,13 +34,25 @@ STORIES (2)   details: --verbose   evidence: --evidence
 1 info finding not shown (--verbose)
 ```
 
-That is `agent-postmortem demo`, run against a packaged synthetic run. No setup, no real data, no network access. The header leads with the verdict; the account underneath it says what happened in plain sentences; WORK AT RISK says what a killed or failed attempt left that could still be lost, and what the tool cannot see (a shell command may have written anything, so such an attempt is never reported as having written nothing); WHAT TO DO is at most 3 next steps, each tagged `[look]` (read-only) or `[decide]` (needs you), and is left out when there are none; STORIES tells one short story per agent that has a finding, worst first. In the AGENT table, PATHS counts every path an attempt's write ledger names, and a `+` (`0+` here) means the count is a lower bound because a shell command ran that the tool cannot see into; a legend line under the table says so whenever a `+` is shown. Info-severity findings (`wasted_time` here) and evidence are hidden by default: `--verbose` shows every finding with its evidence pointers, `--evidence` adds up to 2 pointers per story, and the transcript lines themselves need `--local --evidence` (recognized paths replaced) or `--raw --evidence`.
+That is `agent-postmortem demo`, run against a packaged synthetic run: no setup, no real data, no network access. How to read it:
+
+- The header leads with the verdict, and the sentences under it say what happened.
+- WORK AT RISK says what a killed or failed attempt left that could still be lost, and what the tool cannot see. A shell command may have written anything, so an attempt that ran one is never reported as having written nothing.
+- WHAT TO DO is at most 3 next steps, each tagged `[look]` (read-only) or `[decide]` (needs you), and is left out when there are none.
+- In the AGENT table, PATHS counts every path an attempt's write ledger names. A `+` (`0+` here) means the count is a lower bound because a shell command ran that the tool cannot see into; a legend line under the table says so whenever a `+` is shown.
+- STORIES tells one short story per agent that has a finding, worst first.
+
+Info-severity findings (`wasted_time` here) and evidence are hidden by default: `--verbose` shows every finding with its evidence pointers, `--evidence` adds up to 2 pointers per story, and the transcript lines themselves need `--local --evidence` (recognized paths replaced) or `--raw --evidence`.
 
 ## Quick start
 
+Install the command-line tool from GitHub with [uv](https://docs.astral.sh/uv/) (it fetches Python 3.11 or later if you don't have it), then try it:
+
 ```
-uvx agent-postmortem scan
-uvx agent-postmortem run <run-id>
+uv tool install git+https://github.com/zeyusuntt/agent-postmortem
+agent-postmortem demo
+agent-postmortem scan
+agent-postmortem run <run-id>
 ```
 
 `scan` looks under `~/.claude/projects` by default and prints the runs that need attention: ranked, with a one-line reason and a next command for each, plus 7-day and all-time totals. Add `--all` for the full one-line-per-run list instead. `run` takes a run id (or a unique prefix of one, a session UUID, an agent transcript stem such as `agent-<id>`, an agent alias such as `a:<alias>` from a share report, or a path) and prints the verdict for that one run, what work is at risk, and at most 3 next steps; an id that matches more than one run is an error listing the candidates. Add `--evidence` for excerpt pointers or `--verbose` for the full finding list.
@@ -81,12 +93,14 @@ Verdict: 0.3 stops guessing. Severity, the WORK AT RISK block, and the run's end
 
 ## Why
 
-On one machine, 110 Claude Code Workflow runs over five weeks had 39 with a silent retry: an agent killed mid-task and restarted from scratch with no journal event and no notification, its transcript recording the kill as `[Request interrupted by user]` although no human interrupted. Rebuilding the lost work across those 39 runs cost about 38 hours on that one machine alone. The same failure is reported upstream:
+On the maintainer's machine, a scan with 0.3.1 on 2026-10-26 found 130 Claude Code Workflow runs, 12 of which launched at least one agent's task a second time. A retry is easy to miss. A kill can reach the transcript as `[Request interrupted by user]` although no one pressed a key, and a run with retries can still end as completed, so the logs are where it shows. The same failures are reported upstream (status as of 2026-10-26):
 
-- [anthropics/claude-code#88993](https://github.com/anthropics/claude-code/issues/88993): workflow subagents are interrupted around 180 seconds while a model request is still in flight.
-- [anthropics/claude-code#84346](https://github.com/anthropics/claude-code/issues/84346): a subagent model-stall watchdog kills a subagent after about 600 seconds of silence.
-- [anthropics/claude-code#85206](https://github.com/anthropics/claude-code/issues/85206): the stall watchdog kills a subagent that is actively working every 8 to 9 minutes.
-- [anthropics/claude-code#65500](https://github.com/anthropics/claude-code/issues/65500): a deep-research workflow aborts its entire run the moment any one schema-bound subagent fails to emit structured output.
+- [anthropics/claude-code#88993](https://github.com/anthropics/claude-code/issues/88993) (open): workflow subagents are interrupted around 180 seconds while a model request is still in flight.
+- [anthropics/claude-code#85206](https://github.com/anthropics/claude-code/issues/85206) (open): the stall watchdog kills a subagent that is actively working every 8 to 9 minutes.
+- [anthropics/claude-code#98170](https://github.com/anthropics/claude-code/issues/98170) (open): `claude -p` kills working background subagents, records it as "user rejected", and exits 0 with `result: success`.
+- [anthropics/claude-code#104986](https://github.com/anthropics/claude-code/issues/104986) (open): a background subagent is terminated at its first Bash call and the result is reported as success.
+- [anthropics/claude-code#84346](https://github.com/anthropics/claude-code/issues/84346) (closed, not planned): a subagent model-stall watchdog kills a subagent after about 600 seconds of silence, recorded as `[Request interrupted by user for tool use]`.
+- [anthropics/claude-code#65500](https://github.com/anthropics/claude-code/issues/65500) (closed, not planned): a deep-research workflow aborts its entire run the moment any one schema-bound subagent fails to emit structured output.
 
 agent-postmortem turns the run directories the harness already leaves behind into a verdict, evidence, a suggested rule when one exists, and a trend line that shows whether the rule worked. Since 0.2 it also names the cause of a failed attempt (a usage limit with its reset time, the machine sleeping, a server error), reads what each agent reported back and flags an agent that said "done" while its own result reported failed tests, and shows which files a killed attempt wrote and whether they are still uncommitted.
 
@@ -114,7 +128,7 @@ To notice a killed or failed agent in seconds instead of hours, arm `agent-postm
 
 ## Inside Claude Code
 
-Install the plugin with two commands:
+Install the command-line tool first (Quick start above), so the plugin finds it on your `PATH`. Then install the plugin with two commands:
 
 ```
 /plugin marketplace add zeyusuntt/agent-postmortem
@@ -188,7 +202,7 @@ It was built across two Claude Code Workflow runs, and those same runs are among
 
 ## Limits
 
-The formats this tool parses are internal to Claude Code, not a published API, and were observed on versions 2.1.251 to 2.1.280; a future version can change them without notice. A session's retries are not observable the way a workflow's are: a session has no cache key to compare attempts against, so `silent_retry` never fires on one. Whether a main-session interrupt was a human pressing Escape is not knowable from the transcript, so it is never attributed, only recorded as a limit. Tested on macOS and Linux only.
+The formats this tool parses are internal to Claude Code, not a published API, and were observed on versions 2.1.251 to 2.1.280; a future version can change them without notice. A session's retries are not observable the way a workflow's are: a session has no cache key to compare attempts against, so `silent_retry` never fires on one. Whether a main-session interrupt was a human pressing Escape is not knowable from the transcript, so it is never attributed, only recorded as a limit. Tested on macOS and Linux only. The repository check (`run --observe`, `rescue status`) uses `git status` to inspect paths, with every filter driver switched off and no network transport allowed; in a repository with a sparse index or a split index, git's own `status` can still store a cached tree object or refresh the shared index file's timestamps, without changing tracked content, commits, or branches.
 
 ## Contributing
 

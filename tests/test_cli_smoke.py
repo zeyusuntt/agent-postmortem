@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import agent_postmortem
-from agent_postmortem import __version__, rules, state
+from agent_postmortem import __version__, rules, state, trend
 from agent_postmortem.cli import _build_parser, _top_detector, main
 from agent_postmortem.detectors import codex_write_denied
 from agent_postmortem.models import Finding
@@ -585,11 +585,18 @@ def test_trend_still_counts_a_detector_silenced_by_config(tmp_path, monkeypatch,
     counts in trend' -- unlike run/scan/demo, trend is never wired to
     config.partition_silenced at all, so silencing silent_retry here must
     not change its weekly count. wf_b0000000-002 (started 2026-09-01) fires
-    silent_retry; --weeks defaults to 8, comfortably covering that week from
-    any 'now' in this test suite's lifetime."""
+    silent_retry; --weeks defaults to 8, so the clock is pinned to
+    2026-09-30, inside that window. Left on the real clock, the 2026-09-01
+    week fell out of the window on 2026-10-26 and the test failed."""
     config_path = tmp_path / "config.toml"
     config_path.write_text('[detectors]\noff = ["silent_retry"]\n', encoding="utf-8")
     monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(config_path))
+    pinned_now = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
+    real_weekly_counts = trend.weekly_counts
+    monkeypatch.setattr(
+        trend, "weekly_counts",
+        lambda runs, weeks, now=None: real_weekly_counts(runs, weeks, now=now or pinned_now),
+    )
 
     code = main(["trend", "--root", str(FIXTURES_ROOT), "--json"])
     captured = capsys.readouterr()
