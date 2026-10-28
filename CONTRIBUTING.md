@@ -69,9 +69,23 @@ sets.
 ## Releasing (maintainers)
 
 Releases are cut by pushing a `v*` tag, which `.github/workflows/release.yml`
-picks up: it builds the wheel and sdist, runs the privacy check against
-them, then publishes to PyPI via a trusted publisher (no API token stored
-in this repository).
+picks up: it runs the tests, builds the wheel and sdist, runs the privacy
+check against them, and makes the GitHub release with the built files and
+that version's CHANGELOG section. Users install from that tag
+(`uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v<version>`),
+and so does the plugin.
+
+Publishing to PyPI (via a trusted publisher, no API token stored in this
+repository) is switched off until the repository variable `PUBLISH_PYPI` is
+`true`; without it the publish job is skipped, not failed. To turn it on once
+the setup below is done: set the variable (Settings, Secrets and variables,
+Actions, Variables, `PUBLISH_PYPI` = `true`), then re-run the release workflow
+for the existing tag (Actions, Release, the tag's run, Re-run all jobs), and
+check that installing the `agent-postmortem` package from PyPI gives that
+version. After that,
+switch the install lines in README.md, plugin/README.md, the postmortem skill
+and plugin/hooks/run.sh back to PyPI in one release (tests/test_launch_docs.py
+and tests/test_plugin.py pin them).
 
 One-time trusted-publisher setup on pypi.org, before the first tagged
 release:

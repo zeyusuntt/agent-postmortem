@@ -6307,7 +6307,9 @@ internal deadline as `check`.
 
 On SessionStart, if no compatible CLI resolves and `uv` is on PATH and
 `AGENT_POSTMORTEM_NO_AUTO_INSTALL` is unset, `run.sh` runs `uv tool install
-"agent-postmortem==<pinned in plugin.json>" --python 3.11+` (`UV_TOOL_DIR`
+"git+https://github.com/zeyusuntt/agent-postmortem@v<version in plugin.json>" --python
+3.11+` (Plan B, 2026-10-28: the public repository's tag instead of PyPI until PyPI
+publishing works; it needs git besides uv; the missing-CLI hint names the same source) (`UV_TOOL_DIR`
 and `UV_TOOL_BIN_DIR` both pointed at `$DATA_DIR`, 7.2's one data
 directory, so the installed shim lands at `$DATA_DIR/bin/agent-postmortem`,
 exactly where resolution step (1) looks) under the same process-group-kill
@@ -6677,13 +6679,18 @@ critical finding" (4.6), the same substitution `run`'s own 4.8 entry makes.
 and macos-latest times Python 3.11, 3.12, 3.13; steps: `uv sync --extra dev`,
 `uv run ruff check`, `uv run pytest`, `uv build`, `scripts/check-privacy.sh
 --tree --artifacts dist/`, and `claude plugin validate --strict ./plugin` and
-`claude plugin validate --strict .` when the binary exists. `.github/workflows/release.yml`: on tag `v*`, build job then
-publish job with `environment: pypi`, `permissions: id-token: write`,
-`pypa/gh-action-pypi-publish@release/v1`. Both workflows declare a
+`claude plugin validate --strict .` when the binary exists. `.github/workflows/release.yml`: on tag `v*`, a build job (tests, build, privacy
+check of the artifacts), then a `github-release` job (`permissions: contents: write`,
+`gh release create <tag> dist/* --verify-tag` with that version's CHANGELOG section as
+notes) and a publish job with `environment: pypi`, `permissions: id-token: write`,
+`pypa/gh-action-pypi-publish@release/v1` that runs only when the repository variable
+`PUBLISH_PYPI` is `true` (Plan B, 2026-10-28: until the PyPI trusted publisher works, a
+tag must not turn the release red; a skipped job is not a failure). Both workflows declare a
 top-level `permissions: contents: read` so every job is read-only by
 default regardless of the repository's own token-permission setting; the
 publish job's own `id-token: write` is layered on top of that at the job
-level, the only elevated permission anything in either workflow needs.
+level, and the `github-release` job's `contents: write` is the only other elevated
+permission.
 CONTRIBUTING.md documents the one-time trusted-publisher setup on
 pypi.org and the TestPyPI dry run.
 
@@ -6692,8 +6699,8 @@ pypi.org and the TestPyPI dry run.
 First screen, in order (from 0.3.3): name; the question the tool answers
 ("Which 'done' in your last Claude Code run can't you trust?"); one paragraph on
 what it reads, what it reports and that it is local and read-only; one dated number
-from a named version's scan; `uvx agent-postmortem scan` with the GitHub form
-(`uvx --from git+...`) as a fallback; the status paragraph; badges (CI, license; PyPI version and Python versions only once a
+from a named version's scan; `uvx --from git+https://github.com/zeyusuntt/agent-postmortem@v<version>
+agent-postmortem scan` (the tagged GitHub release; one line says a PyPI release is coming); the status paragraph; badges (CI, license; PyPI version and Python versions only once a
 PyPI release exists, since a badge for a missing release renders broken),
 the demo output as a fenced code block (not a screenshot: it must stay text,
 so it can be diffed against a live `agent-postmortem demo` run -- 8.2,

@@ -71,6 +71,11 @@ POSITIONING = (
     "you can't trust, and what to run next."
 )
 REPOSITORY_URL = "https://github.com/zeyusuntt/agent-postmortem"
+GIT_SOURCE = f"git+{REPOSITORY_URL}"
+
+
+def _manifest_version() -> str:
+    return _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")["version"]
 
 
 def test_plugin_and_marketplace_entry_carry_the_one_positioning_line():
@@ -367,7 +372,10 @@ def test_run_sh_prints_the_missing_cli_hint_once_a_day(tmp_path):
     assert second.returncode == 0, second.stderr
     hint = json.loads(first.stdout)
     assert hint == {
-        "systemMessage": "agent-postmortem CLI not found; run: uv tool install agent-postmortem"
+        "systemMessage": (
+            "agent-postmortem CLI not found; run: uv tool install "
+            f"{GIT_SOURCE}@v{_manifest_version()}"
+        )
     }
     assert second.stdout == ""
 
@@ -399,10 +407,13 @@ def test_run_sh_attempts_install_once_on_session_start_when_uv_is_on_path(tmp_pa
     assert second.returncode == 0, second.stderr
     invocations = uv_log.read_text(encoding="utf-8").splitlines() if uv_log.exists() else []
     assert len(invocations) == 1, f"expected exactly one uv invocation, got {invocations!r}"
-    assert invocations[0].startswith("tool install agent-postmortem==")
+    # Plan B (2026-10-28): the CLI comes from the GitHub tag that matches the plugin version,
+    # not from PyPI.
+    pinned = f"{GIT_SOURCE}@v{_manifest_version()}"
+    assert invocations[0].startswith(f"tool install {pinned} ")
     install_log = plugin_data / "install.log"
     assert install_log.exists()
-    assert "uv tool install agent-postmortem==" in install_log.read_text(encoding="utf-8")
+    assert f"uv tool install {pinned}" in install_log.read_text(encoding="utf-8")
 
 
 def test_run_sh_never_installs_when_no_auto_install_is_set(tmp_path):

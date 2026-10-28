@@ -37,8 +37,37 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
+  github-release:
     needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Release notes from CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" 'index($0, "## [" v "]") == 1 {f = 1; next} /^## \[/ {if (f) exit} f' CHANGELOG.md > notes.md
+          test -s notes.md
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md
+
+  publish:
+    # PyPI publishing waits for the trusted publisher (CONTRIBUTING.md). Until the repository
+    # variable PUBLISH_PYPI is set to 'true', a tag builds and makes the GitHub release, and
+    # this job is skipped rather than failed.
+    needs: build
+    if: vars.PUBLISH_PYPI == 'true'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

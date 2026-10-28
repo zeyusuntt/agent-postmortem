@@ -40,6 +40,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
 PLUGIN_JSON="$PLUGIN_ROOT/.claude-plugin/plugin.json"
+# The CLI install source (docs/DESIGN.md 7.3): the public repository at the tag v<plugin version>.
+GIT_SOURCE="git+https://github.com/zeyusuntt/agent-postmortem"
 
 # docs/DESIGN.md 7.2's D9: one data directory, derived once, used for
 # resolution step (1), the install, the daily-gate markers, and the
@@ -323,7 +325,8 @@ _print_missing_cli_hint_if_due() {
     if _modified_within_a_day "$marker"; then
         return 0
     fi
-    printf '{"systemMessage": "agent-postmortem CLI not found; run: uv tool install agent-postmortem"}\n'
+    printf '{"systemMessage": "agent-postmortem CLI not found; run: uv tool install %s@v%s"}\n' \
+        "$GIT_SOURCE" "$(_plugin_version)"
     : >"$marker" 2>/dev/null
 }
 
@@ -350,14 +353,16 @@ _maybe_install() {
     pinned_version="$(_plugin_version)"
     [ -n "$pinned_version" ] || return 0
 
+    # Plan B (2026-10-28): the git tag that matches the plugin version, until PyPI works.
+    source="$GIT_SOURCE@v$pinned_version"
     {
-        printf '%s attempting: uv tool install agent-postmortem==%s\n' \
-            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$pinned_version"
+        printf '%s attempting: uv tool install %s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$source"
     } >>"$install_log" 2>/dev/null
 
     mkdir -p "$DATA_DIR/bin" 2>/dev/null
     UV_TOOL_DIR="$DATA_DIR" UV_TOOL_BIN_DIR="$DATA_DIR/bin" \
-        _run_with_deadline 60 uv tool install "agent-postmortem==$pinned_version" --python 3.11+ \
+        _run_with_deadline 60 uv tool install "$source" --python 3.11+ \
         </dev/null >>"$install_log" 2>&1
 }
 

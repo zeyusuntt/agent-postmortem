@@ -7,6 +7,7 @@ takes) rather than a full parse.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -51,3 +52,28 @@ def test_release_publish_job_still_keeps_its_own_id_token_write():
     publish_block = lines[publish_index:]
     assert "    permissions:" in publish_block
     assert "      id-token: write" in publish_block
+
+
+def _job_block(name: str) -> list[str]:
+    lines = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8").splitlines()
+    start = lines.index(f"  {name}:")
+    end = next(
+        (i for i in range(start + 1, len(lines)) if re.match(r"^  [A-Za-z0-9_-]+:$", lines[i])),
+        len(lines),
+    )
+    return lines[start:end]
+
+
+def test_release_publish_job_runs_only_when_the_publish_pypi_variable_is_true():
+    """Plan B (2026-10-28): a tag must not turn the release red while PyPI is not configured;
+    the publish job is skipped unless the repository variable PUBLISH_PYPI is 'true'."""
+    assert "    if: vars.PUBLISH_PYPI == 'true'" in _job_block("publish")
+
+
+def test_release_makes_a_github_release_from_the_build_without_waiting_for_pypi():
+    block = _job_block("github-release")
+    text = "\n".join(block)
+    assert "    needs: build" in block
+    assert "publish" not in text
+    assert "      contents: write" in block
+    assert "gh release create" in text and "--verify-tag" in text

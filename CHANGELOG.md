@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Install from the tagged GitHub release while PyPI publishing is not available: the README,
+  the plugin README, the `/postmortem` skill and the plugin's missing-CLI hint say
+  `uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v0.3.3` (or `uvx --from`
+  the same source), and the plugin's one-time install uses the tag that matches its own
+  version. A tag now makes the GitHub release with the built files and this CHANGELOG section;
+  the PyPI publish job runs only when the repository variable `PUBLISH_PYPI` is `true`, so a
+  tag no longer fails while the trusted publisher is not set up (CONTRIBUTING.md has the steps).
 - README first screen: it opens with the question the tool answers ("Which 'done' in your
   last Claude Code run can't you trust?"), one paragraph, the dated number (13 of 166
   workflow runs, scan 2026-10-27), and `uvx agent-postmortem scan` with the GitHub form as a
