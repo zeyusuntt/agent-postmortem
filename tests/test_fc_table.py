@@ -1,7 +1,7 @@
 """Part FC, P3 and P4 (field milestone F): the AGENT table's column widths and its legend
 (docs/DESIGN.md 4.7, AGENT table; .reviews/v0.3/F-plan.md FC).
 
-The field case (econ, design-docs, nebius, tb-science): at `--local` the AGENT column was a
+The field case (four of the author's own projects): at `--local` the AGENT column was a
 fixed 10 characters wide, so a label such as `card B21` ran into the next column and read as
 `card B2` plus one attempt. The rule: the shown label is truncated to at most 40 characters
 (the first 37 and `...`), the AGENT column is `max(10, len(longest truncated label) + 2)`
