@@ -1,12 +1,12 @@
 """attempt_failed: names the cause of a workflow attempt the journal closed
 with a `failed` event (.reviews/proposals/2026-09-v0.2-guided-rescue.md
 section 4.2). The cause is read from exactly one place: the attempt's own
-last transcript entry, never a wider window and never a user-authored
-prompt -- a fixture whose prompt merely mentions "API Error" must still come
-back unattributed (tests/fixtures/runs/attempt_failed_causes's af-decoy
-key, docs/DESIGN.md 4.3's disposition N6). docs/DESIGN.md 4.13.2 (v0.3 N1):
-the four runtime-cause markers and the kill sentinel are read as anchored,
-not-in-payload MarkerHits on the attempt's own last event, never
+last transcript entry (not counting trailing attachment entries), never a
+wider window and never a user-authored prompt -- a fixture whose prompt
+merely mentions "API Error" must still come back unattributed
+(tests/fixtures/runs/attempt_failed_causes's af-decoy key, docs/DESIGN.md 4.3's disposition N6).
+docs/DESIGN.md 4.13.2 (v0.3 N1): the four runtime-cause markers and the kill sentinel are read as
+anchored, not-in-payload MarkerHits on the attempt's own last event, never
 Event.text.startswith directly -- the registry's own permitted shapes
 already restrict these ids to the attempt's final transcript entry (the
 four causes) or a user entry (the sentinel), so an anchored hit there is, by
@@ -25,6 +25,7 @@ from .base import (
     Detector,
     anchored_marker_hits,
     evidence_line,
+    final_event,
     make_finding_id,
     relative_path,
 )
@@ -152,7 +153,9 @@ class AttemptFailed:
             if attempt.outcome != "failed":
                 continue
 
-            last_event = attempt.events[-1] if attempt.events else None
+            # docs/DESIGN.md 4.13.2: trailing attachment entries do not count as the
+            # attempt's final entry (the reader's marker shape skips them the same way).
+            last_event = final_event(attempt.events)
             cause = "unattributed"
             phrase: str | None = None
             reset_time: str | None = None

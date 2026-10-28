@@ -176,7 +176,34 @@ def test_a_known_entry_type_is_ignored_for_the_ledger(tmp_path, kind):
     assert built.completeness == "complete"
 
 
-@pytest.mark.parametrize("kind", ["weird", "", "Attachment", "artifact", "users", "tool_use"])
+# Claude Code 2.1.300 records each API request in the transcript (its changelog: "record each
+# API request's system prompt, tools and parameters"). The shapes below carry the key sets
+# observed on 2.1.300 to 2.1.312; a blob echoes earlier messages, so a tool_use inside one is
+# not a call the attempt made.
+REQUEST_LOG_ENTRIES = [
+    {"type": "api-request", "sessionId": "s", "id": "r1", "timestamp": "2026-09-01T12:00:00Z",
+     "version": "2.1.300", "querySource": "agent", "shapeHash": "h1", "params": {"model": "m"},
+     "keep": 0, "tail": ["b1"], "cacheControl": [], "requestDigest": "d1"},
+    {"type": "api-request-shape", "sessionId": "s", "shapeHash": "h1",
+     "timestamp": "2026-09-01T12:00:00Z", "version": "2.1.300",
+     "shape": {"system": [{"type": "text", "text": "x"}], "tools": []}},
+    {"type": "api-request-blob", "sessionId": "s", "hash": "b1",
+     "message": {"role": "assistant", "content": [
+         {"type": "tool_use", "id": "t9", "name": "Bash", "input": {"command": "rm -rf /tmp/ws"}},
+     ]}},
+]
+
+
+@pytest.mark.parametrize("entry", REQUEST_LOG_ENTRIES, ids=lambda e: e["type"])
+def test_a_request_log_entry_is_ignored_for_the_ledger(tmp_path, entry):
+    built = ledger_of(tmp_path, CLEAN + [entry])
+    assert built.reasons == []
+    assert built.completeness == "complete"
+    assert [e.path for e in built.entries] == ["/tmp/ws/a.py"]
+
+
+@pytest.mark.parametrize("kind", ["weird", "", "Attachment", "artifact", "users", "tool_use",
+                                  "api-request-other", "api-requests"])
 def test_any_other_entry_type_gives_unknown_entry_type(tmp_path, kind):
     assert reasons(tmp_path, CLEAN + [{"type": kind}]) == ["unknown_entry_type"]
 

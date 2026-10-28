@@ -954,6 +954,11 @@ def _format_claim_value(key: str, value, redactor: Redactor) -> str:
         return "set" if redactor.level == "share" else redactor(_raw_claim_value(value))
     if key == "report_path" and isinstance(value, str):
         return redactor.names.path(value)
+    if key == "commits" and isinstance(value, list):
+        # docs/DESIGN.md 4.13.5 (M9): the result's own commit list, commit-N at share
+        return ",".join(
+            redactor.names.commit(item) if isinstance(item, str) else str(item) for item in value
+        )
     # a claim value is free text: scanned here, as its own piece (the assembled line is not
     # scanned again, docs/DESIGN.md 5.1: the end of a line belongs to the path that starts in it)
     return redactor(_raw_claim_value(value))
@@ -1038,7 +1043,10 @@ def _paths_lines(unit: UnitPlan, redactor: Redactor) -> list[str]:
 
 
 def _commits_line(unit: UnitPlan, redactor: Redactor) -> str:
-    ids = ", ".join(redactor(commit) for commit in unit.commits) if unit.commits else "0"
+    ids = (
+        ", ".join(redactor.names.commit(commit) for commit in unit.commits)
+        if unit.commits else "0"
+    )
     return f"  COMMITS   reported by these attempts: {ids}"
 
 
@@ -1243,7 +1251,7 @@ def _brief_text(plan: RescuePlan, redactor: Redactor) -> str:
     failed_text = "; ".join(failed_parts) if failed_parts else "none"
 
     paths = [redactor(path) for path in plan.already_exists_paths]
-    commits = [redactor(commit) for commit in plan.already_exists_commits]
+    commits = [redactor.names.commit(commit) for commit in plan.already_exists_commits]
     # docs/DESIGN.md 4.11, 4.13.1 (N5c-2): a commit id is a summary-shaped output
     # line the tool has not confirmed, so the brief says commits were reported, never
     # that they exist.
@@ -1407,7 +1415,9 @@ def _export_reported(reported: dict | None, redactor: Redactor) -> dict | None:
                 exported_claims[key] = value if not redactor.enabled else "set"
             else:
                 # a number, a bool, or a list of commit ids: every string in it is scanned
-                exported_claims[key] = report.redact_value(value, redactor)
+                exported_claims[key] = report.redact_value(
+                    report.number_claim_commits({key: value}, redactor)[key], redactor,
+                )
         return {"type": "dict", "claims": exported_claims}
     return None
 
@@ -1472,7 +1482,7 @@ def _export_unit(
         "task": task,
         "reported": _export_reported(unit.reported, redactor),
         "paths": [_export_path_row(row, redactor, view) for row in unit.paths],
-        "commits": [redactor(commit) for commit in unit.commits],
+        "commits": [redactor.names.commit(commit) for commit in unit.commits],
         "in_flight": [
             {
                 "tool": _piece(redactor, entry.tool),
@@ -1511,12 +1521,14 @@ def plan_to_json(
         }
         for row in plan.failed_brief
     ]
+    # numbers go in order of first appearance in the output: units come first, then the brief
+    units = [_export_unit(unit, plan, redactor, view) for unit in plan.units]
     brief = {
         "killed": killed,
         "failed": failed,
         "already_exists": {
             "paths": [redactor(path) for path in plan.already_exists_paths],
-            "commits": [redactor(commit) for commit in plan.already_exists_commits],
+            "commits": [redactor.names.commit(commit) for commit in plan.already_exists_commits],
         },
     }
 
@@ -1534,7 +1546,7 @@ def plan_to_json(
             report.export_observation_groups(plan.observation, redactor, omit_empty_unknown=True)
             if plan.observation is not None else []
         ),
-        "units": [_export_unit(unit, plan, redactor, view) for unit in plan.units],
+        "units": units,
         "brief": (
             brief if (not plan.possibly_live and plan.units) else None
         ),

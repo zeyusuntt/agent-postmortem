@@ -20,7 +20,7 @@ __all__ = [
     "Detector", "all_detectors", "run_detectors", "run_tooling_detectors", "TOOLING_DETECTOR_IDS",
 ]
 
-# docs/DESIGN.md 4.3: the seven tooling detectors, scanned by a session's
+# docs/DESIGN.md 4.3: the eight tooling detectors, scanned by a session's
 # main thread as well as every child attempt. Named here once so a caller
 # that must run only these (docs/DESIGN.md 7.2's session-end hook, D5) does
 # not have to spell the list out itself.
@@ -32,6 +32,7 @@ TOOLING_DETECTOR_IDS: frozenset[str] = frozenset({
     "codex_write_denied",
     "classifier_unavailable",
     "git_cwd_mismatch",
+    "codex_unavailable",
 })
 
 
@@ -85,7 +86,7 @@ def run_detectors(run: "Run") -> list["Finding"]:
 
 
 def run_tooling_detectors(run: "Run") -> list["Finding"]:
-    """Every finding from just the seven tooling detectors (docs/
+    """Every finding from just the eight tooling detectors (docs/
     DESIGN.md 4.3, TOOLING_DETECTOR_IDS), for a caller that must not run
     mislabeled_kill or missing_artifact -- docs/DESIGN.md 7.2's session-end
     hook (D5), which analyzes only the main thread and has no children to

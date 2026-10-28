@@ -970,3 +970,75 @@ def test_scan_all_top_detector_column_excludes_a_silenced_detector(tmp_path, mon
     assert "mislabeled_kill" in captured.out
     assert captured.out.rstrip("\n").splitlines()[-1] == "1 detector silenced by config: silent_retry"
 
+
+def _rule_c_only_root(tmp_path, monkeypatch):
+    """A run whose only risk is a superseded attempt that wrote one path: both detectors that
+    would flag it are silenced by config, so it is a NEEDS ATTENTION candidate through rule (c)
+    alone (CLEAN verdict, ended within 72 hours, a path written)."""
+    now = _freeze_now(monkeypatch)
+    root = tmp_path / "root"
+    wf_dir = _wf_dir(root, "-home-user-scan-rulec", "wf_00000000-8c0")
+    a1, a2 = _aid(1), _aid(2)
+    t0 = now - timedelta(hours=1)
+    _write_journal(wf_dir, [
+        {"type": "started", "timestamp": _iso(t0), "key": "v2:retry", "agentId": a1,
+         "label": "impl:retry", "phase": "Implement"},
+        {"type": "started", "timestamp": _iso(t0 + timedelta(minutes=5)), "key": "v2:retry",
+         "agentId": a2, "label": "impl:retry", "phase": "Implement"},
+        {"type": "result", "timestamp": _iso(t0 + timedelta(minutes=10)), "key": "v2:retry",
+         "agentId": a2, "result": {"ok": True}},
+    ])
+    _write_meta(wf_dir, a1, "Implement retry.")
+    _write_meta(wf_dir, a2, "Implement retry.")
+    _write_transcript(wf_dir, a1, [
+        _user(a1, t0, "Implement retry."),
+        _assistant_tool_use(
+            a1, t0 + timedelta(seconds=5), "toolu_1", "Edit",
+            {"file_path": "/tmp/agent-postmortem-scantriage/rulec/file.md",
+             "old_string": "a", "new_string": "b"},
+        ),
+        _tool_result(a1, t0 + timedelta(seconds=6), "toolu_1", "Edit applied"),
+        _user(a1, t0 + timedelta(minutes=4), KILL_SENTINEL),
+    ])
+    _write_transcript(wf_dir, a2, [
+        _user(a2, t0 + timedelta(minutes=5), "Implement retry."),
+        _assistant_text(a2, t0 + timedelta(minutes=6), "Done."),
+    ])
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[detectors]\noff = ["silent_retry", "mislabeled_kill"]\n', encoding="utf-8")
+    monkeypatch.setenv("AGENT_POSTMORTEM_CONFIG", str(config_path))
+    return root
+
+
+# The population is the run report's own (ledger.risk_population), so the counts and the
+# lower-bound "+" are the WORK AT RISK line's.
+RULE_C_REASON = "2 attempts at risk: 1+ paths named, 0 commits"
+
+
+def test_rule_c_only_candidate_never_reads_clean_in_text(tmp_path, monkeypatch, capsys):
+    """DESIGN 4.7/4.8: a run listed only because an attempt at risk wrote a path says so."""
+    root = _rule_c_only_root(tmp_path, monkeypatch)
+    code = main(["scan", "--root", str(root)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    row = next(line for line in captured.out.splitlines() if "wf_00000000-8c0" in line)
+    assert row.endswith(RULE_C_REASON)
+
+
+def test_rule_c_only_candidate_carries_the_same_reason_in_json(tmp_path, monkeypatch, capsys):
+    root = _rule_c_only_root(tmp_path, monkeypatch)
+    code = main(["scan", "--root", str(root), "--json"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    [row] = [r for r in json.loads(captured.out)["rows"] if r["run_id"] == "wf_00000000-8c0"]
+    assert row["attention"] is True
+    assert row["attention_reason"] == RULE_C_REASON
+
+
+def test_attention_reason_names_a_lower_bound_when_the_ledger_is_partial():
+    """No transcript means a partial ledger: the path count is a lower bound (4.13.8). The
+    count is the WORK AT RISK line's (ledger entries only), so facts.paths_written adds none."""
+    now = datetime.now(timezone.utc)
+    run = _run("wf_pure", [_attempt(_aid(1), 1, "killed", _facts(paths_written=["a.md"]))], now)
+    assert report.attention_reason(run, []) == "1 attempt at risk: 0+ paths named, 0 commits"
+

@@ -43,7 +43,7 @@ from types import SimpleNamespace
 
 from . import detectors, disclosure, ledger, reader, report
 from .detectors import attempt_failed as _attempt_failed
-from .detectors.base import meaningful_event_before
+from .detectors.base import final_event, meaningful_event_before
 from .markers import KILL_SENTINEL_PREFIX
 
 DEFAULT_INTERVAL = 5.0
@@ -261,7 +261,7 @@ def _cause_phrase_for_failed(path: Path) -> tuple[str, str | None]:
     events, _version, _session_id, _total, _bad, _tool_calls, marker_hits = (
         reader._read_transcript(path, diagnostics)
     )
-    last_event = events[-1] if events else None
+    last_event = final_event(events)
     if last_event is None:
         return "cause not recorded", None
     # _cause_from_last_event only reads attempt.marker_hits; a bare

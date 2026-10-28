@@ -27,6 +27,7 @@ from .base import (
     evidence_line,
     is_bash_event,
     make_finding_id,
+    single_agent_id,
     tooling_attempts,
 )
 
@@ -43,7 +44,7 @@ class BashTimeout:
     def run(self, run: Run) -> list[Finding]:
         hits: list[Event] = []
         exit_code_only = False  # P10: some hit has no anchored timeout marker
-        agent_id: str | None = None
+        hit_agents: list[str] = []
         for attempt in tooling_attempts(run):
             marker_events = {
                 id(event)
@@ -57,10 +58,10 @@ class BashTimeout:
                     hits.append(event)
                     if id(event) not in marker_events:
                         exit_code_only = True
-                    if agent_id is None:
-                        agent_id = attempt.agent_id
+                    hit_agents.append(attempt.agent_id)
         if not hits:
             return []
+        agent_id = single_agent_id(hit_agents)
 
         count = len(hits)
         plural = "s" if count != 1 else ""

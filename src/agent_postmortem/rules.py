@@ -139,10 +139,13 @@ RULES: dict[str, Rule] = {
             "A Codex reviewer inside a workflow either writes to a path inside the "
             "project cwd with no read-only wording in its prompt, or stays read-only "
             "and returns findings as text for a writable stage to persist. Keep each "
-            "Codex task under eight minutes."
+            "Codex task under eight minutes. Before a workflow relies on a Codex "
+            "agent, check from the same environment that the companion starts (for "
+            "example codex --version) and fail the run when it does not, so a review "
+            "that never ran cannot read as done."
         ),
         enforcement="prompt",
-        detectors=("codex_write_denied",),
+        detectors=("codex_write_denied", "codex_unavailable"),
         hook_template=None,
         target_kind="workflow prompt",
     ),

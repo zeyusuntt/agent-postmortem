@@ -214,6 +214,11 @@ class ToolCall:
     # truncated into something that reads like a different, shorter one.
     command: str | None = None
     command_sha256: str | None = None
+    # Whether the FULL raw command runs codex as a program
+    # (markers.runs_codex_program), computed while streaming so a command
+    # over 2048 chars (command is None) still counts. Reader-internal: never
+    # exported (docs/DESIGN.md 4.1, 5.3b).
+    runs_codex_program: bool = False
     # The tool_use entry's own top-level 'cwd' field, normalized with
     # os.path.normpath (a pure string operation: no symlink resolution, no
     # filesystem access).

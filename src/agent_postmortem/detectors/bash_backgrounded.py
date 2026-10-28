@@ -22,6 +22,7 @@ from .base import (
     event_for_marker_hit,
     evidence_line,
     make_finding_id,
+    single_agent_id,
     tooling_attempts,
 )
 
@@ -50,7 +51,7 @@ class BashBackgrounded:
         plural = "s" if count != 1 else ""
         title = f"{count} Bash command{plural} timed out and moved to the background"
 
-        agent_id = hits[0][0].agent_id
+        agent_id = single_agent_id(attempt.agent_id for attempt, _ in hits)
         return [
             Finding(
                 detector=ID,

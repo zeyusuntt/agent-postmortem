@@ -96,7 +96,7 @@ Three verbs, in order of value: diagnose (`scan`, `run`, hooks), solve
   including a hook message; nothing in the user config (4.10) can widen it
   (4.13.5).
 
-## 3. Data formats (observed on Claude Code 2.1.251 to 2.1.280)
+## 3. Data formats (observed on Claude Code 2.1.251 to 2.1.312)
 
 `journal.jsonl` (workflow runs): one JSON object per line. Observed `type`
 values: `launched`, `started`, `result`, `failed`. A `started` event carries
@@ -125,7 +125,7 @@ other way. A `failed`
 event carries `key` and `agentId` and marks an attempt the runtime gave up
 on (observed causes on real data: usage limits, the machine sleeping, an
 API error). The cause is never read from the journal itself: `attempt_failed`
-(4.3) reads it from exactly one place, the last entry of that attempt's own
+(4.3) reads it from exactly one place, the last entry, not counting trailing attachment entries, of that attempt's own
 transcript, never a wider window and never the attempt's first user prompt.
 A killed-and-restarted attempt has no terminal event of its
 own; its only trace is the next `started` for the same key. Unknown event
@@ -235,6 +235,9 @@ class ToolCall:
     command: str | None = None     # Bash's or Monitor's own command, exact;
                                     # >2048 chars: None (N4b-1)
     command_sha256: str | None = None  # set instead when command is None
+    runs_codex_program: bool = False   # reader-internal, never exported: the
+                                    # FULL raw command runs codex as a program
+                                    # (4.3), so a command over 2048 chars counts
     run_in_background: object = None   # (v0.3, N4b-1) the tool_use input's own
                                     # `run_in_background` value for a Bash or
                                     # Monitor call, exactly as written; None
@@ -431,7 +434,7 @@ class MarkerHit:  # (v0.3, N1, 4.13.2)
     marker: str              # canonical marker id from the registry in 4.13.2:
                               # 'kill_sentinel' | 'bash_backgrounded' | 'bash_timeout'
                               # | 'tool_input_invalid' | 'structured_output_mismatch'
-                              # | 'sandbox_write_denied' | 'shell_guard_block'
+                              # | 'sandbox_write_denied' | 'shell_guard_block' | 'codex_unavailable'
                               # | 'classifier_unavailable' | 'git_not_repo'
                               # | 'usage_limit_session' | 'usage_limit_weekly'
                               # | 'machine_sleep' | 'api_error'
@@ -722,6 +725,18 @@ per-detector value, and no detector's severity is `critical` any longer
 fires on; the table that follows it carries every detector's inputs and
 rule, and `severity.py` (N5b) is the one place that table lives in code.
 
+Agent attribution of the six run-wide tooling detectors (`bash_backgrounded`,
+`bash_timeout`, `tool_json_error`, `structured_output_failure`, `classifier_unavailable`,
+`git_cwd_mismatch`).
+Each emits one finding per run with the count of every hit in the run. Its
+`agent_id` is that agent's id only when every hit belongs to the same agent;
+when the hits span two or more agents, `agent_id` is `None` and the finding
+backs the one `run` story (4.7). Titles, metrics, severity, the number of
+findings and rule ids do not depend on this. `finding_id` hashes `agent_id`
+(4.1), so a multi-agent finding's id is the one computed with no agent.
+`permission_denied`, `codex_write_denied` and `codex_unavailable` are already one finding per
+attempt and are not affected.
+
 | id | severity | kinds | fires when | metrics | rule_id |
 |---|---|---|---|---|---|
 | silent_retry | major | workflow | a key has more than one attempt | attempts, keys, wasted_seconds, burst | R-RETRY-SAFE, plus R-CAP-CONCURRENCY when burst (one Finding's rule_ids carries both, never two Findings) |
@@ -732,6 +747,7 @@ rule, and `severity.py` (N5b) is the one place that table lives in code.
 | tool_json_error | minor | both | tool_result carries the input-validation marker | count, tools | none |
 | structured_output_failure | major | both | StructuredOutput tool_result carries a mismatch marker | count | R-SCALAR-SCHEMA |
 | codex_write_denied | critical | both | a sandbox denial or shell-guard marker in an assistant event whose text starts with "[codex]" (the companion's output echoed), or in a Bash tool_result whose output starts with "[codex]" or whose command runs `codex` as the first word of a command segment (optionally path-qualified) or names `codex-companion.mjs` (the word inside command data, a heredoc body or a file name such as "review-codex.txt", does not count). Measured on the build machine: 23 of 23 real denials were companion output; assistant prose quoting the marker was never one | count, marker | R-CODEX-CONTRACT, R-ASSERT-ARTIFACT |
+| codex_unavailable | major/minor | both | one finding per attempt, the main thread of a session included, that holds at least one anchored `codex_unavailable` hit (4.13.2): a Bash tool_result, paired to a call whose command runs codex as a program or names `codex-companion.mjs`, with a line that starts with the companion's sentence `Codex CLI is not installed or is missing required runtime support`. Assistant text and the output of any other command (a `cat` of a notes file) never count; a `read_only_output` event is skipped. Title, a fixed sentence: `<n> Codex companion call(s) could not start: the Codex CLI is missing or lacks its runtime`. Severity per 4.13.4 | count | R-CODEX-CONTRACT |
 | classifier_unavailable | minor | both | tool_result carries both classifier-outage fragments | count | none |
 | git_cwd_mismatch | minor | both | Bash tool_result carries the not-a-git-repository marker | count | R-GIT-CWD |
 | permission_denied (G7, v0.3.1) | minor | both | one finding per attempt, the main thread of a session included, that holds at least one anchored `permission_denied` hit (4.13.2): an `is_error` tool result whose text starts with a runtime denial sentence | count, auto_mode, user, permission_rule, safety_check | none |
@@ -771,6 +787,7 @@ the "tests/ok/ready/blockers" row), `report_path_missing`, or (G3, v0.3.1)
 | wasted_time | none | info |
 | bash_backgrounded, bash_timeout, tool_json_error, classifier_unavailable, git_cwd_mismatch, permission_denied (G7) | none | minor |
 | structured_output_failure | recovered | `no`, `unknown`: major; `yes`: minor |
+| codex_unavailable | outcome, later_success | `outcome` is `completed` when the attempt's `outcome` is `completed`, else `other`; `later_success` is `yes` when a Bash call running codex as a program (4.3, judged on the full command even past 2,048 characters) after the first failing one has a result without the marker, else `no`. `completed` with `no`: major; `completed` with `yes`: minor; `other` with either: minor (a killed or failed attempt is carried by other findings) |
 | codex_write_denied | none | minor, one finding per attempt, `rule_ids` `["R-CODEX-CONTRACT", "R-ASSERT-ARTIFACT"]` |
 | claim_contradiction | clause, absence | a tests, suite, ok, ready, blockers, `self_reported_failure` or `self_reported_blocked` clause (absence `none`, not applicable): major; `report_path_missing` with `absent_now` or `unknown`: info |
 | missing_artifact | obligation, absence | `prompt_path` with `absent_now` or `unknown`: info |
@@ -908,7 +925,7 @@ with no excerpt at all: `<transcript>:<line>: attempt <ordinal> started`.
 
 The main attempt of a session run is scanned by the tooling detectors
 (bash_*, tool_json_error, structured_output_failure, codex_write_denied,
-classifier_unavailable, git_cwd_mismatch, permission_denied) and never by mislabeled_kill or
+classifier_unavailable, git_cwd_mismatch, permission_denied, codex_unavailable) and never by mislabeled_kill or
 missing_artifact. Whether a main-session interrupt was human is not
 knowable from the transcript (a `-p` session has no human either); v0.1
 records this as a documented limit rather than guessing.
@@ -1468,13 +1485,19 @@ rules below cover:
   count: the watch KILL line (4.12) and the scan runtime-kill reason (4.8),
   which say only `commit count unknown` to stay short.
 - a tooling detector (`bash_backgrounded`, `bash_timeout`,
-  `tool_json_error`, `structured_output_failure`, `codex_write_denied`,
+  `tool_json_error`, `structured_output_failure`, `codex_write_denied`, `codex_unavailable`,
   `classifier_unavailable`, `git_cwd_mismatch`, `permission_denied`) attributed to the agent:
   "`<n>` `<short phrase>`", every present one joined by `"; "` (`permission_denied`:
-  "`<n>` tool call(s) denied").
+  "`<n>` tool call(s) denied"; `codex_unavailable`: "`<n>` Codex call(s) could not start").
+
+A tooling detector's finding is attributed to an agent only when every one of its
+hits is in that agent's transcripts (4.3). The six run-wide ones
+(`bash_backgrounded`, `bash_timeout`, `tool_json_error`, `structured_output_failure`,
+`classifier_unavailable`, `git_cwd_mismatch`) have `agent_id` `None` when their hits span two or more agents, so
+no agent story claims the run's total.
 
 A finding with no `agent_id` (`wasted_time` always; `missing_artifact` when
-it names no attempt) backs the one `run` story instead, its text simply
+it names no attempt; a run-wide tooling finding whose hits span two or more agents) backs the one `run` story instead, its text simply
 every relevant finding's own (redacted) title joined into one paragraph.
 Info-severity findings never make a story unless `--verbose`; `wasted_time`
 is therefore counted (in the trailing "N info findings not shown"
@@ -1548,11 +1571,18 @@ use --limit N or --all for more)`). A
 session with 0 subagents and a CLEAN verdict is never a candidate, only
 counted in the totals. The one-line reason is deterministic, first that
 applies: an `attempt_failed` clause naming the cause(s) and a reset time
-when one exists; a runtime-kill clause naming paths named (N8b, K4.4: the `paths_at_risk` count, `N+`
+when one exists; a runtime-kill clause naming paths named (R1: the WORK AT RISK count line's own numbers, from
+one shared helper that scan's runtime-kill and rule (c) reasons and the run report all read:
+ledger paths of effect `observed`, `claimed_target`, or `attempted` only, never
+`facts.paths_written`, so a relative-path edit with no cwd counts 0 in both places; `N+`
 when its ledgers are partial) and commits (`<c>+ commits` or `commit count unknown` by 4.7's
 G4b rule) when a `mislabeled_kill` finding's cause is `runtime`; the top major-or-
 critical detector as `<detector> x<n>`; `<n> subagents interrupted` for a
-session; else `clean`. The next command adds `--observe` only when a
+session; `<n> attempt(s) at risk: <paths> named, <commit words>` when the run's risk
+population wrote at least one path (a rule (c) candidate; the same counts and wording as the
+WORK AT RISK count line: `<p>+ paths` when the ledger is partial, 4.13.8, and 4.8's G4b
+commit words), also the `attention_reason` of the scan JSON; else `clean`, a defensive
+fallback no candidate reaches. The next command adds `--observe` only when a
 killed or failed attempt is known to have written a path and the run ended
 within 72 hours (or its end time is unknown); it never names an
 instruction file or `apply`.
@@ -2593,7 +2623,8 @@ LIMIT  <hours>h reached; run not finished.
   not there yet.
 - `FAILED`: fires on a journal `failed` event. The cause phrase is read from
   exactly the same place `attempt_failed` reads it (4.3): the failed
-  attempt's own last transcript entry, never a wider window; `cause not
+  attempt's own final transcript entry (4.13.2: the last entry whose `type` is not
+  `attachment`, found by the same `final_event` helper), never a wider window; `cause not
   recorded` when nothing there is attributable (this does not, on its own,
   delay emission or count as a reason to retry -- only the rate limit does,
   per F10 below). Unlike the `attempt_failed` detector's own title, this
@@ -2980,7 +3011,8 @@ whole decision; whatever it does not assign is `unknown`.
 written here; every other presence or type is `unknown`/`malformed` for the child it names (or
 for every child named by either target field of a request): subagent meta that is unreadable or
 not a JSON object; `parentAgentId` present and not a non-empty string, or equal to the child's own
-id; `spawnDepth` present and not an integer of 1 or more (a boolean is not an integer); any agent
+id; `spawnDepth` present and not an integer of 1 or more (a boolean is not an integer); `toolUseId`
+present and not a string; any agent
 id, `resumedAgentId` or status that is present and not a string; a launch `toolUseResult`
 that is present and not an object, except the exact rejected shape (an error block with a string
 `toolUseResult`, itself `malformed` for a child it names); a SendMessage with neither `to` nor
@@ -3013,14 +3045,26 @@ launcher subagent's Agent `tool_use` id as tool-use-id.
 *T2 launch.* Candidate launches are the Agent or Task `tool_use` blocks of the launcher whose
 result names the child (a string `agentId` in the `tool_result` block or in the entry's
 `toolUseResult`), plus those whose id an accepted main notification with task-id equal to the
-child names as tool-use-id (a nested launch often has no structured result: 18 of 38 observed).
+child names as tool-use-id (a nested launch often has no structured result: 18 of 38 observed),
+plus the launcher's Agent or Task `tool_use` whose id equals the child's meta `toolUseId` when that
+is a string. Claude Code 2.1.309 returns a nested foreground child's report as a plain
+`tool_result` starting `[Subagent hand-back]`, with no `toolUseResult`, no `agentId` and no
+notification (3 nested cases, 4 children in one real session), so neither of the first two sources
+finds it. Measured: every session subagent meta file carries a string `toolUseId` equal to its
+launching `tool_use` id in the launcher transcript, and it agrees with the result-linked launch in
+651 of 651 cases where both exist. A string naming no launch `tool_use` of the launcher adds no
+candidate (it is not malformed); one naming a launch other than the result-linked or note-linked
+one gives more than one candidate. A result with no `toolUseResult` and no `status` is synchronous
+unless an accepted main notification names its launch (the asynchronous rule below), so such a
+hand-back, which has no notification, is `returned`. The hook's main-side digest (7.2) includes the meta-linked launch.
 None is `unknown`/`no_evidence`. More than one, or two distinct results (results identical as
 parsed JSON count once), is `unknown`/`conflict`. With the one launch: an error result is
 `unknown`/`malformed`; a result naming another agent as well is `unknown`/`conflict`; `isAsync`
 true together with a terminal `status` (`completed`, `failed`, `killed`, `stopped`, `cancelled`)
 is `unknown`/`malformed`; asynchronous (`status` `async_launched`, `isAsync` true with no
-`status`, or no string id in the result and the launch linked only by a notification) leaves round
-1 to the notifications; synchronous with `status` `completed` or no `status` key makes round 1
+`status`, or a result with no string agent id when an accepted main notification names the launch,
+whether or not the child's meta `toolUseId` also names it: the meta link only finds the launch and
+never decides synchronicity) leaves round 1 to the notifications; synchronous with `status` `completed` or no `status` key makes round 1
 `returned`; `failed` makes it `reported_failed`; `killed`, `stopped`, `cancelled` make it
 `reported_killed` (4.13.3's stopped class); any other status string is
 `unknown`/`status_unrecognized`.
@@ -3255,8 +3299,15 @@ in the known set (`attachment`, `system`, `summary`, `queue-operation`,
 `last-prompt`, `ai-title`, `atis-latch`, `mode`, `permission-mode`,
 `pr-link`, `agent-name`, `bridge-session`, `custom-title`,
 `file-history-snapshot`, `file-history-delta`, `cost-state`, `frame-link`,
-and any type starting with `artifact-`); any other type gives reason
-`unknown_entry_type`.
+the request log Claude Code writes from 2.1.300 on (`api-request`,
+`api-request-shape`, `api-request-blob`; a blob echoes earlier messages, so a
+`tool_use` inside one is never a call the attempt made), and any type
+starting with `artifact-`); any other type gives reason
+`unknown_entry_type`. The request log was added to the set on 2026-10-28,
+after a scan found it in every transcript written by 2.1.300 to 2.1.312.
+Other types first seen in that range (`tools-used`, `relocated`,
+`agent-setting`, `history-suppression`, `continued-in`) still give
+`unknown_entry_type` until their meaning is established.
 
 **Ledger completeness.** A ledger is `complete` only when the per-call
 truth table above produces no `possible` or `unknown_tool` entry, every
@@ -3551,9 +3602,18 @@ excludes.
 | `git_not_repo` | `command_output` | a `tool_result` paired to a `Bash` tool_use | `line1` starts with `fatal: not a git repository`, or `line1` matches `^Exit code [0-9]+$` and `line2` starts with `fatal: not a git repository` |
 | `sandbox_write_denied` | `codex_companion` | a `tool_result` paired to a `Bash` tool_use whose command runs codex as a program (4.3); or an assistant `text` block of an attempt that has such a call | some line of the flattened text starts with `[codex]` and contains `WRITE_DENIED` or `read-only sandbox`; or (tool_result shape only) `line1` starts with `WRITE_DENIED` |
 | `shell_guard_block` | `codex_companion` | a `tool_result` paired to a `Bash` tool_use whose command runs codex as a program | some line matches `SHELL_GUARD_BLOCK_REGEX` from its first character |
+| `codex_unavailable` | `codex_companion` | a `tool_result` paired to a `Bash` tool_use whose command runs codex as a program (4.3) or names `codex-companion.mjs` (the same shape as `shell_guard_block`; no assistant or user shape) | some line of the flattened text starts with `Codex CLI is not installed or is missing required runtime support`; the same sentence inside a line, or in an assistant entry or in the output of another command, is not a hit |
 | `permission_denied` (G7, v0.3.1) | `harness_tool_notice` | a `tool_result` block with `is_error` true, paired to any tool (a result without `is_error` true yields no hit, not even a negative one) | the flattened text starts with exactly one of the four sentences below; no wrapper is accepted |
 | `usage_limit_session`, `usage_limit_weekly` | `runtime_assistant` | the attempt's own final transcript entry, an `assistant` entry | the flattened text starts with the marker string |
 | `machine_sleep`, `api_error` | `runtime_assistant` | same | the flattened text starts with the marker string |
+
+The attempt's own final transcript entry is its last entry whose `type` is not
+exactly `attachment`. Trailing `attachment` entries (any `attachment.type`) do
+not count: since Claude Code 2.1.305 a configured SubagentStop hook makes a
+subagent transcript end with an `attachment` entry of type `hook_success` after
+the final `assistant` entry (163 of 205 such transcripts measured on 2.1.305 to
+2.1.312). Any other entry type after the `assistant` entry, `user` and `system`
+included, still makes it not final.
 
 Negative hits (`anchored = false`) are kept for diagnostics and are never
 evidence. Detectors consume a `MarkerHit` only when `anchored and not
@@ -3586,7 +3646,7 @@ text here is the runtime's own reply to the call, so `read_only_output` is not c
 `MarkerHit` per candidate block; the detector reads anchored hits and classifies each by the start
 of the event's text. Evidence is up to 5 pointers `<transcript>:<line>`, printed with the code
 `[permission_denied]`, never an excerpt: the permission-rule sentence carries the denied command,
-which no level prints. The session-end hook does not run this detector (it is not in the seven
+which no level prints. The session-end hook does not run this detector (it is not in the eight
 tooling detectors of 7.2) and it does not notify.
 
 **N1 acceptance tests.** For every canonical id: one positive case and one
@@ -3861,6 +3921,8 @@ unknown value, never a function of which detector fired alone. Inputs
 | `work_risk` | `none` (the risk population is complete and every ledger in it is `complete` with no `observed`, `claimed_target`, or `attempted` entry, 4.13.1); `present` (an `observed`, `claimed_target`, or `attempted` entry exists); `unknown` (anything partial) |
 | `obligation` | `none`; `prompt_path` (`missing_artifact`'s existing grammar: a verb in `{write, save, append, create, persist}`, then up to 80 characters, then an absolute path ending in `.md`, `.json`, `.txt`, or `.jsonl`, with no negation word in the 20 characters before the verb); `claimed_path` (a `report_path` claim in the attempt's own dict result) |
 | `absence` | `present_now`; `absent_now`; `unknown` (the path is not checkable: not absolute, or the stat call failed) |
+| `outcome` | `completed` (the attempt's `outcome` is `completed`); `other` (any other outcome) |
+| `later_success` | `yes` (a Bash call running codex as a program, judged on the full command, after the attempt's first failing one has a result without the `codex_unavailable` marker); `no` |
 
 `unknown` means a required input could not be established; `none` means not
 applicable or affirmatively absent. **Consequence (D2).** Every filesystem
@@ -3888,6 +3950,7 @@ cited where it applies.
 | `claim_contradiction` | the `tests`/`ok`/`ready`/`blockers`/`self_reported_failure`/`self_reported_blocked` clause: major; the `report_path` clause with `absence absent_now`: info (D2); `absence unknown`: info |
 | `missing_artifact` | `obligation prompt_path` with `absence absent_now`: info (D2); `absence unknown`: info |
 | `structured_output_failure` | `recovered no` or `unknown`: major; `recovered yes`: minor |
+| `codex_unavailable` | `outcome completed` and `later_success no`: major (the attempt returned a result though its Codex call never started); `outcome completed` and `later_success yes`, or `outcome other`: minor |
 | `codex_write_denied` | minor, one finding per attempt, `rule_ids` exactly `["R-CODEX-CONTRACT", "R-ASSERT-ARTIFACT"]` |
 | `bash_backgrounded`, `bash_timeout`, `tool_json_error`, `classifier_unavailable`, `git_cwd_mismatch`, `permission_denied` (G7, v0.3.1) | minor |
 | `wasted_time` | info |
@@ -3944,9 +4007,26 @@ every detector's own severity inputs and rule alongside its existing row
 
 | Level | Names | Paths | Evidence | Structural redaction |
 |---|---|---|---|---|
-| `share` (default, always) | stable aliases: agent `a:<alias>`, session `s:<alias>`, project `project:<alias>` (an alias is at least 12 hex, from the registry below); label `agent-N` and phase `phase-<n>` per render | `path-N` | pointers `file:line` with aliased file names and marker codes, no excerpt | on |
+| `share` (default, always) | stable aliases: agent `a:<alias>`, session `s:<alias>`, project `project:<alias>` (an alias is at least 12 hex, from the registry below); label `agent-N` and phase `phase-<n>` per render | `path-N`; a reported commit id prints as `commit-N` | pointers `file:line` with aliased file names and marker codes, no excerpt | on |
 | `local` (per invocation, `--local`) | real description, label, phase title, project directory name, agent id | repo-relative real; outside both the repository and home, `path-N`, never absolute (D10) | excerpts with `--evidence` | on |
 | `raw` (per invocation, `--raw`, alias `--no-redact`) | real | absolute | excerpts with `--evidence` (D10: `raw` is not an automatic excerpt) | off |
+
+- **Commit ids (M9).** A short hash of a public repository's commit can identify the
+  repository and its author, so at `share` every reported commit id prints as `commit-N`, numbered
+  per rendering in order of first appearance, the same id the same `N` within one output, in text
+  and in JSON alike (JSON keys unchanged). The sinks are `rescue plan` (the COMMITS line, the
+  `commits reported` brief line, `units[].commits`, `brief.already_exists.commits`) and the `run
+  --json` attempt `facts.commits`. A result's own commit list (the `commits` claim the reader
+  keeps from a dict result) is a sink too: `reported.claims.commits` in `run --json` and in
+  `rescue plan --json`, the REPORTED line of `rescue plan`, and, when the result also has
+  `ready: false`, `findings[].metrics.claims.commits`; the keys stay, only the ids change.
+  Numbers follow first appearance in the output: `rescue plan --json` exports the units before
+  the brief, so the first `commit-N` in it is `commit-1`. Counts stay. `local` prints the real id scrubbed like a name (a value that holds a path or a
+  control character is scanned as it was before M9, S1); `raw` prints it unchanged. A commit list is
+  rendered through the mapping exactly once and is never rescanned as a path, so a written file
+  literally named `commit-1` stays a `path-N` and the commit stays `commit-1` in text and JSON (A1). The number
+  comes from the same per-render pseudonym mechanism as `path-N` (the `commit` category of the
+  Pseudonyms of 5.1).
 
 - **Names at `local` (N3b S9, C3).** A real label, description, phase title,
   agent type and project name print as written except that every C0 control
@@ -4522,6 +4602,11 @@ to `~`, bare account name (3+ chars, whole word) to `user`, emails to
 structural redaction: it runs on every string a renderer prints -- including
 an evidence line, a diagnostic, and a metrics value -- and it never
 substitutes a pseudonym.
+
+Commit ids (M9): a reported commit id is its own pseudonym category. At `share` it renders as
+`commit-1`..`commit-N`, numbered in order of first appearance within one render, the same id the
+same number, in text and JSON, and is never scanned again as a path (A1); at `local` it renders as
+the real id scrubbed like a name (`local_text`, S1) and at `raw` as written. See 4.13.5.
 
 M8 review's D-A: after the home substitution above, a home-relative path
 still names every directory between `~/` and the file itself -- `~/
@@ -6145,7 +6230,7 @@ still-pending entries are left untouched. Silent when there is nothing of
 this root pending.
 
 `hook session-end` (SessionEnd): build a main-thread-only session view (no
-children at all) and run just the seven tooling detectors from 4.3 over it
+children at all) and run just the eight tooling detectors from 4.3 over it
 -- never `mislabeled_kill` or `missing_artifact`, which need a child
 attempt or a first user message naming a path that neither exists for a
 main-only view. Store the result as the session's `main` unit, analyzed and
@@ -6543,7 +6628,7 @@ later events go positional).
 
 ### 8.1 Package
 
-`pyproject.toml`: name `agent-postmortem`, version `0.3.2`, console scripts
+`pyproject.toml`: name `agent-postmortem`, version `0.3.3`, console scripts
 `agent-postmortem` and `postmortem`, `requires-python >= 3.11`, no runtime
 dependencies, `[project.optional-dependencies].dev = ["pytest>=8",
 "ruff>=0.6"]`, classifiers, URLs (Homepage, Issues, Changelog). The wheel
@@ -6628,7 +6713,13 @@ R-SCALAR-SCHEMA, R-CODEX-CONTRACT, R-MONITOR-RETRIES, R-GIT-CWD,
 R-MODEL-ALLOCATION (hook), and R-USAGE-LIMIT (backed by `attempt_failed`:
 when a run reports a usage-limit failure, do not relaunch the same key
 before the reset time the failure named). What changed is what the tool
-does with them: it never writes one anywhere (R3). `rules.RULES`,
+does with them: it never writes one anywhere (R3). R-CODEX-CONTRACT is backed
+by two detectors, `codex_write_denied` and `codex_unavailable` (4.3), so
+`rules review` and `trend` count a finding of either after adoption as a
+recurrence; its text ends with: "Before a workflow relies on a Codex agent,
+check from the same environment that the companion starts (for example codex
+--version) and fail the run when it does not, so a review that never ran
+cannot read as done." `rules.RULES`,
 `rules_for()`, `rules --show`, and `rules --run`/`--all` are otherwise
 unchanged from v0.1.
 

@@ -13,12 +13,13 @@ import platform
 import re
 import shlex
 import textwrap
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from . import commands, disclosure, ledger, reader, severity
 from .detectors.base import attempt_seconds, format_duration, wasted_attempts
 from .models import Attempt, Finding, Run, TitleParts, effective_end, raw_diagnostic
-from .redact import Pseudonyms, Redactor
+from .redact import Pseudonyms, Redactor, RenderedCommit
 from .rules import RULES, rules_for
 
 _SEVERITIES = ("critical", "major", "minor", "info")
@@ -241,6 +242,8 @@ def _register_ledger_paths(run: Run, redactor: Redactor) -> None:
 
 def redact_value(value, redactor: Redactor):
     """Recursively apply redactor to every string in a JSON-shaped value."""
+    if isinstance(value, RenderedCommit):
+        return value
     if isinstance(value, str):
         return redactor(value)
     if isinstance(value, list):
@@ -248,6 +251,20 @@ def redact_value(value, redactor: Redactor):
     if isinstance(value, dict):
         return {key: redact_value(item, redactor) for key, item in value.items()}
     return value
+
+
+def number_claim_commits(claims, redactor: Redactor):
+    """docs/DESIGN.md 4.13.5, 5.1 (M9): a result's own `claims.commits` list holds reported
+    commit ids; each goes through the per-render commit mapping (`commit-N` at share, as written
+    at local and raw). Every other key is returned unchanged; the keys are never renamed."""
+    if isinstance(claims, dict) and isinstance(claims.get("commits"), list):
+        return {
+            **claims,
+            "commits": [
+                redactor.names.commit(c) if isinstance(c, str) else c for c in claims["commits"]
+            ],
+        }
+    return claims
 
 
 # --- N3b: identity collection and evidence pointers (P9, P10, P16) -----------
@@ -1146,6 +1163,41 @@ def _manual_command_lines(run: Run, grouped, redactor: Redactor, observation=Non
     return lines
 
 
+@dataclass(frozen=True)
+class _RiskCounts:
+    attempts: int
+    paths: frozenset[str]
+    partial: bool
+    commit_ids: tuple[str, ...]
+    commit_commands_without_id: int
+
+
+def _work_at_risk_counts(run: Run, population) -> _RiskCounts:
+    """docs/DESIGN.md 4.7: the one definition of the WORK AT RISK count line's numbers (attempt
+    count, ledger paths of effect observed, claimed_target or attempted, the partial flag, commit
+    ids, commit commands without an id). The run report and both scan reasons (runtime kills and
+    rule (c)) read it, so the three can never disagree."""
+    paths: set[str] = set()
+    commit_ids: list[str] = []
+    for attempt in population:
+        if attempt.ledger is not None:
+            paths.update(
+                entry.path for entry in attempt.ledger.entries
+                if entry.path and entry.effect in ("observed", "claimed_target", "attempted")
+            )
+        facts = attempt.facts
+        if facts is not None and isinstance(facts.commits, list):
+            commit_ids.extend(c for c in facts.commits if c not in commit_ids)
+    partial = run.risk_population_completeness != "complete" or any(
+        attempt.ledger is None or attempt.ledger.completeness != "complete"
+        for attempt in population
+    )
+    return _RiskCounts(
+        len(population), frozenset(paths), partial, tuple(commit_ids),
+        _commit_commands_without_id(population),
+    )
+
+
 def _work_at_risk_lines(run: Run, observation, redactor: Redactor) -> list[str]:
     """docs/DESIGN.md 4.7 (N5c-1; plan S4 and S11): WORK AT RISK from the write
     ledger and the repository groups."""
@@ -1180,23 +1232,9 @@ def _work_at_risk_lines(run: Run, observation, redactor: Redactor) -> list[str]:
         ]
 
     grouped = ledger.group_by_repo(run)
-    paths: set[str] = set()
-    commit_ids: list[str] = []
-    for attempt in population:
-        if attempt.ledger is not None:
-            paths.update(
-                entry.path for entry in attempt.ledger.entries
-                if entry.path and entry.effect in ("observed", "claimed_target", "attempted")
-            )
-        facts = attempt.facts
-        if facts is not None and isinstance(facts.commits, list):
-            commit_ids.extend(c for c in facts.commits if c not in commit_ids)
-    partial = run.risk_population_completeness != "complete" or any(
-        attempt.ledger is None or attempt.ledger.completeness != "complete"
-        for attempt in population
-    )
-    n, p, c = len(population), len(paths), len(commit_ids)
-    k = _commit_commands_without_id(population)
+    counts = _work_at_risk_counts(run, population)
+    n, p, c = counts.attempts, len(counts.paths), len(counts.commit_ids)
+    partial, k = counts.partial, counts.commit_commands_without_id
     first = (
         f"WORK AT RISK  {n} {_plural(n, 'attempt')} at risk: {p} {_plural(p, 'path')} named, "
         f"{c} {_plural(c, 'commit')} reported"
@@ -1618,6 +1656,7 @@ _TOOLING_STORY_PHRASES = {
     "tool_json_error": "tool input JSON errors",
     "structured_output_failure": "structured output failures",
     "codex_write_denied": "sandbox write denials",
+    "codex_unavailable": "Codex call(s) could not start",
     "classifier_unavailable": "classifier outages",
     "git_cwd_mismatch": "git cwd mismatches",
     "permission_denied": "tool calls denied",
@@ -1772,6 +1811,8 @@ def _agent_story_pieces(agent, agent_findings: list[Finding]) -> list:
             count = finding.metrics.get("count", 1)
             if detector_id == "permission_denied":
                 phrase = f"tool {_plural(count, 'call')} denied"
+            elif detector_id == "codex_unavailable":
+                phrase = f"Codex {_plural(count, 'call')} could not start"
             tooling_bits.append(f"{count} {phrase}")
     if tooling_bits:
         clauses.append("; ".join(tooling_bits))
@@ -2186,21 +2227,16 @@ def attention_reason(run: Run, findings: list[Finding]) -> str:
     ]
     if runtime_kills:
         k = len(runtime_kills)
-        _written, commits = _risk_paths_and_commits(run)
-        risk_paths, paths_complete = ledger.risk_paths(run)
-        n_paths = len(risk_paths)
-        # docs/DESIGN.md 4.13.8: a partial ledger makes the count a lower bound.
+        counts = _work_at_risk_counts(run, ledger.risk_population(run))
+        n_paths = len(counts.paths)
+        # docs/DESIGN.md 4.7: the WORK AT RISK count line's numbers, `N+` when it is partial.
         paths_word = (
-            f"{n_paths} {_plural(n_paths, 'path')}" if paths_complete else f"{n_paths}+ paths"
-        )
-        # docs/DESIGN.md 4.8 (G4b): the same attempts _risk_paths_and_commits walks
-        without_id = _commit_commands_without_id(
-            [a for a in run.attempts if a.outcome in _RISK_OUTCOMES]
+            f"{n_paths}+ paths" if counts.partial else f"{n_paths} {_plural(n_paths, 'path')}"
         )
         return (
             f"{k} {_plural(k, 'attempt')} killed by the runtime, "
             f"{paths_word} named, "
-            f"{_commits_words(len(commits), without_id)}"
+            f"{_commits_words(len(counts.commit_ids), counts.commit_commands_without_id)}"
         )
 
     top = _scan_top_detector(findings)
@@ -2215,7 +2251,21 @@ def attention_reason(run: Run, findings: list[Finding]) -> str:
         if interrupted:
             return f"{interrupted} {_plural(interrupted, 'subagent')} interrupted"
 
-    return "clean"
+    # docs/DESIGN.md 4.7 (M3b rule 3): a rule (c) candidate, same counts and wording as the
+    # WORK AT RISK line of the run report.
+    population = ledger.risk_population(run)
+    counts = _work_at_risk_counts(run, population)
+    if population and (counts.paths or ledger.risk_paths(run)[0]):
+        n, n_paths = counts.attempts, len(counts.paths)
+        paths_word = (
+            f"{n_paths}+ paths" if counts.partial else f"{n_paths} {_plural(n_paths, 'path')}"
+        )
+        return (
+            f"{n} {_plural(n, 'attempt')} at risk: {paths_word} named, "
+            f"{_commits_words(len(counts.commit_ids), counts.commit_commands_without_id)}"
+        )
+
+    return "clean"  # defensive: a candidate has a finding, an interrupt, or a path at risk
 
 
 def attention_next_command(run: Run, now: datetime) -> str:
@@ -2462,6 +2512,11 @@ def _export_attempt(attempt: Attempt, redactor: Redactor, view: "EvidenceView") 
         shown_reported = {
             **shown_reported, "keys": [redactor.names.key(key) for key in shown_reported["keys"]],
         }
+    if isinstance(shown_reported, dict) and isinstance(shown_reported.get("claims"), dict):
+        # DESIGN 4.13.5 (M9): the result's own commit list prints as commit-N at share
+        shown_reported = {
+            **shown_reported, "claims": number_claim_commits(shown_reported["claims"], redactor),
+        }
     reported = redact_value(shown_reported, redactor) if shown_reported is not None else None
     # docs/DESIGN.md 5.3's v0.2 reader changes: facts is exported, tool_calls
     # is not (a command is private, never leaves the tool). facts holds
@@ -2477,7 +2532,11 @@ def _export_attempt(attempt: Attempt, redactor: Redactor, view: "EvidenceView") 
             {
                 "paths_written": attempt.facts.paths_written,
                 "in_flight": attempt.facts.in_flight,
-                "commits": attempt.facts.commits,
+                "commits": (
+                    [redactor.names.commit(c) if isinstance(c, str) else c
+                     for c in attempt.facts.commits]
+                    if isinstance(attempt.facts.commits, list) else attempt.facts.commits
+                ),
                 "commit_commands_without_id": attempt.facts.commit_commands_without_id,
                 "cwds": attempt.facts.cwds,
                 "background_unfinished": attempt.facts.background_unfinished,
@@ -2540,12 +2599,22 @@ def _export_finding(
         "run_id": finding.run_id,
         "agent_id": identity_value("agent", finding.agent_id, redactor),
         "evidence": _shown_evidence(finding.evidence, view, redactor),
-        "metrics": redact_value(finding.metrics, redactor),
+        "metrics": redact_value(
+            _metrics_with_numbered_commits(finding.metrics, redactor), redactor,
+        ),
         "rule_id": finding.rule_id,
         "rule_ids": list(finding.rule_ids),
         "finding_id": finding.finding_id,
         "silenced": finding.detector in silenced_detectors,
     }
+
+
+def _metrics_with_numbered_commits(metrics, redactor: Redactor):
+    """DESIGN 4.13.5 (M9): a finding's `metrics.claims` is a copy of a result's claims, so its
+    `commits` list is numbered like the attempt's own `reported.claims.commits`."""
+    if isinstance(metrics, dict) and isinstance(metrics.get("claims"), dict):
+        return {**metrics, "claims": number_claim_commits(metrics["claims"], redactor)}
+    return metrics
 
 
 def export_observation_groups(

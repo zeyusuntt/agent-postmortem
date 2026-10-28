@@ -185,7 +185,7 @@ _ALLOWED_SINK_CALLS = {
         "_transcript_lines: read on past a torn last line, mode 'r' (surrogateescape)",
     ("reader.py", 914, "journal_path.open"): "read journal.jsonl line by line, mode 'r'",
     ("reader.py", 1192, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
-    ("reader.py", 2647, "transcript_path.open"):
+    ("reader.py", 2656, "transcript_path.open"):
         "probe that a transcript can be opened at all, immediately closed again, mode 'r'",
     ("state.py", 231, "os.open"):
         "_backup_writer: create 'state.json.corrupt-<timestamp>' inside the state "
@@ -255,10 +255,10 @@ _ALLOWED_SINK_CALLS = {
         "inside the state directory (docs/DESIGN.md 7.5, N3a)",
     ("watch.py", 174, "path.open"):
         "_read_new_journal_lines: read appended journal bytes, mode 'rb', never written",
-    ("reader.py", 3488, "self.path.open"):
+    ("reader.py", 3497, "self.path.open"):
         "ParentIndex._hash_prefix: re-read already-parsed prefix bytes to validate the "
         "incremental cache, mode 'rb', never written",
-    ("reader.py", 3686, "self.path.open"):
+    ("reader.py", 3695, "self.path.open"):
         "ParentIndex._parse_increment: read appended parent-transcript bytes, mode 'rb', "
         "never written",
 }

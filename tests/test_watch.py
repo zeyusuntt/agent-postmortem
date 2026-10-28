@@ -419,6 +419,70 @@ def test_failed_line_uses_the_attempt_failed_cause_rule(monkeypatch, capsys, tmp
     assert code == 0
 
 
+def _hook_success_attachment(ts: str) -> str:
+    return json.dumps(
+        {
+            "type": "attachment",
+            "timestamp": ts,
+            "uuid": SESSION_ID,
+            "parentUuid": SESSION_ID,
+            "cwd": CWD,
+            "sessionId": SESSION_ID,
+            "version": "2.1.312",
+            "attachment": {"type": "hook_success", "hookName": "SubagentStop"},
+        }
+    )
+
+
+def _system_entry(ts: str) -> str:
+    return _transcript_entry("system", ts, "synthetic system note")
+
+
+def _failed_line_for_tail(monkeypatch, capsys, tmp_path, tail_builders) -> str:
+    run_dir = tmp_path / "wf_00000000-fa3"
+    run_dir.mkdir(parents=True)
+    agent1 = "aab0000000000001a"
+    key = "v2:watch-tail"
+    _write_lines(
+        run_dir / "journal.jsonl",
+        [
+            _journal_line(type="launched", timestamp="2026-02-01T00:00:00.000Z"),
+            _started("2026-02-01T00:00:00.000Z", key, agent1, "impl:tail"),
+            _failed("2026-02-01T00:05:00.000Z", key, agent1),
+        ],
+    )
+    _meta(run_dir, agent1)
+    lines = [
+        _user_text("2026-02-01T00:00:00.000Z", "Implement the watch-tail module."),
+        _assistant_text("2026-02-01T00:04:59.000Z", "You've hit your session limit · resets 18:00"),
+    ]
+    lines += [b("2026-02-01T00:05:00.000Z") for b in tail_builders]
+    _write_transcript(_transcript_path(run_dir, agent1), lines)
+    clock = _Clock()
+    _patch_clock(monkeypatch, clock)
+    _patch_scripted_sleep(monkeypatch, [], clock)
+    main(["watch", str(run_dir), "--interval", "1"])
+    out = capsys.readouterr().out.splitlines()
+    return next(line for line in out if line.startswith("FAILED"))
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_failed_line_skips_trailing_hook_success_attachments(monkeypatch, capsys, tmp_path, count):
+    line = _failed_line_for_tail(
+        monkeypatch, capsys, tmp_path, [_hook_success_attachment] * count
+    )
+    assert line.endswith("attempt 1: session usage limit reached, resets 18:00.")
+
+
+@pytest.mark.parametrize("tail", [lambda ts: _user_text(ts, "carry on"), _system_entry])
+def test_failed_line_with_a_user_or_system_entry_after_the_limit_text_is_not_attributed(
+    monkeypatch, capsys, tmp_path, tail
+):
+    line = _failed_line_for_tail(monkeypatch, capsys, tmp_path, [tail])
+    assert "cause not recorded" in line
+    assert "usage limit" not in line
+
+
 def test_failed_line_does_not_call_a_kill_sentinel_lookalike_interrupted(
     monkeypatch, capsys, tmp_path,
 ):

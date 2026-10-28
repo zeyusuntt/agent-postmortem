@@ -31,6 +31,8 @@ CLAUSE = (
 )
 ABSENCE = ("present_now", "absent_now", "unknown", "none")
 OBLIGATION = ("none", "prompt_path", "claimed_path")
+OUTCOME = ("completed", "other")
+LATER_SUCCESS = ("yes", "no")
 
 # detector -> (input names in order, vocabulary per input)
 INPUTS = {
@@ -42,6 +44,7 @@ INPUTS = {
     "missing_artifact": (("obligation", "absence"), (OBLIGATION, ABSENCE)),
     "structured_output_failure": (("recovered",), (RECOVERED,)),
     "codex_write_denied": ((), ()),
+    "codex_unavailable": (("outcome", "later_success"), (OUTCOME, LATER_SUCCESS)),
     "bash_backgrounded": ((), ()),
     "bash_timeout": ((), ()),
     "tool_json_error": ((), ()),
@@ -80,6 +83,9 @@ def _expected(detector: str, values: tuple) -> str:
         if obligation == "prompt_path" and absence in ("absent_now", "unknown"):
             return "info"
         return ERROR
+    if detector == "codex_unavailable":
+        outcome, later_success = values
+        return "major" if (outcome, later_success) == ("completed", "no") else "minor"
     if detector == "codex_write_denied" or detector in (
         "bash_backgrounded", "bash_timeout", "tool_json_error", "classifier_unavailable",
         "git_cwd_mismatch", "permission_denied",
@@ -99,6 +105,7 @@ HIGHEST = {
     "missing_artifact": "info",
     "structured_output_failure": "major",
     "codex_write_denied": "minor",
+    "codex_unavailable": "major",
     "bash_backgrounded": "minor",
     "bash_timeout": "minor",
     "tool_json_error": "minor",
@@ -294,6 +301,8 @@ def test_the_vocabularies_are_exactly_the_documented_ones():
         "clause": frozenset(CLAUSE),
         "absence": frozenset(ABSENCE),
         "obligation": frozenset(OBLIGATION),
+        "outcome": frozenset(OUTCOME),
+        "later_success": frozenset(LATER_SUCCESS),
     }
     assert dict(severity.INPUT_NAMES) == {
         detector: names for detector, (names, _vocab) in INPUTS.items()

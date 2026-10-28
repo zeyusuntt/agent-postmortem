@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -100,6 +101,14 @@ def make_finding_id(
     path_line = (first_evidence or "").split(": ", 1)[0]
     payload = "\x1f".join((run_id, detector, agent_id or "", path_line))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def single_agent_id(agent_ids) -> str | None:
+    """The agent id when every hit of a run-wide tooling finding belongs to
+    the one agent, else None (docs/DESIGN.md 4.3, 4.7): a finding that counts
+    hits across several agents is not any one agent's story."""
+    distinct = set(agent_ids)
+    return distinct.pop() if len(distinct) == 1 else None
 
 
 def anchored_marker_hits(attempt: Attempt, marker: str) -> list[MarkerHit]:
@@ -203,6 +212,12 @@ def format_duration(seconds: float) -> str:
     if minutes:
         return f"{minutes}m"
     return f"{secs}s"
+
+
+def final_event(events: Sequence[Event]) -> Event | None:
+    """The last event whose raw_type is not exactly "attachment" (docs/DESIGN.md
+    4.13.2). Shared by attempt_failed and watch so both read one cause source."""
+    return next((ev for ev in reversed(events) if ev.raw_type != "attachment"), None)
 
 
 def meaningful_event_before(attempt: Attempt, index: int) -> Event | None:

@@ -5,6 +5,82 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3]
+
+### Added
+
+- Detector `codex_unavailable`. On one machine, 7 workflow agents whose job was a Codex
+  review returned "completed" with a short text saying the review never ran: the Bash call to
+  `codex-companion.mjs` failed with "Codex CLI is not installed or is missing required runtime
+  support", and 2 of those runs read CLEAN. The detector gives one finding per attempt, major
+  when the attempt completed and no later companion call returned a result without that line,
+  minor otherwise. Assistant text quoting the sentence (4 entries) and other commands printing it
+  never count. It backs R-CODEX-CONTRACT, which now also says to check that the companion
+  starts before a workflow relies on a Codex agent, and `rules review` counts it as a
+  recurrence of that rule.
+
+### Changed
+
+- README and DESIGN: the transcript formats are now stated as observed on Claude Code 2.1.251 to
+  2.1.312 (was 2.1.280). The Limits section names the five entry types first seen in 2.1.285 to
+  2.1.310 that are not interpreted yet, and says Claude Code deletes transcripts older than 30
+  days by default (`cleanupPeriodDays`). Why gives the 0.3.2 scan of 2026-10-27 (13 of 166
+  workflow runs retried) and the upstream status as of 2026-10-28.
+
+### Fixed
+
+- Reported commit ids printed as written at the default share level, and a short hash of a
+  public repository's commit can identify the repository and its author. `rescue plan` (text
+  and `--json`) and `run --json` now print each reported commit id as `commit-N`, numbered per
+  output, the same id the same N. A result's own `commits` claim is covered too: `run --json`
+  (`reported.claims.commits` and, with `ready: false`, `findings[].metrics.claims.commits`),
+  `rescue plan --json`, and the REPORTED line of `rescue plan` print `commit-N` instead of the
+  ids. `rescue plan --json` now exports the units before the brief, so the first `commit-N` it
+  prints is `commit-1`. `--local` prints the real ids, scanned for paths as before; `--raw` prints them unchanged; counts are unchanged. A file named
+  `commit-1` no longer turns a commit into `path-1` in JSON.
+- A Codex companion call with a command over 2,048 characters (the forwarder passes long prompts
+  inline) was not recognized as codex. A failing call followed by a successful long retry stayed
+  `major` instead of `minor`, and an attempt whose only codex call was long lost the
+  `codex_write_denied` assistant-text match. Both now judge the full command.
+- `structured_output_failure` no longer tells a multi-agent run as the first hit's agent's story:
+  with failures in 2 or more agents its `agent_id` is now empty and the finding backs the run
+  story, like the other 5 run-wide tooling detectors. Title, count, severity and rule are
+  unchanged; the `finding_id` of a multi-agent finding changes.
+- The session-end hook dropped a `codex_unavailable` finding from a session's main thread. It
+  now runs all 8 tooling detectors, so a main-thread Codex companion failure is reported.
+- Scan and the run report disagreed on one run: a killed attempt in the last 72 hours whose only
+  write was a relative-path Edit with no working directory read "1+ paths named" in scan and
+  "0 paths named" under WORK AT RISK. The scan reason for a runtime kill and for an attempt at
+  risk now uses the same helper and the same numbers as the WORK AT RISK count line.
+- A nested foreground subagent whose report came back as a plain "[Subagent hand-back]" result
+  read "unknown" and WORK AT RISK said "unknown: N subagents have no established return" (4
+  children in one real session). The launch is now also found by the `toolUseId` in the child's
+  meta file, which matched the result-linked launch in 651 of 651 cases where both exist. A
+  `toolUseId` that is not a string reads malformed.
+- A usage-limit, machine-sleep or API-error failure would have read "not recorded" on Claude
+  Code 2.1.305 or later when a SubagentStop hook is set. Those transcripts end with an
+  `attachment` entry (type `hook_success`) after the last assistant entry, which 163 of 205
+  transcripts measured on 2.1.305 to 2.1.312 had. Trailing `attachment` entries no longer
+  count as the attempt's final entry, so the cause and reset time are read, in the `watch` FAILED line too. A `user` or
+  `system` entry after the assistant entry still makes it not final. No real case was hidden.
+- A tooling finding that counted hits from several agents was told as the first hit's agent's
+  story, for example `agent-1  6 Bash commands backgrounded.` when the 6 hits were in 5 agents.
+  The five run-wide detectors (`bash_backgrounded`, `bash_timeout`, `tool_json_error`,
+  `classifier_unavailable`, `git_cwd_mismatch`) now set the agent only when all hits are in one
+  agent; with hits in 2 or more agents there is no agent and the finding backs the run story.
+  Titles, counts, severity and rules are unchanged. The `finding_id` of a multi-agent finding
+  changes, because the id includes the agent.
+- `scan` no longer prints the reason `clean` next to a run in NEEDS ATTENTION. A run listed
+  only because an attempt at risk wrote a path (ended within 72 hours, no finding, no
+  interrupt) now reads like `2 attempts at risk: 1+ paths named, 0 commits`, with the same
+  counts as the WORK AT RISK line, in the text and in the JSON `attention_reason`.
+- Transcripts written by Claude Code 2.1.300 or later no longer make every attempt's write
+  ledger partial. Those versions record each API request in the transcript (`api-request`,
+  `api-request-shape`, `api-request-blob` entries), which the ledger did not know, so every
+  attempt line in WORK AT RISK ended with `ledger incomplete (unknown_entry_type)`. A scan of
+  296 real runs on 2026-10-28 found the entries in every transcript from 2.1.300 to 2.1.312;
+  with the fix no verdict changed and one run's at-risk list became complete.
+
 ## [0.3.2]
 
 Repository checks now work on machines with Git LFS, and they never run a filter driver or a

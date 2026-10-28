@@ -20,6 +20,7 @@ from .base import (
     event_for_marker_hit,
     evidence_line,
     make_finding_id,
+    single_agent_id,
     tooling_attempts,
 )
 
@@ -36,17 +37,17 @@ class GitCwdMismatch:
 
     def run(self, run: Run) -> list[Finding]:
         hits: list[Event] = []
-        agent_id: str | None = None
+        hit_agents: list[str] = []
         for attempt in tooling_attempts(run):
             for hit in anchored_marker_hits(attempt, _REGISTRY_MARKER):
                 event = event_for_marker_hit(attempt, hit)
                 if event is None or event.read_only_output:
                     continue
                 hits.append(event)
-                if agent_id is None:
-                    agent_id = attempt.agent_id
+                hit_agents.append(attempt.agent_id)
         if not hits:
             return []
+        agent_id = single_agent_id(hit_agents)
 
         count = len(hits)
         plural = "s" if count != 1 else ""

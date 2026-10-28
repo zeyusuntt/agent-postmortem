@@ -1353,6 +1353,11 @@ def redact(text: str, home: Path | None = None) -> str:
     return result
 
 
+class RenderedCommit(str):
+    """A commit id already rendered through the commit mapping. `report.redact_value` passes it
+    through unchanged, so a JSON commit list is rendered exactly once (DESIGN 4.13.5, A1)."""
+
+
 class Pseudonyms:
     """Per-render mapping from a user-authored name to a stable, ordinal
     pseudonym (docs/DESIGN.md 5.1).
@@ -1412,7 +1417,7 @@ class Pseudonyms:
     # docs/DESIGN.md 5.3 (G-B1, GB-8): "key" is a result key name in `reported.keys`: a
     # user-authored identifier like a label, pseudonymized at share only (key-N), substituted at
     # the single point the export builds that list, so it needs no substring pass.
-    _CATEGORIES = _NAME_CATEGORIES + ("path", "check", "key")
+    _CATEGORIES = _NAME_CATEGORIES + ("path", "check", "key", "commit")
 
     def __init__(
         self,
@@ -1443,6 +1448,9 @@ class Pseudonyms:
         if not self.enabled or not value:
             return value
         if self.real_names and category in self._NAME_CATEGORIES:
+            return self.local_text(value)
+        if self.real_names and category == "commit":
+            # DESIGN 4.13.5 (M9, S1): a commit id prints as written but scanned like a name
             return self.local_text(value)
         if self.real_names and category in ("check", "key"):
             return value
@@ -1545,6 +1553,15 @@ class Pseudonyms:
         namespace, `key-1`.. in order of first appearance within the render; the real name at
         local and raw."""
         return self._pseudonym("key", value)
+
+    def commit(self, value: str | None) -> str | None:
+        """A reported commit id (docs/DESIGN.md 4.13.5, 5.1): a short hash of a public
+        repository can identify the repository and its author, so its own "commit"
+        namespace, `commit-1`.. in order of first appearance within the render, the same
+        id the same number; the real id at local and raw."""
+        shown = self._pseudonym("commit", value)
+        # DESIGN 4.13.5 (M9, A1): already rendered; a structured sink never scans it as a path
+        return RenderedCommit(shown) if shown else shown
 
     def apply(self, text: str) -> str:
         """Replace every name (agent/desc/phase/type/target -- never path,

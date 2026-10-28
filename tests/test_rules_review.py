@@ -332,3 +332,18 @@ def test_cli_review_json_shape(tmp_path, capsys, monkeypatch):
     # No "after" run at all here (0 runs on that side): not enough evidence
     # either way, so never flagged (docs/DESIGN.md 9).
     assert payload["consider_removing"] == []
+
+
+def test_codex_unavailable_after_adoption_counts_as_codex_contract_recurrence():
+    """B1: R-CODEX-CONTRACT is also backed by codex_unavailable (DESIGN 9, 4.3),
+    so an unavailable-companion finding after adoption is a recurrence."""
+    adopted = [{"rule_id": "R-CODEX-CONTRACT", "target": "t.md", "applied_at": "2026-08-15"}]
+    runs = [
+        (_run("wf_1", BEFORE1), [_finding("codex_write_denied", "R-CODEX-CONTRACT")]),
+        (_run("wf_2", AFTER1), [_finding("codex_unavailable", "R-CODEX-CONTRACT")]),
+    ]
+    row = trend.review_rows(adopted, runs, weeks=4)[0]
+    assert row["detectors"] == ["codex_write_denied", "codex_unavailable"]
+    assert row["before"] == {"runs": 1, "fired": 1, "rate": 1.0}
+    assert row["after"] == {"runs": 1, "fired": 1, "rate": 1.0}
+    assert "1 of 1 runs after" in trend.render_review_text([row])

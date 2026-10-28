@@ -17,6 +17,8 @@ free, since its 'failed' keys already exercise exactly those shapes.
 
 from __future__ import annotations
 
+import json
+import shutil
 from pathlib import Path
 
 from agent_postmortem import reader
@@ -261,3 +263,52 @@ def test_reset_time_keeps_a_time_zone_name_readable():
     )
     assert attempt_failed._clean_reset_time("2pm <b>x</b>; rm -rf /") == "2pm bx/b rm -rf /"
     assert len(attempt_failed._clean_reset_time("x" * 100)) == 40
+
+
+# --- trailing attachment entries (DESIGN 4.13.2, M6) -------------------------
+
+
+def _causes_with_tail(tmp_path: Path, tail_entries: list[dict]) -> dict:
+    """Copy the causes fixture and append entries after the final assistant
+    entry of the session usage-limit attempt."""
+    run_dir = tmp_path / "run"
+    shutil.copytree(CAUSES, run_dir)
+    transcript = run_dir / "agent-af100000000000001.jsonl"
+    with transcript.open("a", encoding="utf-8") as handle:
+        for entry in tail_entries:
+            base = {
+                "timestamp": "2026-09-26T09:05:00.000Z",
+                "uuid": "00000000-0000-4000-8000-000000000000",
+                "agentId": "af100000000000001",
+                "cwd": "/home/user/project",
+                "sessionId": "00000000-0000-4000-8000-000000000000",
+                "version": "2.1.312",
+            }
+            base.update(entry)
+            handle.write(json.dumps(base) + "\n")
+    return _findings_by_agent(reader.load_run(run_dir))
+
+
+_ATTACHMENT = {"type": "attachment", "attachment": {"type": "hook_success"}}
+
+
+def test_trailing_attachment_entries_do_not_hide_the_usage_limit_cause(tmp_path):
+    for count in (0, 1, 2):
+        finding = _causes_with_tail(tmp_path / str(count), [_ATTACHMENT] * count)[
+            "af100000000000001"
+        ]
+        assert finding.metrics["cause"] == "usage_limit_session"
+        assert finding.metrics["reset_time"] == "2pm"
+        assert "session usage limit reached, resets 2pm" in finding.title
+
+
+def test_a_user_entry_after_the_usage_limit_text_makes_it_not_final(tmp_path):
+    user = {"type": "user", "message": {"role": "user", "content": "go on"}}
+    finding = _causes_with_tail(tmp_path, [user])["af100000000000001"]
+    assert finding.metrics["cause"] != "usage_limit_session"
+
+
+def test_a_system_entry_after_the_usage_limit_text_makes_it_not_final(tmp_path):
+    system = {"type": "system", "content": "note"}
+    finding = _causes_with_tail(tmp_path, [system])["af100000000000001"]
+    assert finding.metrics["cause"] != "usage_limit_session"

@@ -1529,8 +1529,10 @@ class _SessionReturns:
     def launcher_facts(self, key: str) -> "returns.ReturnFacts":
         return self.main if key == "main" else self.facts_of(key)
 
-    def digest_for(self, agent_id: str) -> str:
-        return returns.main_side_digest(agent_id, self.main, self.notes_of(agent_id))
+    def digest_for(self, agent_id: str, meta: dict) -> str:
+        return returns.main_side_digest(
+            agent_id, self.main, self.notes_of(agent_id), meta.get("toolUseId", returns.ABSENT)
+        )
 
     def decide(self, agent_id: str, meta: dict, meta_bad: bool):
         """(Decision, the launcher's facts or None)."""
@@ -1558,7 +1560,8 @@ class _SessionReturns:
         if self.main_unreadable or any(f.unreadable for f in issuers):
             return early("parent_unreadable")
         return returns.decide(
-            agent_id, launcher, self.main, self.notes_of(agent_id), issuers, self.siblings
+            agent_id, launcher, self.main, self.notes_of(agent_id), issuers, self.siblings,
+            meta.get("toolUseId", returns.ABSENT),
         ), launcher
 
 
@@ -1607,7 +1610,7 @@ def session_child_return(main_path: Path, agent_path: Path, cache: dict | None =
             ("launcher", path is not None and launcher.unreadable),
         ) if bad
     )
-    return decision, context.digest_for(agent_id), path, unreadable
+    return decision, context.digest_for(agent_id, meta), path, unreadable
 
 
 def load_session(path: Path) -> Run:
@@ -2125,6 +2128,9 @@ def _make_tool_call(
         path=path,
         command=command,
         command_sha256=command_sha256,
+        runs_codex_program=tool_name == "Bash" and markers.runs_codex_program(
+            raw_command if isinstance(raw_command, str) else None
+        ),
         cwd=cwd,
         run_in_background=run_in_background,
         multiedit_path=multiedit_path,
@@ -2573,8 +2579,11 @@ def _read_transcript(
             ts = _parse_ts(
                 entry.get("timestamp"), transcript_path, line_no, diagnostics, quality=True
             )
-            final_entry_type = raw_type
-            final_entry_line_no = line_no
+            # docs/DESIGN.md 4.13.2: trailing "attachment" entries (Claude Code 2.1.305+
+            # writes a hook_success one after the last assistant entry) do not count.
+            if raw_type != "attachment":
+                final_entry_type = raw_type
+                final_entry_line_no = line_no
             if state is not None:
                 _note_entry_shape(entry, entry.get("type"), state)
 
@@ -2609,7 +2618,7 @@ def _read_transcript(
                 events.append(_unknown_event(entry, transcript_path, line_no, ts, raw_type))
 
     attempt_has_codex_bash = any(
-        call.tool_name == "Bash" and markers.runs_codex_program(call.command)
+        call.tool_name == "Bash" and call.runs_codex_program
         for call in tool_calls
     )
     marker_hits.extend(

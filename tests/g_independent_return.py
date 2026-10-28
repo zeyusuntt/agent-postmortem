@@ -214,7 +214,7 @@ def _norm(status):
     return None
 
 
-def decide(child, launcher, main, issuers):
+def decide(child, launcher, main, issuers, meta_use=None):
     if any(child in t.bad_named for t in (launcher, main, *issuers)):
         raise Unknown("malformed")                       # GA-4
     notes = [n for n in main.notes if n[1] == child]
@@ -225,7 +225,10 @@ def decide(child, launcher, main, issuers):
             if child in _named_ids(rec):
                 by_result.add(tid)
     by_note = {n[2] for n in notes if n[2] in agent_uses}
-    candidates = by_result | by_note
+    # DESIGN 4.13.1 T2: a third source, the launcher's Agent or Task use the child's meta
+    # `toolUseId` names; a string naming no such use adds nothing
+    by_meta = {meta_use} if meta_use in agent_uses else set()
+    candidates = by_result | by_note | by_meta
     if not candidates:
         raise Unknown("no_evidence")
     if len(candidates) > 1:
@@ -377,6 +380,12 @@ def states(main_path: Path) -> dict:
                 if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
                     raise Unknown("malformed")
                 depth = raw
+            meta_use = None
+            if "toolUseId" in meta:
+                # DESIGN 4.13.1 T0: present and not a string is malformed
+                if not isinstance(meta["toolUseId"], str):
+                    raise Unknown("malformed")
+                meta_use = meta["toolUseId"]
             if "parentAgentId" in meta:
                 pid = meta["parentAgentId"]
                 if not isinstance(pid, str) or not pid or pid == child:
@@ -390,7 +399,7 @@ def states(main_path: Path) -> dict:
                 launcher = main
             if not main.ok or not launcher.ok:
                 raise Unknown("parent_unreadable")
-            out[child] = decide(child, launcher, main, issuers)
+            out[child] = decide(child, launcher, main, issuers, meta_use)
         except Unknown as exc:
             out[child] = ("unknown", exc.reason)
     return out

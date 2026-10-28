@@ -187,7 +187,9 @@ def test_fc7_w4_a_path_in_one_piece_does_not_hide_the_next_piece(level):
     run, plan = _piece_plan("path_display_key")
     plan.units[0].commits = ["abcdef1"]
     text = rescue.render_plan_text(run, plan, _redactor(level))
-    assert "COMMITS   reported by these attempts: abcdef1" in text, text
+    # DESIGN 4.13.5 (M9): the commit id prints as commit-1 at share, as written at local
+    shown = "commit-1" if level == "share" else "abcdef1"
+    assert f"COMMITS   reported by these attempts: {shown}" in text, text
 
 
 # the in-flight path (sonnet minor 8, mutation P7): a path printed on the `IN FLIGHT` line

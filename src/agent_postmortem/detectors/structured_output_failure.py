@@ -25,6 +25,7 @@ from .base import (
     event_for_marker_hit,
     evidence_line,
     make_finding_id,
+    single_agent_id,
     tooling_attempts,
 )
 
@@ -41,7 +42,7 @@ class StructuredOutputFailure:
 
     def run(self, run: Run) -> list[Finding]:
         hits: list[Event] = []
-        agent_id: str | None = None
+        hit_agents: list[str | None] = []
         levels: list[str] = []
         for attempt in tooling_attempts(run):
             attempt_hits = 0
@@ -51,8 +52,7 @@ class StructuredOutputFailure:
                     continue
                 hits.append(event)
                 attempt_hits += 1
-                if agent_id is None:
-                    agent_id = attempt.agent_id
+                hit_agents.append(attempt.agent_id)
             if attempt_hits:
                 # Per attempt: did a later attempt, or the attempt itself, complete
                 # with a result (4.13.4)? The finding takes the highest of them.
@@ -63,6 +63,8 @@ class StructuredOutputFailure:
         if not hits:
             return []
 
+        # docs/DESIGN.md 4.3, 4.7: attributed to an agent only when every hit is in it.
+        agent_id = single_agent_id(hit_agents)
         count = len(hits)
         plural = "s" if count != 1 else ""
         title = f"{count} StructuredOutput call{plural} failed schema validation"

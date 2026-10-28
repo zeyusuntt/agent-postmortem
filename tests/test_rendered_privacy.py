@@ -21,12 +21,14 @@ never contains the raw value tests/test_privacy.py would otherwise flag.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from agent_postmortem import config, observe, rescue
 from agent_postmortem.cli import main
+from agent_postmortem.disclosure import DisclosureContext
 from agent_postmortem.models import Attempt, AttemptFacts, Interrupt, LogicalAgent, Run
 from agent_postmortem.redact import Redactor
 from tests import rule_fixtures
@@ -378,3 +380,244 @@ def test_scan_never_shows_the_marker_in_default_or_no_redact_output(tmp_path, mo
 
     main(["scan", "--root", str(root), "--all", "--json", "--no-redact"])
     assert MARKER not in capsys.readouterr().out
+
+
+# --- reported commit ids: commit-N at share (docs/DESIGN.md 4.13.5, 5.1) --
+#
+# A short hash of a public repository's commit can identify the repository and its
+# author, so at the default level every reported commit id prints as commit-N, numbered
+# per rendering in order of first appearance, the same id the same number.
+
+COMMIT_A = "a1b2c3d" + "4e5f60718293a4b5c6d7e8f901234567"[:9]
+COMMIT_B = "9f8e7d6"
+_COMMIT_ID_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
+
+
+def _has_commit_id(blob: str) -> bool:
+    return bool(_COMMIT_ID_RE.search(blob)) or COMMIT_A in blob or COMMIT_B in blob
+
+
+def _local() -> Redactor:
+    return Redactor(context=DisclosureContext(level="local", home=Path("/home/user")))
+
+
+def _commit_run() -> Run:
+    facts = AttemptFacts(
+        paths_written=[], in_flight=[], commits=[COMMIT_A, COMMIT_B, COMMIT_A], cwds=[],
+        background_unfinished=0, last_tool=None, seconds_since_last_tool_at_end=None,
+    )
+    killed = Attempt(
+        agent_id="a0000000000000001", key="v2:x", label="agent", phase="phase", agent_type=None,
+        meta={}, transcript_path=None, events=[], first_ts=None, last_ts=None, ordinal=1,
+        outcome="killed", usage={}, facts=facts,
+        interrupt=Interrupt(kill_ts=None, preceding=None, silence_seconds=5.0, cause="runtime",
+                             cause_evidence=None),
+    )
+    agent = LogicalAgent(key="v2:x", label="impl", phase="", attempts=[killed])
+    return Run(
+        run_id="wf_00000000-caf", path=Path("/tmp/does-not-matter"),
+        project_slug="-home-user-project", session_id=None, claude_version=None,
+        journal=[], agents=[agent], attempts=[killed], started_at=None, ended_at=None,
+        diagnostics=[], finished=True,
+    )
+
+
+def _commit_plan():
+    run = _commit_run()
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
+    return run, rescue.build_plan(run, observation, [], config.load_config())
+
+
+def test_rescue_plan_text_and_json_number_commit_ids_at_share():
+    run, plan = _commit_plan()
+    text = rescue.render_plan_text(run, plan, Redactor(enabled=True))
+    assert not _has_commit_id(text)
+    assert "reported by these attempts: commit-1, commit-2" in text
+    assert "commits reported: 2 (commit-1, commit-2)" in text
+
+    payload = rescue.plan_to_json(run, plan, Redactor(enabled=True))
+    blob = json.dumps(payload)
+    assert not _has_commit_id(blob)
+    assert payload["units"][0]["commits"] == ["commit-1", "commit-2"]
+    assert payload["brief"]["already_exists"]["commits"] == ["commit-1", "commit-2"]
+
+
+def test_rescue_plan_keeps_real_commit_ids_at_local_and_raw():
+    run, plan = _commit_plan()
+    for redactor in (Redactor(enabled=False), _local()):
+        text = rescue.render_plan_text(run, plan, redactor)
+        assert COMMIT_A in text and COMMIT_B in text
+        assert "commit-1" not in text
+        payload = rescue.plan_to_json(run, plan, redactor)
+        assert payload["units"][0]["commits"] == [COMMIT_A, COMMIT_B]
+
+
+def test_run_json_numbers_attempt_fact_commits_at_share_and_keeps_them_at_raw():
+    from agent_postmortem import report
+
+    run = _commit_run()
+    shared = json.dumps(report.export_run(run, [], Redactor(enabled=True)))
+    assert COMMIT_A not in shared and COMMIT_B not in shared
+    facts = report.export_run(run, [], Redactor(enabled=True))["run"]["attempts"][0]["facts"]
+    assert facts["commits"] == ["commit-1", "commit-2", "commit-1"]
+    raw = report.export_run(run, [], Redactor(enabled=False))["run"]["attempts"][0]["facts"]
+    assert raw["commits"] == [COMMIT_A, COMMIT_B, COMMIT_A]
+
+
+# --- commit ids inside a returned result's own claims, and numbering order (DESIGN 4.13.5, 5.1) --
+#
+# An agent's result can carry its own commit list (reader claims.commits). Every share-level sink
+# prints it as commit-N through the same per-render mapping, and numbers go in order of first
+# appearance in the output (rescue plan --json puts the units before the brief).
+
+COMMIT_C = "0123abc"
+COMMIT_D = "fedcba9876"
+
+
+def _facts_with(commits) -> AttemptFacts:
+    return AttemptFacts(
+        paths_written=[], in_flight=[], commits=commits, cwds=[],
+        background_unfinished=0, last_tool=None, seconds_since_last_tool_at_end=None,
+    )
+
+
+def _killed_attempt(agent_id: str, key: str, commits) -> Attempt:
+    return Attempt(
+        agent_id=agent_id, key=key, label="agent", phase="phase", agent_type=None,
+        meta={}, transcript_path=None, events=[], first_ts=None, last_ts=None, ordinal=1,
+        outcome="killed", usage={}, facts=_facts_with(commits),
+        interrupt=Interrupt(kill_ts=None, preceding=None, silence_seconds=5.0, cause="runtime",
+                             cause_evidence=None),
+    )
+
+
+def _run_of(run_id: str, agents: list, attempts: list) -> Run:
+    return Run(
+        run_id=run_id, path=Path("/tmp/does-not-matter"),
+        project_slug="-home-user-project", session_id=None, claude_version=None,
+        journal=[], agents=agents, attempts=attempts, started_at=None, ended_at=None,
+        diagnostics=[], finished=True,
+    )
+
+
+def _claims_run(ready: bool | None) -> Run:
+    claims: dict = {"commits": [COMMIT_C, COMMIT_D], "commits_count": 2}
+    if ready is not None:
+        claims["ready"] = ready
+    killed = _killed_attempt("a0000000000000001", "v2:x", [])
+    done = Attempt(
+        agent_id="a0000000000000002", key="v2:x", label="agent", phase="phase", agent_type=None,
+        meta={}, transcript_path=None, events=[], first_ts=None, last_ts=None, ordinal=2,
+        outcome="completed", usage={}, facts=_facts_with([]),
+        reported={"type": "dict", "keys": sorted(claims), "claims": claims}, reported_line=3,
+    )
+    agent = LogicalAgent(key="v2:x", label="impl", phase="", attempts=[killed, done])
+    return _run_of("wf_00000000-cab", [agent], [killed, done])
+
+
+def _claims_sinks(run: Run, redactor: Redactor) -> dict[str, str]:
+    from agent_postmortem import report
+    from agent_postmortem.detectors import run_detectors
+
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
+    plan = rescue.build_plan(run, observation, [], config.load_config())
+    findings = run_detectors(run)
+    return {
+        "run json": json.dumps(report.export_run(run, findings, redactor)),
+        "plan text": rescue.render_plan_text(run, plan, redactor),
+        "plan json": json.dumps(rescue.plan_to_json(run, plan, redactor)),
+    }
+
+
+def test_result_claims_commit_list_is_numbered_at_share_in_every_sink():
+    from agent_postmortem.detectors import run_detectors
+
+    for ready in (None, False):
+        run = _claims_run(ready)
+        fired = any(f.detector == "claim_contradiction" for f in run_detectors(run))
+        assert fired == (ready is False)
+        sinks = _claims_sinks(run, Redactor(enabled=True))
+        for name, blob in sinks.items():
+            # a finding_id and an attempt key are digests of their own, not reported commit ids
+            blob = re.sub(r'"(finding_id|key)": "[0-9a-f]+"', r'"\1": ""', blob)
+            assert not _has_commit_id(blob), (name, ready)
+            assert COMMIT_C not in blob and COMMIT_D not in blob, (name, ready)
+        shared = json.loads(sinks["run json"])
+        claims = shared["run"]["attempts"][1]["reported"]["claims"]
+        assert claims["commits"] == ["commit-1", "commit-2"]
+        assert claims["commits_count"] == 2
+        if ready is False:
+            metrics = [f for f in shared["findings"] if f["detector"] == "claim_contradiction"]
+            assert metrics[0]["metrics"]["claims"]["commits"] == ["commit-1", "commit-2"]
+        plan_claims = json.loads(sinks["plan json"])["units"][0]["reported"]["claims"]
+        assert plan_claims["commits"] == ["commit-1", "commit-2"]
+        assert "commits: commit-1,commit-2" in sinks["plan text"]
+
+
+def test_result_claims_commit_list_is_real_at_local_and_raw():
+    run = _claims_run(False)
+    for redactor in (Redactor(enabled=False), _local()):
+        for name, blob in _claims_sinks(run, redactor).items():
+            assert COMMIT_C in blob and COMMIT_D in blob, name
+            assert "commit-1" not in blob, name
+
+
+def test_rescue_plan_numbers_commits_in_order_of_first_appearance_in_the_output():
+    done = Attempt(
+        agent_id="a0000000000000002", key="v2:y", label="agent", phase="phase", agent_type=None,
+        meta={}, transcript_path=None, events=[], first_ts=None, last_ts=None, ordinal=1,
+        outcome="completed", usage={}, facts=_facts_with([COMMIT_B]),
+    )
+    killed = _killed_attempt("a0000000000000001", "v2:x", [COMMIT_A])
+    agents = [
+        LogicalAgent(key="v2:y", label="other", phase="", attempts=[done]),
+        LogicalAgent(key="v2:x", label="impl", phase="", attempts=[killed]),
+    ]
+    run = _run_of("wf_00000000-cac", agents, [done, killed])
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
+    plan = rescue.build_plan(run, observation, [], config.load_config())
+
+    payload = rescue.plan_to_json(run, plan, Redactor(enabled=True))
+    blob = json.dumps(payload)
+    assert re.search(r"commit-\d+", blob).group(0) == "commit-1"
+    assert payload["units"][0]["commits"] == ["commit-1"]
+    assert payload["brief"]["already_exists"]["commits"] == ["commit-2", "commit-1"]
+
+    text = rescue.render_plan_text(run, plan, Redactor(enabled=True))
+    assert "reported by these attempts: commit-1" in text
+    assert "commits reported: 2 (commit-2, commit-1)" in text
+
+
+def test_a_file_named_commit_1_does_not_rename_the_commit_in_json_at_share():
+    """A1 (M9): a commit list is rendered through the commit mapping once and never rescanned as
+    a path, so a written relative file literally named commit-1 stays a path-N and text and
+    JSON agree on the commit."""
+    from agent_postmortem import report
+
+    facts = AttemptFacts(
+        paths_written=["commit-1"], in_flight=[], commits=["deadbee"], cwds=[],
+        background_unfinished=0, last_tool=None, seconds_since_last_tool_at_end=None,
+    )
+    killed = Attempt(
+        agent_id="a0000000000000001", key="v2:x", label="agent", phase="phase", agent_type=None,
+        meta={}, transcript_path=None, events=[], first_ts=None, last_ts=None, ordinal=1,
+        outcome="killed", usage={}, facts=facts,
+        interrupt=Interrupt(kill_ts=None, preceding=None, silence_seconds=5.0, cause="runtime",
+                             cause_evidence=None),
+    )
+    agent = LogicalAgent(key="v2:x", label="impl", phase="", attempts=[killed])
+    run = _run_of("wf_00000000-cad", [agent], [killed])
+    observation = observe.observe_groups(run, now=datetime.now(timezone.utc))
+    plan = rescue.build_plan(run, observation, [], config.load_config())
+
+    payload = rescue.plan_to_json(run, plan, Redactor(enabled=True))
+    assert payload["units"][0]["commits"] == ["commit-1"]
+    assert payload["brief"]["already_exists"]["commits"] == ["commit-1"]
+    assert re.search(r"path-\d+", json.dumps(payload["units"][0]["paths"]))
+    text = rescue.render_plan_text(run, plan, Redactor(enabled=True))
+    assert "reported by these attempts: commit-1" in text
+
+    exported = report.export_run(run, [], Redactor(enabled=True))
+    facts_json = exported["run"]["attempts"][0]["facts"]
+    assert facts_json["commits"] == ["commit-1"]
+    assert re.fullmatch(r"path-\d+", facts_json["paths_written"][0])

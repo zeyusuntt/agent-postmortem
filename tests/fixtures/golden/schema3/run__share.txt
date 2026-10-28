@@ -1536,7 +1536,7 @@ exit=0
           "paths_written": [],
           "in_flight": [],
           "commits": [
-            "abc1234"
+            "commit-1"
           ],
           "commit_commands_without_id": 0,
           "cwds": [
@@ -5118,8 +5118,8 @@ exit=0
           "claims": {
             "commits_count": 3,
             "commits": [
-              "abc1234",
-              "deadbeefcafe0123"
+              "commit-1",
+              "commit-2"
             ]
           }
         },

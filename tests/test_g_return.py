@@ -622,9 +622,53 @@ def t5_a_synchronous_value_and_the_same_notification_agree(s):
     return {X: RET}
 
 
+# --- M5: the meta toolUseId launch link --------------------------------------------------------
+
+
+def m5_nested_hand_back_without_result_or_notification(s):
+    """A nested foreground child: plain-text result, no toolUseResult, no agentId, no note."""
+    s.main(sync_launch("toolu_x", X, 1)).child(X)
+    s.child(X, child_entries(X), use("toolu_y", 4), result("toolu_y", 5)).child(
+        Y, meta={"parentAgentId": X, "spawnDepth": 2, "toolUseId": "toolu_y"})
+    return {X: RET, Y: RET}
+
+
+def m5_meta_names_another_launch(s):
+    s.main(sync_launch("toolu_1", X, 1), use("toolu_2", 4), result("toolu_2", 5)).child(
+        X, meta={"toolUseId": "toolu_2"})
+    return {X: unknown("conflict")}
+
+
+def m5_meta_id_not_a_string(s):
+    s.main(sync_launch("toolu_1", X, 1)).child(X, meta={"toolUseId": 5})
+    return {X: unknown("malformed")}
+
+
+def m5_meta_agrees_with_result_link(s):
+    s.main(sync_launch("toolu_1", X, 1)).child(X, meta={"toolUseId": "toolu_1"})
+    return {X: RET}
+
+
+def m5_meta_linked_plain_text_launch_with_a_killed_notification(s):
+    """The meta link only finds the launch: a notification still makes it asynchronous."""
+    s.main(use("toolu_1", 1), result("toolu_1", 2), note(5, X, "toolu_1", "killed")).child(
+        X, meta={"toolUseId": "toolu_1"})
+    return {X: KILL}
+
+
+def m5_meta_names_no_launch(s):
+    s.main(sync_launch("toolu_1", X, 1)).child(X, meta={"toolUseId": "toolu_none"})
+    return {X: RET}
+
+
+def m5_meta_names_no_launch_and_no_other_link(s):
+    s.main().child(X, meta={"toolUseId": "toolu_none"})
+    return {X: unknown("no_evidence")}
+
+
 ROWS = {
     name: fn for name, fn in sorted(globals().items())
-    if re.fullmatch(r"t[0-5]_\w+", name) and callable(fn)
+    if re.fullmatch(r"(t[0-5]|m5)_\w+", name) and callable(fn)
 }
 for _depth in ["2", 0, True, 1.5, None, -1]:
     ROWS[f"t0_spawn_depth_{_depth!r}"] = _depth_row(_depth)

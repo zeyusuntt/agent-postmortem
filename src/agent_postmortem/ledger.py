@@ -75,6 +75,9 @@ KNOWN_ENTRY_TYPES = frozenset({
     "attachment", "system", "summary", "queue-operation", "last-prompt", "ai-title",
     "atis-latch", "mode", "permission-mode", "pr-link", "agent-name", "bridge-session",
     "custom-title", "file-history-snapshot", "file-history-delta", "cost-state", "frame-link",
+    # Claude Code 2.1.300+: the request log (an api-request-blob echoes earlier messages and is
+    # never a call the attempt made).
+    "api-request", "api-request-shape", "api-request-blob",
 })
 _ARTIFACT_PREFIX = "artifact-"
 

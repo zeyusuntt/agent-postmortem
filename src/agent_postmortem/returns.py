@@ -205,6 +205,8 @@ def launcher_of(meta: dict, sibling_ids, own_id: str) -> tuple[str | None, str]:
         not isinstance(depth, int) or isinstance(depth, bool) or depth < 1
     ):
         return None, "malformed"
+    if meta.get("toolUseId", ABSENT) is not ABSENT and not isinstance(meta["toolUseId"], str):
+        return None, "malformed"
     if parent is ABSENT:
         return ("main", "none") if depth is ABSENT or depth < 2 else (None, "parent_missing")
     if parent in sibling_ids:
@@ -302,7 +304,9 @@ def resume_count(
     return count
 
 
-def _launch_candidates(child: str, launcher: ReturnFacts, notes: list[Note]):
+def _launch_candidates(
+    child: str, launcher: ReturnFacts, notes: list[Note], meta_tool_use: object = ABSENT,
+):
     agent_uses = {
         tool_id for tool_id, uses in launcher.uses.items()
         if uses and uses[0].name in AGENT_LAUNCH_TOOLS
@@ -312,18 +316,23 @@ def _launch_candidates(child: str, launcher: ReturnFacts, notes: list[Note]):
         if any(child in r.agent_ids for r in launcher.results.get(tool_id, []))
     }
     by_note = {n.tool_use_id for n in notes if n.tool_use_id in agent_uses}
-    return by_result, by_note
+    # the child's meta `toolUseId` (a string) names the launching tool_use in its launcher
+    by_meta = (
+        {meta_tool_use}
+        if isinstance(meta_tool_use, str) and meta_tool_use in agent_uses else set()
+    )
+    return by_result, by_note, by_meta
 
 
 def main_side_digest(
-    child: str, main: ReturnFacts, notes: list[Note],
+    child: str, main: ReturnFacts, notes: list[Note], meta_tool_use: object = ABSENT,
 ) -> str:
     """H1: a bounded digest of the main-side evidence for this child: its launch and resume
     `tool_use` ids, lines, timestamps and result classes, and its accepted notifications' ids,
     statuses and lines."""
     facts: list = []
-    by_result, by_note = _launch_candidates(child, main, notes)
-    for tool_id in sorted(by_result | by_note):
+    by_result, by_note, by_meta = _launch_candidates(child, main, notes, meta_tool_use)
+    for tool_id in sorted(by_result | by_note | by_meta):
         use = main.uses[tool_id][0]
         facts.append([
             "launch", tool_id, use.line, use.ts.isoformat() if use.ts else None,
@@ -349,6 +358,7 @@ def main_side_digest(
                 for r in results
             ],
         ])
+    facts.append(["meta_link", meta_tool_use if isinstance(meta_tool_use, str) else None])
     facts.append(["bad", child in main.bad_named])
     facts.append(["notes", sorted((n.tool_use_id, n.status, n.line) for n in notes)])
     text = json.dumps(facts, sort_keys=True, default=repr)
@@ -358,6 +368,7 @@ def main_side_digest(
 def decide(
     child: str, launcher: ReturnFacts, main: ReturnFacts, notes: list[Note],
     issuers: list[ReturnFacts], siblings: frozenset[str] = frozenset(),
+    meta_tool_use: object = ABSENT,
 ) -> Decision:
     """T0 to T5 for `child` (T1's launcher choice is `launcher_of`; its failures never reach here).
 
@@ -375,8 +386,8 @@ def decide(
         return unknown("malformed")
 
     # T2: the launch
-    by_result, by_note = _launch_candidates(child, launcher, notes)
-    candidates = by_result | by_note
+    by_result, by_note, by_meta = _launch_candidates(child, launcher, notes, meta_tool_use)
+    candidates = by_result | by_note | by_meta
     if not candidates:
         return unknown("no_evidence")
     if len(candidates) > 1:

@@ -114,6 +114,11 @@ SANDBOX_WRITE_DENIED = (
 # (agent-ac500000000000002.jsonl, line 3).
 SHELL_GUARD_BLOCK_REGEX = r"Security: \S+ blocked in workspace"
 
+# The Codex companion's refusal to start: "Codex CLI is not installed or is
+# missing required runtime support" opens a line of the failing companion
+# call's output (docs/DESIGN.md 4.13.2).
+CODEX_UNAVAILABLE = ("Codex CLI is not installed or is missing required runtime support",)
+
 # The model classifier auto mode relies on to judge Bash safety went down.
 # Observed as "claude-sonnet-5[1m] is temporarily unavailable (timed out), so
 # auto mode cannot determine the safety of Bash right now." on Claude Code
@@ -327,6 +332,10 @@ def _predicate_sandbox_write_denied(text: str, shape: str) -> bool:
     return False
 
 
+def _predicate_codex_unavailable(text: str, shape: str) -> bool:
+    return any(line.startswith(CODEX_UNAVAILABLE[0]) for line in text.split("\n"))
+
+
 _SHELL_GUARD_COMPILED_RE = re.compile(SHELL_GUARD_BLOCK_REGEX)
 
 
@@ -448,6 +457,13 @@ REGISTRY: dict[str, MarkerSpec] = {
             fragments=(),
             is_candidate=_candidate_shell_guard_block,
             predicate=_predicate_shell_guard_block,
+        ),
+        MarkerSpec(
+            id="codex_unavailable",
+            producer="codex_companion",
+            shapes=(SHAPE_TOOL_RESULT_BASH_CODEX,),
+            fragments=CODEX_UNAVAILABLE,
+            predicate=_predicate_codex_unavailable,
         ),
         MarkerSpec(
             id="permission_denied",

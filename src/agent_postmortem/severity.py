@@ -48,6 +48,8 @@ VOCAB: dict[str, frozenset[str]] = {
     }),
     "absence": frozenset({"present_now", "absent_now", "unknown", "none"}),
     "obligation": frozenset({"none", "prompt_path", "claimed_path"}),
+    "outcome": frozenset({"completed", "other"}),
+    "later_success": frozenset({"yes", "no"}),
 }
 
 # detector id -> its input names, in the order the diagnostic prints them.
@@ -60,6 +62,7 @@ INPUT_NAMES: dict[str, tuple[str, ...]] = {
     "missing_artifact": ("obligation", "absence"),
     "structured_output_failure": ("recovered",),
     "codex_write_denied": (),
+    "codex_unavailable": ("outcome", "later_success"),
     "bash_backgrounded": (),
     "bash_timeout": (),
     "tool_json_error": (),
@@ -108,6 +111,11 @@ RULES: dict[str, list[tuple[tuple, str]]] = {
         (("yes",), "minor"),
     ],
     "codex_write_denied": [((), "minor")],
+    "codex_unavailable": [
+        (("completed", "no"), "major"),
+        (("completed", "yes"), "minor"),
+        (("other", _ANY), "minor"),
+    ],
     "bash_backgrounded": [((), "minor")],
     "bash_timeout": [((), "minor")],
     "tool_json_error": [((), "minor")],
