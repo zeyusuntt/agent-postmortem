@@ -1,8 +1,18 @@
 # agent-postmortem
 
-Find out which "done" in a Claude Code run you can't trust. When the runtime kills a subagent, its transcript can record `[Request interrupted by user]` although no one pressed a key, and the run can still end as completed. agent-postmortem reads the logs Claude Code already writes under `~/.claude/projects`, after the run, and tells you which agents were killed and started over, which never returned, which said "done" while their own result reported failures, and what work they may have left half-written. Then it guides the rescue without touching your files.
+Which "done" in your last Claude Code run can't you trust?
 
-The command-line tool is local and read-only: Python standard library only, no LLM, no network access, and it never changes your files, transcripts, commits, or branches. (The Claude Code plugin's one network action, installing that tool, is described under Privacy; Limits notes two rare git index modes in which git's own `status` still updates its bookkeeping.) It covers Claude Code Workflow runs and ordinary sessions with subagents. Status: alpha, used so far on the maintainer's own machines. Claude Code only.
+agent-postmortem reads the transcripts Claude Code already wrote under `~/.claude/projects` and, for every Workflow run and every session with subagents, says which agents were killed (in a Workflow, often quietly started over), which never returned, which said "done" while their own result said otherwise, and which files and commits that left at risk. Then it lists at most 3 next steps. No setup, no proxy, no LLM, no network access, and it never changes your files.
+
+On the maintainer's machine (scan 2026-10-27, 0.3.2), 13 of 166 workflow runs launched at least one agent's task a second time, and 10.2 hours went to retries and to attempts that ended without a result.
+
+```
+uvx agent-postmortem scan
+```
+
+From GitHub instead of PyPI: `uvx --from git+https://github.com/zeyusuntt/agent-postmortem agent-postmortem scan`.
+
+The command-line tool is local and read-only: Python standard library only, no LLM, no network access, and it never changes your files, transcripts, commits, or branches. (The Claude Code plugin's one network action, installing that tool, is described under Privacy; Limits notes two rare git index modes in which git's own `status` still updates its bookkeeping.) What it covers, below, lists the run shapes it handles and the ones it does not yet. Status: alpha, used so far on the maintainer's own machines. Claude Code only.
 
 [![CI](https://github.com/zeyusuntt/agent-postmortem/actions/workflows/ci.yml/badge.svg)](https://github.com/zeyusuntt/agent-postmortem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -44,16 +54,35 @@ That is `agent-postmortem demo`, run against a packaged synthetic run: no setup,
 
 Info-severity findings (`wasted_time` here) and evidence are hidden by default: `--verbose` shows every finding with its evidence pointers, `--evidence` adds up to 2 pointers per story, and the transcript lines themselves need `--local --evidence` (recognized paths replaced) or `--raw --evidence`.
 
+## What it covers
+
+Coverage today, checked against the failure reports in Claude Code's issue tracker on 2026-10-28:
+
+| Run shape or failure | Coverage | What you get |
+|---|---|---|
+| Workflow runs: runtime kills and retries | covered | kills logged as `[Request interrupted by user]` with no one at the keyboard, cold same-key retries and the time they cost, failed attempts with their cause (usage limit and reset time, machine sleep, server error), and a workflow the harness reported failed |
+| A "done" you can't trust | covered | an agent that completed while its own result reports failed tests, `ok: false` or blockers (`claim_contradiction`), or while its Codex companion call never started (`codex_unavailable`) |
+| Subagents that never returned | covered | WORK AT RISK says `unknown` instead of `none`, and names them |
+| `claude -p` (headless) | partial | killed and unreturned subagents show; the process's own exit status (for example exit 0 with `result: success` after a kill) is not in the transcript, so the tool cannot see it |
+| Background subagents (`run_in_background`) | partial | killed and unreturned ones show; a "completed" that arrived while the agent's own background work was still running, or with a tool call that never got a result, is not flagged yet |
+| `claude --bg` sessions | not yet | each job's session is read like any session, but the job's own state (its "done" line, work still in flight) is not |
+| Agent teams | not yet | teammates and their idle or blocked states are not modeled |
+| Cross-session messages (`SendMessage`) | not yet | whether a message was delivered is not checked |
+
+If you run one of the partial or not-yet shapes, please open a ["my run shape isn't covered"](https://github.com/zeyusuntt/agent-postmortem/issues/new?template=run_shape_not_covered.yml) issue with the output of `agent-postmortem run <run-id> --bug-report`. Logs from those runs are what would make support possible, and that output is redacted by default (never paste a raw transcript).
+
 ## Quick start
 
-Install the command-line tool from GitHub with [uv](https://docs.astral.sh/uv/) (it fetches Python 3.11 or later if you don't have it), then try it:
+Install the command-line tool with [uv](https://docs.astral.sh/uv/) (it fetches Python 3.11 or later if you don't have it), then try it:
 
 ```
-uv tool install git+https://github.com/zeyusuntt/agent-postmortem
+uv tool install agent-postmortem
 agent-postmortem demo
 agent-postmortem scan
 agent-postmortem run <run-id>
 ```
+
+To install from GitHub instead of PyPI: `uv tool install git+https://github.com/zeyusuntt/agent-postmortem`.
 
 `scan` looks under `~/.claude/projects` by default and prints the runs that need attention: ranked, with a one-line reason and a next command for each, plus 7-day and all-time totals. Add `--all` for the full one-line-per-run list instead. `run` takes a run id (or a unique prefix of one, a session UUID, an agent transcript stem such as `agent-<id>`, an agent alias such as `a:<alias>` from a share report, or a path) and prints the verdict for that one run, what work is at risk, and at most 3 next steps; an id that matches more than one run is an error listing the candidates. Add `--evidence` for excerpt pointers or `--verbose` for the full finding list.
 

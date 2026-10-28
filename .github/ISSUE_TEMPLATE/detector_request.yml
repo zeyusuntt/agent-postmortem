@@ -20,11 +20,14 @@ body:
     attributes:
       label: Evidence
       description: |
-        A redacted excerpt from `journal.jsonl`, a `meta.json`, or a
-        transcript line that shows the pattern (use
-        `agent-postmortem run <id> --bug-report`, or hand-redact it
-        yourself; never paste a real session id or absolute path).
-      render: json
+        The output of `agent-postmortem run <id> --bug-report` for a run
+        that shows the pattern, at the default level (redacted, no
+        transcript text), plus the shape of the evidence in your own words,
+        for example "the last user entry is the interrupt sentence and the
+        journal has a second started event for the same key". Never paste a
+        raw transcript, a `journal.jsonl` line, a real session id or an
+        absolute path.
+      render: markdown
     validations:
       required: false
   - type: textarea

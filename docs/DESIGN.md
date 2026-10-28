@@ -6689,9 +6689,11 @@ pypi.org and the TestPyPI dry run.
 
 ### 8.4 README
 
-First screen, in order: name, a short tagline that names the problem (what
-the tool reads, what it reports, that it is local and read-only, and its
-status), badges (CI, license; PyPI version and Python versions only once a
+First screen, in order (from 0.3.3): name; the question the tool answers
+("Which 'done' in your last Claude Code run can't you trust?"); one paragraph on
+what it reads, what it reports and that it is local and read-only; one dated number
+from a named version's scan; `uvx agent-postmortem scan` with the GitHub form
+(`uvx --from git+...`) as a fallback; the status paragraph; badges (CI, license; PyPI version and Python versions only once a
 PyPI release exists, since a badge for a missing release renders broken),
 the demo output as a fenced code block (not a screenshot: it must stay text,
 so it can be diffed against a live `agent-postmortem demo` run -- 8.2,
@@ -6699,6 +6701,13 @@ tests/test_readme.py), the install command that works for the current
 distribution (a GitHub install with `uv tool install git+...` until the
 first PyPI release, then `uvx agent-postmortem scan`), a command table
 listing exactly which commands take `--json` and which take `--no-redact`.
+Then "What it covers", before Quick start: one table of run shapes and failure
+kinds, each marked covered, partial or not yet, as checked against the upstream issue
+tracker on a stated date, and a line asking users of the partial and not-yet shapes to
+open a "my run shape isn't covered" issue with `--bug-report` output. Issue templates
+under `.github/ISSUE_TEMPLATE` (wrong verdict, confusing output, run shape not covered,
+crash or error, detector request) ask for default-level `--bug-report` output and the
+Claude Code version, and never for a raw transcript (tests/test_launch_docs.py).
 Then: Why (the retry count from one dated scan, naming the version that
 produced it, and links to anthropics/claude-code issues with their status
 on that date: #88993, #85206, #98170, #104986, #84346, #65500; the 0.1

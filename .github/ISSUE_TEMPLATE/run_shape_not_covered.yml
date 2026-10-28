@@ -1,0 +1,70 @@
+name: My run shape isn't covered
+description: You run Claude Code in a way the tool does not read yet (claude -p, background subagents, claude --bg, agent teams, SendMessage, or another shape).
+title: "[run shape]: "
+labels: ["run-shape"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The README's "What it covers" table lists the shapes the tool handles
+        today. Support for a new shape is built from real runs of that shape,
+        so a report from you is the most useful thing there is. Attach the
+        default-level bug report for one such run:
+
+        ```
+        agent-postmortem run <run-id> --bug-report
+        ```
+
+        It is redacted by default and carries no transcript text. Read it before
+        posting. Do not add `--local`, `--raw` or `--evidence`, and never paste a
+        raw transcript here. If more detail is needed, we will ask for counts or
+        a synthetic reproduction, never for your transcripts.
+  - type: dropdown
+    attributes:
+      label: Run shape
+      options:
+        - claude -p (headless)
+        - Background subagents (run_in_background)
+        - claude --bg session
+        - Agent team
+        - Cross-session messages (SendMessage)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What went wrong in that run
+      description: What you saw, for example an agent that said "done" but whose work was missing, a killed agent, or a job that never finished, and how you found out.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: How the run was launched
+      description: The command or setup in general terms (flags, hooks, tools). No prompts and no transcript text.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Bug report output
+      description: The output of `agent-postmortem run <run-id> --bug-report`, at the default level.
+      render: markdown
+    validations:
+      required: false
+  - type: input
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: agent-postmortem version
+      description: Output of `agent-postmortem --version`.
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Privacy
+      options:
+        - label: I pasted only default-level output (no `--local`, `--raw` or `--evidence`) and no transcript text.
+          required: true

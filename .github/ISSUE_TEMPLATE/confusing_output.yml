@@ -1,0 +1,55 @@
+name: Confusing output
+description: A line or section you could not understand or act on, even though it may be correct.
+title: "[output]: "
+labels: ["confusing-output"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Output that is right but unclear is still a bug. Copy the confusing part
+        from the default-level output; if the whole run helps, attach:
+
+        ```
+        agent-postmortem run <run-id> --bug-report
+        ```
+
+        It is redacted by default and carries no transcript text. Read it before
+        posting. Do not add `--local`, `--raw` or `--evidence`, and never paste a
+        raw transcript here.
+  - type: textarea
+    attributes:
+      label: The confusing line or section
+      description: Copied from the default-level output of `run`, `scan`, `rescue`, `watch` or a hook message.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What you expected it to tell you
+      description: What you were trying to decide, and what would have made the next step clear.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Bug report output
+      description: The output of `agent-postmortem run <run-id> --bug-report`, at the default level.
+      render: markdown
+    validations:
+      required: false
+  - type: input
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: agent-postmortem version
+      description: Output of `agent-postmortem --version`.
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Privacy
+      options:
+        - label: I pasted only default-level output (no `--local`, `--raw` or `--evidence`) and no transcript text.
+          required: true

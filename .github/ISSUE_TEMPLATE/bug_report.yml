@@ -1,5 +1,5 @@
-name: Bug report
-description: Something in agent-postmortem itself is wrong (a crash, a wrong verdict, a wrong detector).
+name: Crash or error
+description: agent-postmortem crashed, printed an error, or failed to install. For a wrong verdict or confusing output, use those templates.
 title: "[bug]: "
 labels: ["bug"]
 body:
@@ -39,6 +39,12 @@ body:
     attributes:
       label: agent-postmortem version
       description: Output of `agent-postmortem --version`.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
     validations:
       required: true
   - type: input

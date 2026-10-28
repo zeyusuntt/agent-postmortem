@@ -1,0 +1,70 @@
+name: Wrong verdict
+description: agent-postmortem said something about a run that the run does not show (a kill, a retry, a failure, a "done", or a work-at-risk line).
+title: "[verdict]: "
+labels: ["wrong-verdict"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for checking the tool against what really happened. Attach the
+        default-level bug report for the run:
+
+        ```
+        agent-postmortem run <run-id> --bug-report
+        ```
+
+        It is redacted by default: paths, ids, emails, account names and agent
+        names are replaced, and evidence is pointers and marker codes only, with
+        no transcript text. Read it before posting. Do not add `--local`,
+        `--raw` or `--evidence`, and never paste a raw transcript or a
+        `journal.jsonl` line here.
+  - type: textarea
+    attributes:
+      label: What the tool said
+      description: The verdict, story or line you think is wrong, copied from the default-level output.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What actually happened
+      description: What really happened in that run, and how you know (in your own words, not transcript text).
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Bug report output
+      description: The output of `agent-postmortem run <run-id> --bug-report`, at the default level.
+      render: markdown
+    validations:
+      required: false
+  - type: dropdown
+    attributes:
+      label: Run shape
+      options:
+        - Workflow tool run
+        - Session with subagents
+        - claude -p (headless)
+        - Background subagents (run_in_background)
+        - claude --bg session
+        - Agent team
+        - Other
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: agent-postmortem version
+      description: Output of `agent-postmortem --version`.
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Privacy
+      options:
+        - label: I pasted only default-level output (no `--local`, `--raw` or `--evidence`) and no transcript text.
+          required: true

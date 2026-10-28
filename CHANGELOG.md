@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- README first screen: it opens with the question the tool answers ("Which 'done' in your
+  last Claude Code run can't you trust?"), one paragraph, the dated number (13 of 166
+  workflow runs, scan 2026-10-27), and `uvx agent-postmortem scan` with the GitHub form as a
+  fallback; Quick start installs from PyPI with the same fallback. A new "What it covers"
+  section marks each run shape covered, partial (`claude -p`, background subagents) or not
+  yet (`claude --bg` sessions, agent teams, `SendMessage` delivery) and asks users of those
+  shapes to open an issue. Issue templates: wrong verdict, confusing output and "my run shape
+  isn't covered" are new; the bug report template is now for crashes and errors; every
+  template asks for default-level `--bug-report` output and the Claude Code version, and the
+  detector request no longer asks for transcript lines.
 - The plugin manifest and its marketplace entry now carry the same description: "Reads the
   Claude Code logs already on your machine and tells you which agent's 'done' you can't trust,
   and what to run next." The marketplace has a description of its own, and `plugin.json` names
