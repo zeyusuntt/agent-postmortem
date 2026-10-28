@@ -38,10 +38,11 @@ jobs:
       - name: Privacy check (tree and built artifacts)
         run: scripts/check-privacy.sh --tree --artifacts dist/
 
-      - name: Validate Claude Code plugin manifest
+      - name: Validate Claude Code plugin and marketplace manifests
         run: |
           if command -v claude >/dev/null 2>&1; then
-            claude plugin validate ./plugin
+            claude plugin validate --strict ./plugin
+            claude plugin validate --strict .
           else
             echo "claude CLI not present on this runner; skipping plugin validation."
           fi

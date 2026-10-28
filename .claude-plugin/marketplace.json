@@ -1,5 +1,6 @@
 {
   "name": "agent-postmortem",
+  "description": "The agent-postmortem plugin for Claude Code: it reads the Claude Code logs already on your machine and tells you which agent's 'done' you can't trust, and what to run next. Claude Code only.",
   "owner": {
     "name": "zeyusuntt"
   },
@@ -7,7 +8,7 @@
     {
       "name": "agent-postmortem",
       "source": "./plugin",
-      "description": "Read-only post-mortem analysis for multi-agent Claude Code runs, surfaced automatically as you work."
+      "description": "Reads the Claude Code logs already on your machine and tells you which agent's 'done' you can't trust, and what to run next."
     }
   ]
 }

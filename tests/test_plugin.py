@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import shutil
 import signal
 import stat
@@ -59,6 +60,39 @@ def test_plugin_json_parses_and_has_required_keys():
     assert data["author"] == {"name": "zeyusuntt", "url": "https://github.com/zeyusuntt"}
     assert data["hooks"] == "./hooks/hooks.json"
     assert data["skills"] == "./skills/"
+
+
+# The one positioning line (launch plan section 2): the plugin manifest and its marketplace
+# entry carry the same words, and the marketplace itself has a description, so
+# `claude plugin validate --strict` passes for both (a marketplace with no description is a
+# warning, and --strict treats warnings as errors).
+POSITIONING = (
+    "Reads the Claude Code logs already on your machine and tells you which agent's 'done' "
+    "you can't trust, and what to run next."
+)
+REPOSITORY_URL = "https://github.com/zeyusuntt/agent-postmortem"
+
+
+def test_plugin_and_marketplace_entry_carry_the_one_positioning_line():
+    plugin = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
+    marketplace = _load_json(REPO_ROOT / ".claude-plugin" / "marketplace.json")
+    assert plugin["description"] == POSITIONING
+    assert marketplace["plugins"][0]["description"] == POSITIONING
+
+
+def test_marketplace_has_a_description_and_plugin_names_its_homepage_and_repository():
+    marketplace = _load_json(REPO_ROOT / ".claude-plugin" / "marketplace.json")
+    assert isinstance(marketplace.get("description"), str) and marketplace["description"].strip()
+    plugin = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
+    assert plugin["homepage"] == REPOSITORY_URL
+    assert plugin["repository"] == REPOSITORY_URL
+
+
+def test_ci_validates_the_plugin_and_the_marketplace_strictly():
+    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert re.search(r"^\s*claude plugin validate --strict \./plugin\s*$", ci, re.M)
+    assert re.search(r"^\s*claude plugin validate --strict \.\s*$", ci, re.M)
+    assert not re.search(r"claude plugin validate (?!--strict)", ci)
 
 
 def test_plugin_version_equals_package_version():

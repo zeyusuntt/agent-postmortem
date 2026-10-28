@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The plugin manifest and its marketplace entry now carry the same description: "Reads the
+  Claude Code logs already on your machine and tells you which agent's 'done' you can't trust,
+  and what to run next." The marketplace has a description of its own, and `plugin.json` names
+  its homepage and repository. CI validates both the plugin and the marketplace file with
+  `claude plugin validate --strict`; before this the marketplace check failed under `--strict`
+  (no description).
 - README and DESIGN: the transcript formats are now stated as observed on Claude Code 2.1.251 to
   2.1.312 (was 2.1.280). The Limits section names the five entry types first seen in 2.1.285 to
   2.1.310 that are not interpreted yet, and says Claude Code deletes transcripts older than 30

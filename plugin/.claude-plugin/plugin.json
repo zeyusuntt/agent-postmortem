@@ -1,11 +1,13 @@
 {
   "name": "agent-postmortem",
   "version": "0.3.3",
-  "description": "Post-mortem for multi-agent coding runs: proves what silently went wrong and drafts the rule that would have prevented it.",
+  "description": "Reads the Claude Code logs already on your machine and tells you which agent's 'done' you can't trust, and what to run next.",
   "author": {
     "name": "zeyusuntt",
     "url": "https://github.com/zeyusuntt"
   },
+  "homepage": "https://github.com/zeyusuntt/agent-postmortem",
+  "repository": "https://github.com/zeyusuntt/agent-postmortem",
   "hooks": "./hooks/hooks.json",
   "skills": "./skills/"
 }

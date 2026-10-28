@@ -5938,8 +5938,8 @@ slug `-home-user-project`, synthetic wf ids listed in
 ### 7.1 Layout and install
 
 ```
-.claude-plugin/marketplace.json    {name: "agent-postmortem", owner, plugins: [{name: "agent-postmortem", source: "./plugin"}]}
-plugin/.claude-plugin/plugin.json  name, version (== package version), description, author, hooks, skills
+.claude-plugin/marketplace.json    {name: "agent-postmortem", description, owner, plugins: [{name: "agent-postmortem", source: "./plugin", description}]}
+plugin/.claude-plugin/plugin.json  name, version (== package version), description, author, homepage, repository, hooks, skills
 plugin/hooks/hooks.json
 plugin/hooks/run.sh
 plugin/skills/postmortem/SKILL.md
@@ -5947,8 +5947,12 @@ plugin/README.md
 ```
 
 Install: `/plugin marketplace add zeyusuntt/agent-postmortem`, then
-`/plugin install agent-postmortem@agent-postmortem`. `claude plugin validate
-./plugin` passes in CI when the `claude` binary is available.
+`/plugin install agent-postmortem@agent-postmortem`. The plugin manifest and its marketplace
+entry carry the same one-line description (the positioning line), and the marketplace has a
+description of its own. `claude plugin validate --strict ./plugin` and `claude plugin validate
+--strict .` (the marketplace file) pass in CI when the `claude` binary is available; the one
+remaining plugin directory note, no icon, does not change the result (the icon is an owner
+launch step, because the directory fixes it at the first portal save).
 
 hooks.json, every command quoted with `${CLAUDE_PLUGIN_ROOT}`:
 
@@ -6672,8 +6676,8 @@ critical finding" (4.6), the same substitution `run`'s own 4.8 entry makes.
 `.github/workflows/ci.yml`: on push and pull request; matrix ubuntu-latest
 and macos-latest times Python 3.11, 3.12, 3.13; steps: `uv sync --extra dev`,
 `uv run ruff check`, `uv run pytest`, `uv build`, `scripts/check-privacy.sh
---tree --artifacts dist/`, and `claude plugin validate ./plugin` when the
-binary exists. `.github/workflows/release.yml`: on tag `v*`, build job then
+--tree --artifacts dist/`, and `claude plugin validate --strict ./plugin` and
+`claude plugin validate --strict .` when the binary exists. `.github/workflows/release.yml`: on tag `v*`, build job then
 publish job with `environment: pypi`, `permissions: id-token: write`,
 `pypa/gh-action-pypi-publish@release/v1`. Both workflows declare a
 top-level `permissions: contents: read` so every job is read-only by
