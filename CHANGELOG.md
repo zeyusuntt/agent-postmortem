@@ -5,6 +5,39 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4]
+
+### Fixed
+
+- One bad transcript line could crash a whole scan. A line nested deeper than Python's JSON
+  parser can follow (for example 200,000 opening brackets) raised RecursionError, which no
+  reader caught, so `scan`, `run`, `rules` and `trend` stopped with "unexpected
+  RecursionError" (exit 1), whether the line sat in a transcript, a journal.jsonl or an
+  agent's meta.json. Every reader of run data now treats it like any other line that is not
+  JSON (diagnostic `nested too deeply to parse`), and `scan` carries on over the other runs
+  and prints one `SKIPPED` line: how many unreadable lines in which runs, how many transcript
+  files had no readable line, how many meta files and runs could not be read, and that
+  `agent-postmortem run <run-id> --json` lists each line under diagnostics. A run that still
+  cannot be read makes scan exit 4 (with `--json`, the `SKIPPED` line goes to stderr and the
+  JSON is unchanged); `rules`, `rules propose`, `rules review`, `trend` and `run --here` name
+  it on stderr and go on; `run`, `rescue` or `watch` on that one run say it could not be read
+  and exit 4, also when it was named by `agent-<id>` or `a:<alias>`. A parent transcript line
+  that is not a JSON object is now a diagnostic, like one in any other transcript. A last line
+  with no newline yet (a live write) is not counted as skipped.
+
+### Changed
+
+- First-run empty state: on a machine with no Claude Code runs, `scan` (and `trend`, `rules`,
+  and `run`, `rescue` when the root holds no run at all) no longer prints only
+  `no runs found under path-1`. It names the standard location `~/.claude/projects`
+  home-relative (it is the same on every machine; a root typed with `--root` still prints as
+  `path-N`), says when it does not exist yet, what the tool reads, `next: agent-postmortem
+  demo`, and that `--root` or `CLAUDE_CONFIG_DIR` points elsewhere and transcripts are
+  deleted after 30 days by default. Exit code 2 is unchanged. `run --here` with runs elsewhere
+  points at `scan`; a scan that found no subagent transcript and no Workflow run says so
+  (not with `--kind`); `watch`'s 60 s timeout says what it waits for; the
+  `/postmortem` skill relays the message and stops.
+
 ## [0.3.3]
 
 ### Added

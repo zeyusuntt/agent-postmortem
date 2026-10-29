@@ -138,7 +138,12 @@ def _wait_for_journal(
             return run_dir
         remaining = _JOURNAL_WAIT_SECONDS - (_now() - start)
         if remaining <= 0:
-            print("no journal appeared within 60 s", file=err)
+            print(
+                "no journal appeared within 60 s: watch follows a Workflow run while it is "
+                "running (the plugin hands you this command when one starts); "
+                "agent-postmortem scan lists past runs",
+                file=err,
+            )
             return None
         # docs/DESIGN.md 4.12 (release finding F11): capped to whatever is
         # left of the 60s budget, so a large --interval cannot overshoot it
@@ -493,7 +498,7 @@ def watch_run(
             next_line_no += 1
             try:
                 entry = json.loads(raw_line)
-            except (json.JSONDecodeError, ValueError):
+            except (json.JSONDecodeError, ValueError, RecursionError):
                 entry = None
             if not isinstance(entry, dict):
                 # docs/DESIGN.md 4.12 (release finding F9): a complete line

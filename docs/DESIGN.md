@@ -77,7 +77,26 @@ Three verbs, in order of value: diagnose (`scan`, `run`, hooks), solve
   never `json.load` a whole transcript; never keep raw lines.
 - Tolerant parsing: a bad line becomes a diagnostic string on the Run, never
   an exception. A run whose inputs could not be inspected carries analysis
-  status INCOMPLETE (section 4.6) and is never reported CLEAN.
+  status INCOMPLETE (section 4.6) and is never reported CLEAN. (0.3.4) A line
+  nested deeper than Python's parser can follow raises RecursionError rather
+  than a JSONDecodeError; every read of run data (transcripts, journal.jsonl,
+  an agent's meta.json, the parent transcript, and the hook, watch and rescue
+  readers) treats it exactly like a line that is not JSON, with the
+  diagnostic `<file>:<line>: nested too deeply to parse` (the parent
+  transcript's is `<file>:<line>: undecodable parent transcript line: nested
+  too deeply to parse`). `load_run` counts the physical lines its read
+  skipped (not JSON, nested too deeply, not a JSON object; a last line with
+  no newline yet is a live write and is not counted) on `Run.skipped_lines`,
+  and the meta.json files it could not parse on `Run.skipped_files`; neither
+  is exported. A workflow run also counts the parent transcript lines it
+  could not parse or that are not a JSON object (`<file>:<line>: parent
+  transcript line that is not a JSON object`, which leaves parent inspection
+  complete: such a line holds no evidence); a session does not, since its
+  parent is its own transcript, counted once already. A RecursionError that still escapes the
+  read (the last guard) becomes `RunUnreadable`, which carries the id the run
+  would print (never a path; a non-conforming directory name goes through
+  `valid_workflow_run_id`). Measured: Python's JSON parser follows a
+  5,000-deep object and a 990-deep array but not a 200,000-deep array.
 - Test first. Every detector has a fixture that triggers it, a fixture that
   does not, and an evidence line in `path:line` form pointing into the fixture.
 - R8 (v0.2, unit M4, section 4.11). The tool never says "verified".
@@ -3184,7 +3203,7 @@ order of the sources:
 | journal | started event: non-string key, non-string agentId, no canonical agentId | kept |
 | journal | started event: agent id did not match the expected format (replacement used) | kept |
 | journal | started event: non-string `label`, non-string `phase` (cosmetic, never identifying) | excluded |
-| parent | undecodable line, malformed entry, `message is not an object`, parent unreadable | kept |
+| parent | undecodable line, line that is not a JSON object (0.3.4), malformed entry, `message is not an object`, parent unreadable | kept |
 | parent | ambiguous launch, launch without result, malformed launch result, rejected resume launch result | kept, only for a run it involves (A4 and A5, above) |
 | transcripts | `<file>:<n>: <JSON error>`, `<file>:<n>: not a JSON object`, `<file>: unreadable: <error>` (an open failure or a failure anywhere in the read) | kept |
 | transcripts | `message is not an object`, `tool_use input is not an object` | kept |
@@ -4207,6 +4226,57 @@ every detector's own severity inputs and rule alongside its existing row
   `uuid:<last 4>`, `agent-N`, `value-N`, numbered across one command) and
   say what was expected, at `share` and `local`; at `raw` they print as v0.2
   did.
+- **First-run empty state (0.3.4).** "No runs found under <root>" is the first
+  thing a stranger on a fresh machine sees, so it says where the tool looked,
+  what it reads and what to run next, and keeps exit 2 ("no runs or not a
+  run", 4.6), so a script still tells "nothing to judge" from "all clean".
+  Its first line is `postmortem: no runs found under <root>`, with ` (it does
+  not exist yet)` when the root is missing; three fixed lines follow at every
+  level: what it reads (Workflow runs, and sessions with the subagents they
+  launched), `next: agent-postmortem demo`, and that `--root` or
+  `CLAUDE_CONFIG_DIR` points elsewhere and Claude Code deletes transcripts
+  after 30 days by default. The standard location `~/.claude/projects` is
+  the same on every machine and not private, so every error names it
+  home-relative at `share` and `local` (absolute at `raw`); any other root,
+  typed or set through `CLAUDE_CONFIG_DIR`, stays `path-N` there. `scan`,
+  `trend` and `rules` print it; `run`, `rescue` and `rules --run` print it
+  instead of "no run matches" or the `--here` message when the root holds no
+  run candidate at all (`reader.has_run_candidates`: a workflow run directory
+  or a UUID-named session transcript, found by glob; it never opens a file, so
+  the error path cannot fail on a transcript's content). `run --here` with
+  runs elsewhere adds one line pointing at `scan`. A `scan` of both kinds
+  that found no subagent transcript and no Workflow run adds one line under
+  "nothing needs attention": "this scan found no subagent transcript and no
+  Workflow run, which is what agent-postmortem checks; agent-postmortem demo
+  shows a sample report". It states only what the scan observed (a launch
+  whose transcript is missing is not "no launch"), and a scan limited with
+  `--kind` never prints it. `watch`'s 60 s timeout says it follows a
+  Workflow run while it is running and points at `scan`.
+- **What scan could not read (0.3.4).** Discovery reports a UUID-named
+  transcript whose every line failed to parse (it is not a run, but it is not
+  silently gone either). After its text output, `scan` prints one line when
+  anything was skipped: `SKIPPED       <n> unreadable line(s) in <m> run(s)
+  (<run ids>), still scanned; <k> transcript file(s) with no readable line;
+  <j> agent meta file(s) that could not be read; <i> run(s) that could not
+  be read (<run ids>); agent-postmortem run <run-id> --json lists each line
+  under diagnostics`, each clause only when nonzero, at most 3 run ids then
+  `and N more`, no path. With `--json` the same line goes to stderr and the
+  JSON document is unchanged. A run that cannot be read at all
+  (`RunUnreadable`, the last guard; every parse site already skips such a
+  line) is counted there and makes scan exit 4, like an INCOMPLETE run, also
+  when no other run is left to show (the empty state names it; `scan --here`
+  adds the left-out line below). `rules`, `rules propose`, `rules review`,
+  `trend` and `run --here` leave such a run out and say so on stderr:
+  `postmortem: <n> run(s) could not be read and was/were left out (<run
+  ids>)`. A command asked about that one run (`run`,
+  `rules --run`, `rules propose --run`, `rescue`, `watch`; an `agent-<id>` or
+  `a:<alias>` whose candidate run cannot be read still resolves to it) prints
+  `postmortem: <run id> could not be read (its data is nested too deeply to
+  follow); nothing was judged` and exits 4. A transcript file with no
+  readable line does not change the exit code. The empty state adds `<k>
+  transcript file(s) there had no readable line (not JSON, or nested too
+  deeply)` when discovery found one. Each run's skipped lines are in its
+  JSON diagnostics.
 - **Bug report.** At `share`, `--bug-report` carries pointers and marker
   codes only, never excerpts, and its closing note says so (5.2).
 - **`apply` (P18, C-4).** At `share`, `apply` prints no byte derived from
@@ -6634,7 +6704,7 @@ later events go positional).
 
 ### 8.1 Package
 
-`pyproject.toml`: name `agent-postmortem`, version `0.3.3`, console scripts
+`pyproject.toml`: name `agent-postmortem`, version `0.3.4`, console scripts
 `agent-postmortem` and `postmortem`, `requires-python >= 3.11`, no runtime
 dependencies, `[project.optional-dependencies].dev = ["pytest>=8",
 "ruff>=0.6"]`, classifiers, URLs (Homepage, Issues, Changelog). The wheel

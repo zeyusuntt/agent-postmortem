@@ -19,6 +19,7 @@ assembly (docs/DESIGN.md section 4.2).
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import copy
 import hashlib
 import json
@@ -261,6 +262,17 @@ class NotARun(Exception):
     sessionId). docs/DESIGN.md 4.2; the CLI turns this into exit 2."""
 
 
+class RunUnreadable(Exception):
+    """docs/DESIGN.md 4.8 (0.3.4): load_run could not read the run at all, because a
+    RecursionError got past every parse site. run_id is the id the run would print (a workflow
+    id passed through valid_workflow_run_id, or a session's public s_ id), never a path, so a
+    caller can name the run at any disclosure level. The CLI turns this into exit 4."""
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(run_id)
+        self.run_id = run_id
+
+
 def _scan_markers(text: str | None) -> frozenset[str]:
     """Which markers.py fragments (or, for the one regex marker, its name)
     appear anywhere in text. Called on a field's full decoded text before
@@ -319,7 +331,8 @@ def _session_public_id(slug: str, uuid: str, diagnostics: list[str] | None = Non
 
 
 def discover_runs(
-    root: Path, kinds: frozenset[str] = frozenset({"workflow", "session"})
+    root: Path, kinds: frozenset[str] = frozenset({"workflow", "session"}),
+    skipped: list[Path] | None = None,
 ) -> list[RunRef]:
     """Find every run of the given kinds under root, sorted by path.
 
@@ -336,13 +349,17 @@ def discover_runs(
             if _is_dir(path):
                 refs.append(RunRef(kind="workflow", path=path, run_id=path.name))
     if "session" in kinds:
-        session_paths = [
-            path
-            for path in root.glob("*/*.jsonl")
-            if _is_file(path)
-            and _UUID_RE.fullmatch(path.stem)
-            and _has_timestamped_conversation(path)
-        ]
+        session_paths = []
+        for path in root.glob("*/*.jsonl"):
+            if not (_is_file(path) and _UUID_RE.fullmatch(path.stem)):
+                continue
+            is_run, unreadable = _conversation_probe(path)
+            if is_run:
+                session_paths.append(path)
+            elif unreadable and skipped is not None:
+                # docs/DESIGN.md 4.8 (0.3.4): a transcript with no readable line is not a run,
+                # but scan says it left one out
+                skipped.append(path)
         # Register every (slug, uuid) pair in this batch before reading any
         # of them back: a collision between two paths discovered together
         # must give both the same 12-hex id, not just whichever is asked for
@@ -355,6 +372,25 @@ def discover_runs(
 
     refs.sort(key=lambda ref: ref.path)
     return refs
+
+
+def has_run_candidates(root: Path) -> bool:
+    """Whether root holds anything discover_runs could return: a workflow run directory or a
+    UUID-named session transcript (docs/DESIGN.md 4.8's empty state). Globs only and never
+    opens a file, so an error path that asks cannot fail on a transcript's content; a root
+    that cannot be listed answers True, so the caller keeps its original message."""
+    root = Path(root)
+    try:
+        if not _is_dir(root):
+            return False
+        # the same type checks discover_runs makes, without reading any content
+        if any(_is_dir(path) for path in root.glob("*/*/subagents/workflows/wf_*")):
+            return True
+        return any(
+            _is_file(path) and _UUID_RE.fullmatch(path.stem) for path in root.glob("*/*.jsonl")
+        )
+    except OSError:
+        return True
 
 
 # docs/DESIGN.md 4.1 (G-C, GC-1): a final physical line with no trailing newline whose bytes
@@ -434,9 +470,49 @@ def _transcript_reader(path: Path):
         lines.close()
 
 
+# docs/DESIGN.md 4.1 (0.3.4): a line nested deeper than the parser can follow raises
+# RecursionError, not a JSONDecodeError. Every read of run data treats it as a line that is not
+# JSON, and load_run counts what its read skipped (Run.skipped_lines, Run.skipped_files).
+_UNPARSEABLE = (json.JSONDecodeError, ValueError, RecursionError)
+_TOO_DEEP = "nested too deeply to parse"
+_PARENT_BAD_LINE = "undecodable parent transcript line"
+_PARENT_NOT_OBJECT = "parent transcript line that is not a JSON object"
+
+
+@dataclass
+class _ReadSkips:
+    lines: int = 0
+    files: int = 0
+
+
+_READ_SKIPS: contextvars.ContextVar[_ReadSkips | None] = contextvars.ContextVar(
+    "read_skips", default=None,
+)
+
+
+def _skipped_line(count: int = 1) -> None:
+    skips = _READ_SKIPS.get()
+    if skips is not None:
+        skips.lines += count
+
+
+def _skipped_file() -> None:
+    skips = _READ_SKIPS.get()
+    if skips is not None:
+        skips.files += 1
+
+
+def _unparseable_text(exc: BaseException) -> str:
+    return _TOO_DEEP if isinstance(exc, RecursionError) else str(exc)
+
+
 def _has_timestamped_conversation(path: Path) -> bool:
-    """Whether path carries at least one 'user' or 'assistant' entry with a
-    parseable timestamp (docs/DESIGN.md 4.2's definition of a session run).
+    return _conversation_probe(path)[0]
+
+
+def _conversation_probe(path: Path) -> tuple[bool, bool]:
+    """(is a session run, holds no readable line at all). A session run is a file that carries
+    at least one 'user' or 'assistant' entry with a parseable timestamp (docs/DESIGN.md 4.2).
 
     Real Claude Code project directories can hold one-line 'bridge-session'
     files (type 'bridge-session', no timestamp, no user/assistant entry at
@@ -447,7 +523,9 @@ def _has_timestamped_conversation(path: Path) -> bool:
     timestamped entry is typically near the top, and a file with none (the
     only case that reads to EOF) is small by construction."""
     if not _is_file(path) or path.suffix != ".jsonl":
-        return False
+        return False, False
+    unparseable = False
+    parsed = False
     try:
         with _transcript_reader(path) as lines:
             for _line_no, line, _torn in lines:
@@ -456,22 +534,26 @@ def _has_timestamped_conversation(path: Path) -> bool:
                     continue
                 try:
                     entry = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
+                except _UNPARSEABLE:
+                    unparseable = True
                     continue
+                parsed = True
                 if not isinstance(entry, dict):
                     continue
                 if entry.get("type") not in ("user", "assistant"):
                     continue
                 if _parse_ts(entry.get("timestamp")) is not None:
-                    return True
+                    return True, False
     except UnicodeError:
         # bytes that are not UTF-8 before any qualifying entry: the file
         # cannot be ruled out as a session, and its own read reports it
         # unreadable (docs/DESIGN.md 4.1, N4 fix C2)
-        return True
+        return True, False
     except OSError:
-        return False
-    return False
+        return False, False
+    # (is a run, has no readable line at all): a file whose every line failed to parse is
+    # left out like any non-run, but discover_runs reports it (docs/DESIGN.md 4.8, 0.3.4)
+    return False, unparseable and not parsed
 
 
 def _is_workflow_dir(path: Path) -> bool:
@@ -497,7 +579,7 @@ def _sniff_session_file(path: Path) -> bool:
                     continue
                 try:
                     entry = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
+                except _UNPARSEABLE:
                     continue
                 return isinstance(entry, dict) and "sessionId" in entry
     except UnicodeError:
@@ -520,7 +602,36 @@ def load_run(ref_or_path: "RunRef | Path | str") -> Run:
     already tolerates a missing journal.jsonl with a diagnostic. Re-checking
     _is_workflow_dir here would raise NotARun for exactly the directories
     discover_runs promised callers a RunRef for, aborting a fleet scan.
+
+    docs/DESIGN.md 4.1 (0.3.4): the lines and files this read skipped are counted on the Run.
     """
+    skips = _ReadSkips()
+    token = _READ_SKIPS.set(skips)
+    try:
+        run = _load_run(ref_or_path)
+    except RecursionError:
+        # docs/DESIGN.md 4.8 (0.3.4): the last guard, for a recursion no parse site caught
+        raise RunUnreadable(_public_run_id(ref_or_path)) from None
+    finally:
+        _READ_SKIPS.reset(token)
+    run.skipped_lines = skips.lines
+    run.skipped_files = skips.files
+    return run
+
+
+def _public_run_id(ref_or_path: "RunRef | Path | str") -> str:
+    """The id a run at ref_or_path prints, worked out without reading it (RunUnreadable)."""
+    if isinstance(ref_or_path, RunRef):
+        if ref_or_path.kind == "workflow":
+            return valid_workflow_run_id(ref_or_path.path.name)
+        return ref_or_path.run_id
+    path = Path(ref_or_path)
+    if path.suffix == ".jsonl" and not _is_dir(path):
+        return _session_public_id(path.parent.name, path.stem)
+    return valid_workflow_run_id(path.name)
+
+
+def _load_run(ref_or_path: "RunRef | Path | str") -> Run:
     if isinstance(ref_or_path, RunRef):
         if ref_or_path.kind == "workflow":
             return _load_workflow(ref_or_path.path)
@@ -913,17 +1024,21 @@ def _read_journal(
     try:
         with journal_path.open("r", encoding="utf-8") as handle:
             for line_no, line in enumerate(handle, start=1):
+                # an unfinished last line (no newline yet) is a live write, not a skipped line
+                skipped = 1 if line.endswith("\n") else 0
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     entry = json.loads(line)
-                except (json.JSONDecodeError, ValueError) as exc:
-                    diagnostics.append(f"journal.jsonl:{line_no}: {exc}")
+                except _UNPARSEABLE as exc:
+                    diagnostics.append(f"journal.jsonl:{line_no}: {_unparseable_text(exc)}")
+                    _skipped_line(skipped)
                     ok = False
                     continue
                 if not isinstance(entry, dict):
                     diagnostics.append(f"journal.jsonl:{line_no}: not a JSON object")
+                    _skipped_line(skipped)
                     ok = False
                     continue
                 journal.append(entry)
@@ -1191,8 +1306,9 @@ def _load_meta_file(meta_path: Path, diagnostics: list[str]) -> dict:
     try:
         with meta_path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
-    except (json.JSONDecodeError, ValueError, OSError) as exc:
-        diagnostics.append(f"{meta_path.name}: {exc}")
+    except (*_UNPARSEABLE, OSError) as exc:
+        diagnostics.append(f"{meta_path.name}: {_unparseable_text(exc)}")
+        _skipped_file()
         return {}
     if not isinstance(data, dict):
         diagnostics.append(f"{meta_path.name}: not a JSON object")
@@ -2449,7 +2565,7 @@ def _fork_scan(path: Path) -> tuple[int, bool]:
                     continue
                 try:
                     entry = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
+                except _UNPARSEABLE:
                     continue
                 if not isinstance(entry, dict):
                     continue
@@ -2538,6 +2654,7 @@ def _read_transcript(
                 # half-written line, like an ASCII one; the diagnostic quotes none of it
                 total_lines += 1
                 bad_lines += 1
+                # not counted as skipped: a live write in progress, not a bad line (0.3.4)
                 diagnostics.append(
                     f"{transcript_path.name}:{line_no}: half-written last line (cut inside a "
                     "character)"
@@ -2545,19 +2662,23 @@ def _read_transcript(
                 if state is not None:
                     state.undecodable = True
                 continue
+            # an unfinished last line (no newline yet) is a live write, not a skipped line
+            skipped = 1 if line.endswith("\n") else 0
             line = line.strip()
             if not line:
                 continue
             total_lines += 1
             try:
                 entry = json.loads(line)
-            except (json.JSONDecodeError, ValueError) as exc:
-                diagnostics.append(f"{transcript_path.name}:{line_no}: {exc}")
+            except _UNPARSEABLE as exc:
+                diagnostics.append(f"{transcript_path.name}:{line_no}: {_unparseable_text(exc)}")
                 bad_lines += 1
+                _skipped_line(skipped)
                 if state is not None:
                     state.undecodable = True
                 continue
             if not isinstance(entry, dict):
+                _skipped_line(skipped)
                 diagnostics.append(f"{transcript_path.name}:{line_no}: not a JSON object")
                 if state is not None:
                     state.unexpected_shape = True
@@ -3458,6 +3579,14 @@ class ParentIndex:
             diagnostics.append(self._unreadable_diagnostic)
         return diagnostics
 
+    def skipped_line_count(self) -> int:
+        """docs/DESIGN.md 4.1 (0.3.4): the complete lines of the parent transcript this index
+        could not parse."""
+        return sum(
+            1 for text in self._raw_diagnostics
+            if _PARENT_BAD_LINE in text or _PARENT_NOT_OBJECT in text
+        )
+
     # --- incremental scan ------------------------------------------------
 
     def _reset_state(self) -> None:
@@ -3715,7 +3844,7 @@ class ParentIndex:
                 continue
             try:
                 entry = json.loads(text)
-            except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            except (UnicodeDecodeError, *_UNPARSEABLE) as exc:
                 # docs/DESIGN.md 4.13.3's Run lifecycle paragraph: parent
                 # inspection is complete only when the file "has no
                 # undecodable line" (N1N2 review finding 1/7 -- computed
@@ -3725,11 +3854,15 @@ class ParentIndex:
                 # review round 2, original finding 1) -- a fixed reason and
                 # the line number only, never the undecodable text itself.
                 self.inspection_complete = False
+                reason = f": {_TOO_DEEP}" if isinstance(exc, RecursionError) else ""
                 self._raw_diagnostics.append(
-                    f"{self.path.name}:{line_no}: undecodable parent transcript line"
+                    f"{self.path.name}:{line_no}: {_PARENT_BAD_LINE}{reason}"
                 )
                 continue
             if not isinstance(entry, dict):
+                # docs/DESIGN.md 4.1 (0.3.4): skipped and counted like the transcript reader's;
+                # nothing in it was evidence, so inspection stays complete
+                self._raw_diagnostics.append(f"{self.path.name}:{line_no}: {_PARENT_NOT_OBJECT}")
                 continue
             if not _entry_shape_ok(entry):
                 # Same rule, the shape-violation half (N1N2 review round 2,
@@ -4179,6 +4312,9 @@ def _attribute_interrupts(run: Run, parent_index: "ParentIndex | None" = None) -
     # supplementary evidence for a cause that safely defaults to
     # 'unattributed' when it cannot be read.
     run.diagnostics.extend(parent_index.diagnostics)
+    if run.kind == "workflow":
+        # docs/DESIGN.md 4.1 (0.3.4): a session's parent is its own transcript, counted already
+        _skipped_line(parent_index.skipped_line_count())
     # docs/DESIGN.md 4.13.1 (N4 fix, A4): the discovery list holds only the
     # parent diagnostics that involve this run (a session involves none of the
     # launch ones: its own launch table reports them).
@@ -4409,7 +4545,7 @@ def caller_workflow_paths(
     owner = owners[0]
     try:
         run = load_run(owner)
-    except NotARun:
+    except (NotARun, RunUnreadable):
         return frozenset()
     if not run_matches_cwd(run, caller):
         return frozenset()
@@ -4451,12 +4587,16 @@ def agent_id_candidates(ref: RunRef) -> frozenset[str]:
 
 def run_holds_agent(ref: RunRef, agent_ids) -> bool:
     """The confirmation step of agent resolution: the run, loaded, holds an attempt
-    whose agent id is one of `agent_ids`. A ref that is not a run is no match."""
+    whose agent id is one of `agent_ids`. A ref that is not a run is no match. A run that
+    cannot be read cannot refute the candidate check, so it stays a match: the command that
+    loads it then says it could not be read (docs/DESIGN.md 4.8, 0.3.4)."""
     wanted = set(agent_ids)
     try:
         run = load_run(ref)
     except NotARun:
         return False
+    except RunUnreadable:
+        return True
     return any(attempt.agent_id in wanted for attempt in run.attempts)
 
 

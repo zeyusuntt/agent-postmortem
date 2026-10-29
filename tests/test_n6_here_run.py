@@ -143,5 +143,5 @@ def test_run_here_with_no_match_is_exit_2_and_never_prints_the_cwd(world, capsys
     write_session(world["root"], SLUG_A, uid(1), cwd=world["cwd"] + "-elsewhere", start=BASE)
     code, out, err = h.cli(capsys, "run", "--here", "--root", world["root"])
     assert (code, out) == (2, "")
-    assert err == f"postmortem: no run under path-1 {HERE_TAIL}\n"
+    assert err == f"postmortem: no run under path-1 {HERE_TAIL}\n  agent-postmortem scan lists every run it found; agent-postmortem run <run-id> diagnoses one.\n"
     assert str(world["caller"]) not in err and world["cwd"] not in err

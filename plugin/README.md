@@ -49,7 +49,7 @@ terminal. This is the plugin's only network access.
 Opt out by setting `AGENT_POSTMORTEM_NO_AUTO_INSTALL=1` (in your shell
 profile, or wherever you set environment variables for Claude Code), or by
 installing the CLI yourself ahead of time with
-`uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v0.3.3`.
+`uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v0.3.4`.
 
 ## The `/postmortem` skill
 

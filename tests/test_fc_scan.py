@@ -32,6 +32,12 @@ from tests.test_fb_live_now import (
 
 DESIGN = (Path(__file__).parent.parent / "docs" / "DESIGN.md").read_text(encoding="utf-8")
 LABEL = "findings per detector (one finding can cover several events):"
+# docs/DESIGN.md 4.8 (0.3.4): a scan whose runs hold no subagent transcript and no Workflow
+# run adds this line under "nothing needs attention"
+NO_SUBJECT_HINT = (
+    "  this scan found no subagent transcript and no Workflow run, which is what "
+    "agent-postmortem checks; agent-postmortem demo shows a sample report"
+)
 
 TOTALS = {
     "workflow": {"runs": 2, "runs_with_retries": 1, "attempts": 4, "wasted_hours": 0.5},
@@ -119,9 +125,10 @@ def test_p12_an_empty_needs_attention_group_says_nothing_needs_attention(
     lines = out.splitlines()
     index = lines.index("NEEDS ATTENTION (0 of 1 runs)")
     assert lines[index + 1] == "  nothing needs attention"
-    assert lines[index + 2].startswith("LAST 7 DAYS")
+    assert lines[index + 2] == NO_SUBJECT_HINT
+    assert lines[index + 3].startswith("LAST 7 DAYS")
     assert _group(out, "NEEDS ATTENTION") == [
-        "NEEDS ATTENTION (0 of 1 runs)", "  nothing needs attention",
+        "NEEDS ATTENTION (0 of 1 runs)", "  nothing needs attention", NO_SUBJECT_HINT,
     ]
 
 
@@ -133,7 +140,7 @@ def test_p12_a_run_that_is_only_live_leaves_needs_attention_empty_and_live_now_l
     live = _session(root, 1, now - timedelta(minutes=1), live=True)
     out = _scan(capsys, root)[1]
     assert _group(out, "NEEDS ATTENTION") == [
-        "NEEDS ATTENTION (0 of 1 runs)", "  nothing needs attention",
+        "NEEDS ATTENTION (0 of 1 runs)", "  nothing needs attention", NO_SUBJECT_HINT,
     ]
     assert _group(out, "LIVE NOW") == [
         "LIVE NOW (1 of 1 runs)",
@@ -173,7 +180,8 @@ def test_p12_with_no_live_run_the_live_now_group_is_omitted_entirely(
     lines = out.splitlines()
     index = lines.index("NEEDS ATTENTION (0 of 1 runs)")
     assert lines[index + 1] == "  nothing needs attention"
-    assert lines[index + 2].startswith("LAST 7 DAYS")
+    assert lines[index + 2] == NO_SUBJECT_HINT
+    assert lines[index + 3].startswith("LAST 7 DAYS")
 
 
 def test_p12_the_empty_line_is_text_only_json_rows_are_unchanged(tmp_path, monkeypatch, capsys):

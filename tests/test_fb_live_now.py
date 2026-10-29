@@ -119,6 +119,9 @@ def test_clean_live_sessions_appear_only_under_live_now(tmp_path, monkeypatch, c
     assert code == 0
     assert _group(out, "NEEDS ATTENTION") == [
         "NEEDS ATTENTION (0 of 2 runs)", "  nothing needs attention",
+        # docs/DESIGN.md 4.8 (0.3.4): childless sessions only, so the scan says so
+        "  this scan found no subagent transcript and no Workflow run, which is what "
+        "agent-postmortem checks; agent-postmortem demo shows a sample report",
     ]
     assert _group(out, "LIVE NOW") == [
         "LIVE NOW (2 of 2 runs)",

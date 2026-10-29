@@ -163,7 +163,7 @@ def preceding_bash_command(attempt: Attempt, index: int) -> str:
         if event.kind == "tool_use" and event.tool_name == "Bash":
             try:
                 data = json.loads(event.text)
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError, ValueError, RecursionError):
                 return event.text[:_COMMAND_EXCERPT_LIMIT]
             command = data.get("command") if isinstance(data, dict) else None
             return command if isinstance(command, str) else event.text[:_COMMAND_EXCERPT_LIMIT]

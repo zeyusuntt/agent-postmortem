@@ -7,10 +7,10 @@ agent-postmortem reads the transcripts Claude Code already wrote under `~/.claud
 On the maintainer's machine (scan 2026-10-27, 0.3.2), 13 of 166 workflow runs launched at least one agent's task a second time, and 10.2 hours went to retries and to attempts that ended without a result.
 
 ```
-uvx --from git+https://github.com/zeyusuntt/agent-postmortem@v0.3.3 agent-postmortem scan
+uvx --from git+https://github.com/zeyusuntt/agent-postmortem@v0.3.4 agent-postmortem scan
 ```
 
-That runs the tagged release straight from GitHub (it needs [uv](https://docs.astral.sh/uv/) and git). A PyPI release is coming.
+That runs the tagged release straight from GitHub (it needs [uv](https://docs.astral.sh/uv/) and git). A PyPI release is coming. On a machine with no runs yet it says where it looked and suggests `agent-postmortem demo`.
 
 The command-line tool is local and read-only: Python standard library only, no LLM, no network access, and it never changes your files, transcripts, commits, or branches. (The Claude Code plugin's one network action, installing that tool, is described under Privacy; Limits notes two rare git index modes in which git's own `status` still updates its bookkeeping.) What it covers, below, lists the run shapes it handles and the ones it does not yet. Status: alpha, used so far on the maintainer's own machines. Claude Code only.
 
@@ -76,13 +76,13 @@ If you run one of the partial or not-yet shapes, please open a ["my run shape is
 Install the command-line tool from the tagged GitHub release with [uv](https://docs.astral.sh/uv/) and git (uv fetches Python 3.11 or later if you don't have it), then try it:
 
 ```
-uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v0.3.3
+uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v0.3.4
 agent-postmortem demo
 agent-postmortem scan
 agent-postmortem run <run-id>
 ```
 
-`scan` looks under `~/.claude/projects` by default and prints the runs that need attention: ranked, with a one-line reason and a next command for each, plus 7-day and all-time totals. Add `--all` for the full one-line-per-run list instead. `run` takes a run id (or a unique prefix of one, a session UUID, an agent transcript stem such as `agent-<id>`, an agent alias such as `a:<alias>` from a share report, or a path) and prints the verdict for that one run, what work is at risk, and at most 3 next steps; an id that matches more than one run is an error listing the candidates. Add `--evidence` for excerpt pointers or `--verbose` for the full finding list.
+`scan` looks under `~/.claude/projects` by default and prints the runs that need attention (a line or file it cannot read is skipped and counted on a `SKIPPED` line, never a crash): ranked, with a one-line reason and a next command for each, plus 7-day and all-time totals. Add `--all` for the full one-line-per-run list instead. `run` takes a run id (or a unique prefix of one, a session UUID, an agent transcript stem such as `agent-<id>`, an agent alias such as `a:<alias>` from a share report, or a path) and prints the verdict for that one run, what work is at risk, and at most 3 next steps; an id that matches more than one run is an error listing the candidates. Add `--evidence` for excerpt pointers or `--verbose` for the full finding list.
 
 ## What changed in 0.3
 
@@ -187,7 +187,7 @@ Its hooks shell out to the same CLI, never touch a run directory, and never fail
 
 The honesty rule: `mislabeled_kill` blames the runtime only when the same key was retried afterward -- the restart itself is the evidence, never a guess -- and reports it as minor, because `silent_retry` carries the loss. Long silence (300 seconds or more) before a kill of a key's last attempt, with nothing else to explain it, is major severity, but reported as "cause unattributed, consistent with a runtime kill," never asserted as the runtime's fault outright. It reports info when a parent session stopped the attempt on purpose, a human interrupt happened alongside it, or the silence was short or unknown.
 
-The verdict follows from those severities: `FAILED` when the harness itself reported the workflow failed (or a finding is critical, which no detector produces today), `DEGRADED` when any finding is major, `CLEAN` otherwise, with `(INCOMPLETE)` added when the tool could not read everything. `run`, `demo`, and `scan` exit 3 for `FAILED` and 4 for `INCOMPLETE` without `FAILED`; 3 wins when both apply.
+The verdict follows from those severities: `FAILED` when the harness itself reported the workflow failed (or a finding is critical, which no detector produces today), `DEGRADED` when any finding is major, `CLEAN` otherwise, with `(INCOMPLETE)` added when the tool could not read everything. `run`, `demo`, and `scan` exit 3 for `FAILED` and 4 for `INCOMPLETE` without `FAILED`; 3 wins when both apply. They exit 2 when there is nothing to judge: no run matches, or no runs at all under the root, in which case the message says where it looked (`~/.claude/projects` by default), what it reads, and to try `agent-postmortem demo`.
 
 ### Quieting a detector
 
@@ -222,7 +222,7 @@ Paths inside free text (finding titles, diagnostics, error messages, and at `--l
 
 State lives in `$XDG_STATE_HOME/agent-postmortem/`, or `~/.local/state/agent-postmortem/` if that variable is unset: `state.json` (which findings a session already reported, and the rules the 0.1 `apply` command wrote, now read-only history), plus `secret` and `aliases.json` for the aliases. All three are mode 0600. The secret and the registry are never printed; `trend` shows the applied-rule history from `state.json` at the active level. If a command prints `stable aliases unavailable` on stderr, that output named everything `agent-1`, `agent-2`, and so on instead of by alias; nothing is repaired automatically, because a new secret would change every alias. Remove both `secret` and `aliases.json` to start over with new aliases.
 
-The plugin's one network action happens on `SessionStart` only: when it has not installed a CLI into its own data directory and no `agent-postmortem` on `PATH` passes its protocol check, it installs the CLI from the GitHub tag that matches the plugin's version (`v0.3.3`) into that data directory, retrying at most once every 24 hours on failure; opt out by setting `AGENT_POSTMORTEM_NO_AUTO_INSTALL=1`, or by installing the CLI yourself first.
+The plugin's one network action happens on `SessionStart` only: when it has not installed a CLI into its own data directory and no `agent-postmortem` on `PATH` passes its protocol check, it installs the CLI from the GitHub tag that matches the plugin's version (`v0.3.4`) into that data directory, retrying at most once every 24 hours on failure; opt out by setting `AGENT_POSTMORTEM_NO_AUTO_INSTALL=1`, or by installing the CLI yourself first.
 
 ## How it was built
 

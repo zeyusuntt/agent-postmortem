@@ -45,6 +45,9 @@ Bash tool.
      younger than that may simply still be running. Say plainly that the
      run is unfinished when you use this fallback.
   4. Run `agent-postmortem run <that run's id>` on it.
+  If the CLI exits 2 with `postmortem: no runs found under ...`, there is
+  nothing to diagnose yet: relay its lines as they are (where it looked,
+  what it reads, `agent-postmortem demo`) and stop, for any argument.
   If the scan is empty, every row is undated, or every dated row is
   unfinished or possibly running and younger than 10 minutes, say so and
   stop; do not fall back to a run that is probably still in progress, or
@@ -111,5 +114,5 @@ Bash tool.
   `--no-redact` only if the user asks to see raw paths or session ids, and
   say so when you do.
 - If the CLI is missing entirely, tell the user to run
-  `uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v0.3.3` and stop; do not try to install it
+  `uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v0.3.4` and stop; do not try to install it
   yourself.

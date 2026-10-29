@@ -163,7 +163,10 @@ def test_r7_here_messages_per_level(kind, level, world, capsys):
     expected = {
         "run both": NO_BOTH,
         "run neither": NO_NEITHER,
-        "run here no match": f"postmortem: no run under {root} {HERE_TAIL}\n",
+        "run here no match": (
+            f"postmortem: no run under {root} {HERE_TAIL}\n"
+            "  agent-postmortem scan lists every run it found; agent-postmortem run <run-id> diagnoses one.\n"
+        ),
         "scan here no match": (
             f"postmortem: no run under {root} that matches the requested filters {HERE_TAIL}\n"
         ),

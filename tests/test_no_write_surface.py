@@ -178,14 +178,14 @@ _ALLOWED_SINK_CALLS = {
         "(docs/DESIGN.md 4.9, N5c-1); a read-only PATH lookup, writes nothing",
     # GC-1b: the session sniffers, _fork_scan (docs/DESIGN.md 4.2, FA4), _read_transcript, the
     # hook's kill-sentinel check and rescue's task text all read through _transcript_lines
-    ("reader.py", 375, "path.open"):
+    ("reader.py", 411, "path.open"):
         "_ends_in_torn_line: read a transcript's last bytes backwards, mode 'rb', never written",
-    ("reader.py", 405, "path.open"): "_transcript_lines: read a transcript line by line, mode 'r'",
-    ("reader.py", 413, "path.open"):
+    ("reader.py", 441, "path.open"): "_transcript_lines: read a transcript line by line, mode 'r'",
+    ("reader.py", 449, "path.open"):
         "_transcript_lines: read on past a torn last line, mode 'r' (surrogateescape)",
-    ("reader.py", 914, "journal_path.open"): "read journal.jsonl line by line, mode 'r'",
-    ("reader.py", 1192, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
-    ("reader.py", 2656, "transcript_path.open"):
+    ("reader.py", 1025, "journal_path.open"): "read journal.jsonl line by line, mode 'r'",
+    ("reader.py", 1307, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
+    ("reader.py", 2777, "transcript_path.open"):
         "probe that a transcript can be opened at all, immediately closed again, mode 'r'",
     ("state.py", 231, "os.open"):
         "_backup_writer: create 'state.json.corrupt-<timestamp>' inside the state "
@@ -253,12 +253,12 @@ _ALLOWED_SINK_CALLS = {
         "write_registry_bytes: the alias registry's own atomic rename of its temp "
         "file over aliases.json by path, used only when no dir_fd was given, both "
         "inside the state directory (docs/DESIGN.md 7.5, N3a)",
-    ("watch.py", 174, "path.open"):
+    ("watch.py", 179, "path.open"):
         "_read_new_journal_lines: read appended journal bytes, mode 'rb', never written",
-    ("reader.py", 3497, "self.path.open"):
+    ("reader.py", 3626, "self.path.open"):
         "ParentIndex._hash_prefix: re-read already-parsed prefix bytes to validate the "
         "incremental cache, mode 'rb', never written",
-    ("reader.py", 3695, "self.path.open"):
+    ("reader.py", 3824, "self.path.open"):
         "ParentIndex._parse_increment: read appended parent-transcript bytes, mode 'rb', "
         "never written",
 }

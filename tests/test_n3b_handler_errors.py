@@ -153,9 +153,15 @@ def test_no_runs_under_a_root_names_path_n_and_raw_is_todays(argv, planted, tmp_
     empty.mkdir(parents=True)
     code, _out, err = h.cli(capsys, *argv, "--root", empty)
     assert code == 2
-    assert err == "postmortem: no runs found under path-1\n"
+    # docs/DESIGN.md 4.8 (0.3.4): the empty state adds fixed guidance lines (no path or id)
+    assert err == (
+        "postmortem: no runs found under path-1\n"
+        "  agent-postmortem reads the transcripts Claude Code saves there: Workflow runs, and sessions with the subagents they launched.\n"
+        "  next: agent-postmortem demo   (a sample report on a packaged synthetic run)\n"
+        "  If Claude Code saves its data somewhere else, pass --root <dir> or set CLAUDE_CONFIG_DIR. It deletes transcripts older than 30 days by default.\n"
+    )
     code, _out, err = h.cli(capsys, *argv, "--root", empty, "--raw")
-    assert err == f"postmortem: no runs found under {empty}\n"
+    assert err.startswith(f"postmortem: no runs found under {empty}\n  agent-postmortem reads")
 
 
 # --- bad date ---------------------------------------------------------------

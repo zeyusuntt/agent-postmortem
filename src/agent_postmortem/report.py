@@ -2331,6 +2331,7 @@ def render_scan_triage_text(
     silenced_detectors: frozenset = frozenset(),
     live_now: list[dict] | None = None,
     total_live_now: int = 0,
+    both_kinds: bool = True,
 ) -> str:
     """unit M3b: the new default `scan` text output. `shown_candidates` is
     already sorted and already truncated to --limit by the caller;
@@ -2350,6 +2351,16 @@ def render_scan_triage_text(
     lines = [f"NEEDS ATTENTION ({total_candidates} of {total_runs} runs{note})"]
     if not shown_candidates and not total_candidates:  # P12: never a bare header
         lines.append("  nothing needs attention")
+        workflow_runs = totals_all.get("workflow", {}).get("runs", 0)
+        session_children = totals_all.get("session", {}).get("subagents", 0)
+        if both_kinds and not workflow_runs and not session_children:
+            # docs/DESIGN.md 4.8 (0.3.4): sessions with no subagent transcript and no Workflow
+            # run give the tool nothing to judge; say what the scan observed (a launch whose
+            # transcript is missing is not "no launch"), never more.
+            lines.append(
+                "  this scan found no subagent transcript and no Workflow run, which is what "
+                "agent-postmortem checks; agent-postmortem demo shows a sample report"
+            )
     for candidate in shown_candidates:
         run = candidate["run"]
         lines.append(

@@ -159,7 +159,9 @@ def deleted_cwd(tmp_path, monkeypatch):
 
 def test_s_m2_run_here_from_a_deleted_directory_is_the_neutral_exit_2(deleted_cwd, capsys):
     code, out, err = h.cli(capsys, "run", "--here", "--root", deleted_cwd)
-    assert (code, out, err) == (2, "", f"postmortem: no run under path-1 {HERE_TAIL}\n")
+    assert (code, out, err) == (
+        2, "", f"postmortem: no run under path-1 {HERE_TAIL}\n  agent-postmortem scan lists every run it found; agent-postmortem run <run-id> diagnoses one.\n"
+    )
 
 
 def test_s_m2_scan_here_from_a_deleted_directory_is_the_neutral_exit_2(deleted_cwd, capsys):

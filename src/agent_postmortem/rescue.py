@@ -571,7 +571,7 @@ def _read_raw_line_text(path: Path, line_no: int) -> str | None:
                     return None
                 try:
                     entry = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
+                except (json.JSONDecodeError, ValueError, RecursionError):
                     return None
                 if not isinstance(entry, dict):
                     return None

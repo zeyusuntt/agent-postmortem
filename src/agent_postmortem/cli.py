@@ -802,6 +802,68 @@ _PREFIX_ADVICE = "expected a longer prefix or the path of a run directory"
 _EXACT_ADVICE = "expected one of these run ids or the path of a run directory"
 _RUN_ID_SHAPE = re.compile(r"wf_[0-9a-f]{8}-[0-9a-f]{3}|s_[0-9a-f]{10,12}")
 _HERE_TAIL = "worked in this directory or a parent of it"
+# docs/DESIGN.md 4.8 (0.3.4): the first-run empty state. The same lines at every level: they
+# name no path or id of the person's own.
+_EMPTY_STATE_GUIDANCE = (
+    "  agent-postmortem reads the transcripts Claude Code saves there: Workflow runs, and "
+    "sessions with the subagents they launched.\n"
+    "  next: agent-postmortem demo   (a sample report on a packaged synthetic run)\n"
+    "  If Claude Code saves its data somewhere else, pass --root <dir> or set CLAUDE_CONFIG_DIR. "
+    "It deletes transcripts older than 30 days by default."
+)
+_HERE_ELSEWHERE_GUIDANCE = (
+    "  agent-postmortem scan lists every run it found; agent-postmortem run <run-id> "
+    "diagnoses one."
+)
+_STANDARD_ROOT = Path("~/.claude/projects")
+
+
+def _shown_root(args: argparse.Namespace, root: Path, errors) -> str:
+    """The root as an error names it (docs/DESIGN.md 4.8): at raw the path itself; at share
+    and local the standard location `~/.claude/projects` home-relative, since it is the same
+    on every machine and not private, and any other root as a span (path-N), as every path
+    the person typed is (N3b P13)."""
+    if getattr(args, "level", "share") == "raw":
+        return str(root)
+    try:
+        standard = Path(root).expanduser() == _STANDARD_ROOT.expanduser()
+    except (OSError, RuntimeError):
+        standard = False
+    return str(_STANDARD_ROOT) if standard else errors.span(str(root), "path")
+
+
+def _root_has_no_runs(root: Path | None) -> bool:
+    """docs/DESIGN.md 4.8: nothing under the root that could be a run. Asked only on an error
+    path, so it globs and never parses (reader.has_run_candidates)."""
+    return root is not None and not reader.has_run_candidates(root)
+
+
+def _no_runs_text(
+    args: argparse.Namespace, root: Path, unreadable_files: int = 0,
+    unreadable_runs: list[str] | None = None,
+) -> str:
+    """The empty state: where the tool looked (and whether it exists), what it reads, and
+    what to run next. Exit code 2 is unchanged (4.6)."""
+    level = getattr(args, "level", "share")
+    shown = _shown_root(args, root, _errors_for(args) if level != "raw" else None)
+    try:
+        missing = not Path(root).exists()
+    except OSError:
+        missing = False
+    tail = " (it does not exist yet)" if missing else ""
+    extra = ""
+    if unreadable_files:
+        extra += (
+            f"  {unreadable_files} transcript {_plural_word(unreadable_files, 'file')} there "
+            f"{'had' if unreadable_files == 1 else 'have'} no readable line (not JSON, or nested "
+            "too deeply)\n"
+        )
+    if unreadable_runs:
+        extra += (
+            f"  {len(unreadable_runs)} {_plural_word(len(unreadable_runs), 'run')} there could not "
+            f"be read ({_some_ids(unreadable_runs)})\n"
+        )
+    return f"postmortem: no runs found under {shown}{tail}\n{extra}{_EMPTY_STATE_GUIDANCE}"
 
 
 def _resolve_or_report(
@@ -832,7 +894,8 @@ def _alias_unavailable_text(shown: str) -> str:
 
 def _run_error(
     args: argparse.Namespace, kind: str, *, root: Path | None = None,
-    exc: _AmbiguousRun | None = None,
+    exc: _AmbiguousRun | None = None, unreadable_files: int = 0,
+    unreadable_runs: list[str] | None = None,
 ) -> str:
     """The stderr text of a handler-level run error (N3b P13). At raw, v0.2's
     message exactly. At share and local, fixed text around spans of what the
@@ -840,14 +903,20 @@ def _run_error(
     argument expected; a run id listed as a candidate is not private (it is the
     id `scan` prints) unless it does not have a run id's shape."""
     level = getattr(args, "level", "share")
+    if kind in ("no_match", "here_no_match") and _root_has_no_runs(root):
+        kind = "no_runs"  # docs/DESIGN.md 4.8: nothing under the root at all is the empty state
+    if kind == "no_runs":
+        assert root is not None
+        return _no_runs_text(args, root, unreadable_files, unreadable_runs or [])
     if level == "raw":
         return {
             "no_match": lambda: f"postmortem: no run matches '{args.run_id}' under {root}",
             "ambiguous": lambda: f"postmortem: {exc}",
             "not_a_run": lambda: f"postmortem: '{args.run_id}' is not a run",
-            "no_runs": lambda: f"postmortem: no runs found under {root}",
             "alias_unavailable": lambda: _alias_unavailable_text(args.run_id),
-            "here_no_match": lambda: f"postmortem: no run under {root} {_HERE_TAIL}",
+            "here_no_match": lambda: (
+                f"postmortem: no run under {root} {_HERE_TAIL}\n{_HERE_ELSEWHERE_GUIDANCE}"
+            ),
             "scan_here_no_match": lambda: (
                 f"postmortem: no run under {root} that matches the requested filters "
                 f"{_HERE_TAIL}"
@@ -857,7 +926,7 @@ def _run_error(
     if kind == "no_match":
         return (
             f"postmortem: no run matches '{errors.span(args.run_id)}' under "
-            f"{errors.span(str(root), 'path')} ({_RUN_EXPECTED})"
+            f"{_shown_root(args, root, errors)} ({_RUN_EXPECTED})"
         )
     if kind == "ambiguous":
         assert exc is not None
@@ -875,10 +944,13 @@ def _run_error(
     if kind == "alias_unavailable":
         return _alias_unavailable_text(errors.span(args.run_id))
     if kind == "here_no_match":
-        return f"postmortem: no run under {errors.span(str(root), 'path')} {_HERE_TAIL}"
+        return (
+            f"postmortem: no run under {_shown_root(args, root, errors)} {_HERE_TAIL}\n"
+            f"{_HERE_ELSEWHERE_GUIDANCE}"
+        )
     if kind == "scan_here_no_match":
         return (
-            f"postmortem: no run under {errors.span(str(root), 'path')} that matches the "
+            f"postmortem: no run under {_shown_root(args, root, errors)} that matches the "
             f"requested filters {_HERE_TAIL}"
         )
     if kind == "not_a_run":
@@ -886,7 +958,7 @@ def _run_error(
             f"postmortem: '{errors.span(args.run_id)}' is not a run "
             "(expected a workflow run directory or a session transcript)"
         )
-    return f"postmortem: no runs found under {errors.span(str(root), 'path')}"
+    raise ValueError(f"unknown run error kind: {kind}")
 
 
 def _since_error(args: argparse.Namespace) -> str:
@@ -1030,13 +1102,14 @@ def _pick_run_here(root: Path) -> _HereChoice | None:
     matches: list[tuple[reader.RunRef, Run]] = []
     # docs/DESIGN.md 4.13.6 (G5): the workflows of the caller's own session join the set
     owned = reader.caller_workflow_paths(root, _caller_session_id(), caller)
+    unreadable: list[str] = []
     for ref in reader.discover_runs(root):
-        try:
-            run = reader.load_run(ref)
-        except reader.NotARun:
+        run = _load_listed_run(ref, unreadable)
+        if run is None:
             continue
         if ref.path in owned or reader.run_matches_cwd(run, caller):
             matches.append((ref, run))
+    _print_left_out(unreadable)
     if not matches:
         return None
     matches.sort(key=lambda pair: _here_key(*pair), reverse=True)
@@ -1400,6 +1473,81 @@ def _scan_payload(rows: list[dict], totals: dict, redactor: Redactor) -> dict:
     }
 
 
+def _plural_word(n: int, word: str) -> str:
+    return word if n == 1 else f"{word}s"
+
+
+def _some_ids(ids: list[str]) -> str:
+    shown = ", ".join(ids[:3])
+    return shown if len(ids) <= 3 else f"{shown} and {len(ids) - 3} more"
+
+
+def _scan_skipped_line(
+    skipped_lines: list[tuple[str, int]], unreadable_files: int, meta_files: int,
+    unreadable_runs: list[str],
+) -> str:
+    """docs/DESIGN.md 4.8 (0.3.4): one text line saying what the scan could not read; empty when
+    it read everything. Run ids are the ids scan prints anyway; no path is named."""
+    clauses: list[str] = []
+    if skipped_lines:
+        lines = sum(count for _run_id, count in skipped_lines)
+        runs = len(skipped_lines)
+        clauses.append(
+            f"{lines} unreadable {_plural_word(lines, 'line')} in {runs} "
+            f"{_plural_word(runs, 'run')} ({_some_ids([run_id for run_id, _ in skipped_lines])}), "
+            "still scanned"
+        )
+    if unreadable_files:
+        clauses.append(
+            f"{unreadable_files} transcript {_plural_word(unreadable_files, 'file')} with no "
+            "readable line"
+        )
+    if meta_files:
+        clauses.append(
+            f"{meta_files} agent meta {_plural_word(meta_files, 'file')} that could not be read"
+        )
+    if unreadable_runs:
+        clauses.append(
+            f"{len(unreadable_runs)} {_plural_word(len(unreadable_runs), 'run')} that could not "
+            f"be read ({_some_ids(unreadable_runs)})"
+        )
+    if not clauses:
+        return ""
+    return (
+        "SKIPPED       " + "; ".join(clauses)
+        + "; agent-postmortem run <run-id> --json lists each line under diagnostics"
+    )
+
+
+# docs/DESIGN.md 4.8 (0.3.4): what a command says about a run it could not read at all
+_UNREADABLE_RUN = "could not be read (its data is nested too deeply to follow); nothing was judged"
+
+
+def _load_listed_run(ref: reader.RunRef, unreadable: list[str]) -> Run | None:
+    """One discovered run for a command that reads many (docs/DESIGN.md 4.2, 4.8): None for a
+    candidate that is not a run, and for a run that cannot be read, whose id joins
+    `unreadable`. One bad candidate never aborts the whole command."""
+    try:
+        return reader.load_run(ref)
+    except reader.NotARun:
+        return None
+    except reader.RunUnreadable as exc:
+        unreadable.append(exc.run_id)
+        return None
+
+
+def _print_left_out(unreadable: list[str]) -> None:
+    """docs/DESIGN.md 4.8 (0.3.4): the runs a command could not read are named on stderr, so
+    JSON on stdout stays one document."""
+    if unreadable:
+        count = len(unreadable)
+        print(
+            f"postmortem: {count} {_plural_word(count, 'run')} could not be read and "
+            f"{'was' if count == 1 else 'were'} left out ({_some_ids(unreadable)})",
+            file=sys.stderr,
+        )
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     root = args.root.expanduser()
     redactor = _redactor_for(args)
@@ -1407,7 +1555,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     if config_exit_code is not None:
         return config_exit_code
     kinds = frozenset({args.kind}) if args.kind else frozenset({"workflow", "session"})
-    run_refs = reader.discover_runs(root, kinds=kinds)
+    # docs/DESIGN.md 4.8 (0.3.4): what scan could not read is said, never silently dropped
+    unreadable_files: list[Path] = []
+    run_refs = reader.discover_runs(root, kinds=kinds, skipped=unreadable_files)
+    unreadable_runs: list[str] = []
+    skipped_lines: list[tuple[str, int]] = []
+    skipped_meta_files = 0
 
     since_date = None
     if args.since:
@@ -1449,13 +1602,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     live_now: list[dict] = []
 
     for ref in run_refs:
-        try:
-            run = reader.load_run(ref)
-        except reader.NotARun:
-            # discover_runs promises a RunRef for anything matching the
-            # layout glob, not that every candidate is fully loadable; one
-            # bad candidate must not abort the whole fleet scan (docs/
-            # DESIGN.md 4.2).
+        # discover_runs promises a RunRef for anything matching the layout glob, not that every
+        # candidate is fully loadable; one bad candidate must not abort the whole fleet scan
+        # (docs/DESIGN.md 4.2), and a run that cannot be read is counted (4.8, 0.3.4)
+        run = _load_listed_run(ref, unreadable_runs)
+        if run is None:
             continue
         run_started = run.started_at
         if since_date is not None and run_started is not None and run_started.date() < since_date:
@@ -1467,6 +1618,9 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             continue
 
         findings = _run_findings(run)
+        if run.skipped_lines:
+            skipped_lines.append((run.run_id, run.skipped_lines))
+        skipped_meta_files += run.skipped_files
         # docs/DESIGN.md 4.10: a silenced detector's findings never inform
         # scan's own verdict, top detector, or NEEDS ATTENTION reason (the
         # same rule `run`'s text/JSON follow) -- but they still count toward
@@ -1535,11 +1689,18 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             )
 
     if not rows:
+        kind = "scan_here_no_match" if args.here else "no_runs"
         print(
-            _run_error(args, "scan_here_no_match" if args.here else "no_runs", root=root),
+            _run_error(
+                args, kind, root=root,
+                unreadable_files=len(unreadable_files), unreadable_runs=unreadable_runs,
+            ),
             file=sys.stderr,
         )
-        return 2
+        if kind != "no_runs":
+            _print_left_out(unreadable_runs)  # the empty state already names them
+        # docs/DESIGN.md 4.8 (0.3.4): a run that could not be read leaves the scan INCOMPLETE
+        return 4 if unreadable_runs else 2
 
     order = sorted(range(len(rows)), key=lambda i: (started_at_by_row[i], rows[i]["run_id"]))
     rows = [rows[i] for i in order]
@@ -1579,17 +1740,27 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                     shown_candidates, len(candidates), len(rows), totals_7d, totals, r,
                     silenced_detectors=cfg.detectors_off,
                     live_now=live_now[: args.limit], total_live_now=len(live_now),
+                    both_kinds=args.kind is None,
                 ),
             ),
             end="",
         )
+
+    skipped_line = _scan_skipped_line(
+        skipped_lines, len(unreadable_files), skipped_meta_files, unreadable_runs,
+    )
+    if skipped_line:
+        # with --json, stdout stays one JSON document
+        print(skipped_line, file=sys.stderr if args.json else sys.stdout)
 
     # docs/DESIGN.md 4.6/4.7: scan's own exit code must reflect the worst
     # verdict across every included run, the same as 'run' does for one run
     # -- a caller scripting against scan otherwise has no way to detect that
     # any run in the fleet was FAILED or only INCOMPLETE-ly inspected.
     any_failed = any(row["verdict"].startswith("FAILED") for row in rows)
-    any_incomplete = any("(INCOMPLETE)" in row["verdict"] for row in rows)
+    any_incomplete = any("(INCOMPLETE)" in row["verdict"] for row in rows) or bool(
+        unreadable_runs
+    )
     if any_failed:
         return 3
     if any_incomplete:
@@ -1643,13 +1814,12 @@ def _cmd_rules(args: argparse.Namespace) -> int:
             print(_run_error(args, "no_runs", root=root), file=sys.stderr)
             return 2
         findings = []
+        unreadable: list[str] = []
         for ref in run_refs:
-            try:
-                findings.extend(_run_findings(reader.load_run(ref)))
-            except reader.NotARun:
-                # See _cmd_scan: one bad discovered candidate must not abort
-                # a whole-fleet rules listing.
-                continue
+            run = _load_listed_run(ref, unreadable)
+            if run is not None:
+                findings.extend(_run_findings(run))
+        _print_left_out(unreadable)
 
     if args.all:
         backing = {rule.id: count for rule, count in rules.rules_for(findings)}
@@ -1716,12 +1886,10 @@ def _cmd_rules_propose(args: argparse.Namespace) -> int:
             print(_run_error(args, "no_runs", root=root), file=sys.stderr)
             return 2
 
+        unreadable: list[str] = []
         for ref in run_refs:
-            try:
-                run = reader.load_run(ref)
-            except reader.NotARun:
-                # See _cmd_scan: one bad discovered candidate must not abort a
-                # whole-fleet proposal scan.
+            run = _load_listed_run(ref, unreadable)
+            if run is None:
                 continue
             run_started = run.started_at
             if (
@@ -1731,6 +1899,7 @@ def _cmd_rules_propose(args: argparse.Namespace) -> int:
             ):
                 continue
             runs_with_findings.append((run, _run_findings(run)))
+        _print_left_out(unreadable)
 
     # docs/DESIGN.md 9 (N8): an adopted rule is a status row, never proposed
     # again. Only the owner's config [[adopted]] records name one.
@@ -1808,12 +1977,12 @@ def _cmd_rules_review(args: argparse.Namespace) -> int:
         return 2
 
     runs_with_findings: list[tuple[Run, list[Finding]]] = []
+    unreadable: list[str] = []
     for ref in run_refs:
-        try:
-            run = reader.load_run(ref)
-        except reader.NotARun:
-            continue
-        runs_with_findings.append((run, _run_findings(run)))
+        run = _load_listed_run(ref, unreadable)
+        if run is not None:
+            runs_with_findings.append((run, _run_findings(run)))
+    _print_left_out(unreadable)
 
     rows = trend.review_rows(adopted, runs_with_findings, args.weeks)
 
@@ -1972,14 +2141,12 @@ def _cmd_trend(args: argparse.Namespace) -> int:
         return 2
 
     runs_with_findings: list[tuple[Run, list[Finding]]] = []
+    unreadable: list[str] = []
     for ref in run_refs:
-        try:
-            run = reader.load_run(ref)
-        except reader.NotARun:
-            # See _cmd_scan: one bad discovered candidate must not abort
-            # the whole trend report.
-            continue
-        runs_with_findings.append((run, _run_findings(run)))
+        run = _load_listed_run(ref, unreadable)
+        if run is not None:
+            runs_with_findings.append((run, _run_findings(run)))
+    _print_left_out(unreadable)
 
     weekly = trend.weekly_counts(runs_with_findings, args.weeks)
     try:
@@ -2038,6 +2205,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(tokens)
     try:
         return _run(args, parser)
+    except reader.RunUnreadable as exc:
+        # docs/DESIGN.md 4.8 (0.3.4): the one run a command was asked about could not be read
+        print(f"postmortem: {exc.run_id} {_UNREADABLE_RUN}", file=sys.stderr)
+        return 4
     except Exception as exc:  # noqa: BLE001 - the last resort: nothing escapes as a traceback
         return _report_uncaught(exc, args)
 

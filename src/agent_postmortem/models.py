@@ -640,6 +640,11 @@ class Run:
     ended_at: datetime | None
     diagnostics: list[str]
     status: str = field(default="COMPLETE", kw_only=True)  # 'COMPLETE' | 'INCOMPLETE' (4.6)
+    # docs/DESIGN.md 4.1 (0.3.4): physical lines this run's read skipped because they were not
+    # JSON, nested too deeply to parse, or not a JSON object, and its files (an agent's
+    # meta.json) that could not be parsed at all. Read by scan's SKIPPED line; never exported.
+    skipped_lines: int = field(default=0, kw_only=True)
+    skipped_files: int = field(default=0, kw_only=True)
     # docs/DESIGN.md 7.4's D8 (redefined by v0.3 N2, 4.13.3): whether this run
     # has actually finished. For a workflow, derived from Lifecycle.terminal:
     # true for 'completed'/'failed'/'stopped'/'journal_resolved', false for

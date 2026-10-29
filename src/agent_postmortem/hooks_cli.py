@@ -110,7 +110,7 @@ def _read_payload() -> dict | None:
         return None
     try:
         payload = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError, RecursionError):
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -270,7 +270,7 @@ def _iter_json_lines(path: Path):
                 continue
             try:
                 entry = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
+            except (json.JSONDecodeError, ValueError, RecursionError):
                 continue
             if isinstance(entry, dict):
                 yield entry
@@ -338,7 +338,7 @@ def _subagent_ends_with_kill_sentinel(path: Path) -> bool:
         return False
     try:
         last = json.loads(last_line)
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError, RecursionError):
         return False
     if not isinstance(last, dict) or last.get("type") != "user":
         return False

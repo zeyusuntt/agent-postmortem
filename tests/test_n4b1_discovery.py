@@ -175,6 +175,8 @@ def test_parent_source_two_diagnostics_in_order(tmp_path, monkeypatch):
         **CLEAN,
         "parent": [
             f"{SESSION}.jsonl:1: undecodable parent transcript line",
+            # 0.3.4: a line that is not a JSON object is a diagnostic too (DESIGN 2)
+            f"{SESSION}.jsonl:2: parent transcript line that is not a JSON object",
             f"{SESSION}.jsonl:3: malformed parent transcript entry",
             f"{SESSION}.jsonl:3: message is not an object (got int)",
         ],

@@ -335,7 +335,7 @@ def _load_and_migrate(state_file: Path, backup: Callable[[bytes], None] | None =
 
     try:
         raw = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return _reset_whole_file()
 
     if not isinstance(raw, dict):

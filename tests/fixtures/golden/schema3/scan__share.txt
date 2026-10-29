@@ -645,4 +645,5 @@ exit=4
   }
 }
 <<<STDERR>>>
+SKIPPED       2 unreadable lines in 2 runs (wf_00000000-c08, wf_b0000000-002), still scanned; agent-postmortem run <run-id> --json lists each line under diagnostics
 <<<END>>>
