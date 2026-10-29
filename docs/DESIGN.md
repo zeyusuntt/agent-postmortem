@@ -6377,9 +6377,12 @@ internal deadline as `check`.
 
 On SessionStart, if no compatible CLI resolves and `uv` is on PATH and
 `AGENT_POSTMORTEM_NO_AUTO_INSTALL` is unset, `run.sh` runs `uv tool install
+"agent-postmortem==<version in plugin.json>" --python 3.11+` from PyPI, and only if that
+install fails, `uv tool install
 "git+https://github.com/zeyusuntt/agent-postmortem@v<version in plugin.json>" --python
-3.11+` (Plan B, 2026-10-28: the public repository's tag instead of PyPI until PyPI
-publishing works; it needs git besides uv; the missing-CLI hint names the same source) (`UV_TOOL_DIR`
+3.11+` (0.3.5: PyPI first; the tag covers the minutes between a release reaching GitHub
+and reaching PyPI, and needs git besides uv; both attempts run inside the one 60 s
+deadline below; the missing-CLI hint names `uv tool install agent-postmortem`) (`UV_TOOL_DIR`
 and `UV_TOOL_BIN_DIR` both pointed at `$DATA_DIR`, 7.2's one data
 directory, so the installed shim lands at `$DATA_DIR/bin/agent-postmortem`,
 exactly where resolution step (1) looks) under the same process-group-kill
@@ -6704,7 +6707,7 @@ later events go positional).
 
 ### 8.1 Package
 
-`pyproject.toml`: name `agent-postmortem`, version `0.3.4`, console scripts
+`pyproject.toml`: name `agent-postmortem`, version `0.3.5`, console scripts
 `agent-postmortem` and `postmortem`, `requires-python >= 3.11`, no runtime
 dependencies, `[project.optional-dependencies].dev = ["pytest>=8",
 "ruff>=0.6"]`, classifiers, URLs (Homepage, Issues, Changelog). The wheel
@@ -6754,8 +6757,8 @@ check of the artifacts), then a `github-release` job (`permissions: contents: wr
 `gh release create <tag> dist/* --verify-tag` with that version's CHANGELOG section as
 notes) and a publish job with `environment: pypi`, `permissions: id-token: write`,
 `pypa/gh-action-pypi-publish@release/v1` that runs only when the repository variable
-`PUBLISH_PYPI` is `true` (Plan B, 2026-10-28: until the PyPI trusted publisher works, a
-tag must not turn the release red; a skipped job is not a failure). Both workflows declare a
+`PUBLISH_PYPI` is `true` (a tag must never turn the release red when publishing is
+switched off; a skipped job is not a failure; PyPI publishing is on from 0.3.4). Both workflows declare a
 top-level `permissions: contents: read` so every job is read-only by
 default regardless of the repository's own token-permission setting; the
 publish job's own `id-token: write` is layered on top of that at the job
@@ -6769,14 +6772,14 @@ pypi.org and the TestPyPI dry run.
 First screen, in order (from 0.3.3): name; the question the tool answers
 ("Which 'done' in your last Claude Code run can't you trust?"); one paragraph on
 what it reads, what it reports and that it is local and read-only; one dated number
-from a named version's scan; `uvx --from git+https://github.com/zeyusuntt/agent-postmortem@v<version>
-agent-postmortem scan` (the tagged GitHub release; one line says a PyPI release is coming); the status paragraph; badges (CI, license; PyPI version and Python versions only once a
+from a named version's scan; `uvx agent-postmortem scan` (from PyPI, 0.3.5; 0.3.3 and
+0.3.4 used the tagged GitHub release while PyPI was not yet working); the status paragraph; badges (CI, license; PyPI version and Python versions only once a
 PyPI release exists, since a badge for a missing release renders broken),
 the demo output as a fenced code block (not a screenshot: it must stay text,
 so it can be diffed against a live `agent-postmortem demo` run -- 8.2,
 tests/test_readme.py), the install command that works for the current
-distribution (a GitHub install with `uv tool install git+...` until the
-first PyPI release, then `uvx agent-postmortem scan`), a command table
+distribution (`uv tool install agent-postmortem` from PyPI from 0.3.5; a
+GitHub install with `uv tool install git+...` in 0.3.3 and 0.3.4), a command table
 listing exactly which commands take `--json` and which take `--no-redact`.
 Then "What it covers", before Quick start: one table of run shapes and failure
 kinds, each marked covered, partial or not yet, as checked against the upstream issue

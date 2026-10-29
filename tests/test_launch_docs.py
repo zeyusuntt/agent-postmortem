@@ -1,7 +1,6 @@
 """README first screen, coverage table and issue templates for the public launch (DESIGN 8.4).
 
-The first screen asks the question the tool answers and gives the PyPI command with a GitHub
-fallback; "What it covers" states coverage honestly (covered, partial, not yet) before Quick
+The first screen asks the question the tool answers and gives the one-command PyPI run (0.3.5); "What it covers" states coverage honestly (covered, partial, not yet) before Quick
 start; every issue template asks for default-level `--bug-report` output and the Claude Code
 version, and never for a raw transcript.
 """
@@ -32,11 +31,12 @@ def _section(text: str, heading: str) -> str:
     return match.group(1)
 
 
-def test_first_screen_asks_the_question_and_gives_the_tagged_github_command():
+def test_first_screen_asks_the_question_and_gives_the_pypi_command():
     head = "\n".join(README.splitlines()[:16])
     assert 'Which "done" in your last Claude Code run can\'t you trust?' in head
-    assert f"\nuvx --from {GIT_SOURCE}@v{VERSION} agent-postmortem scan\n" in head
-    assert "PyPI" in head and "coming" in head
+    assert "\nuvx agent-postmortem scan\n" in head
+    assert GIT_SOURCE not in head
+    assert "coming" not in head
     assert "13 of 166 workflow runs" in head
 
 
@@ -79,13 +79,18 @@ def test_no_issue_template_asks_for_transcript_lines():
         assert "transcript line that shows" not in text, path.name
 
 
-def test_no_user_facing_text_installs_from_pypi():
-    """Plan B (2026-10-28): until PyPI works, every install line uses the GitHub tag."""
-    bare = re.compile(r"pip install agent-postmortem|uvx agent-postmortem|"
-                      r"uv tool install \"?agent-postmortem(?![\w.-]*@)")
+def test_user_facing_install_lines_use_pypi():
+    """0.3.5: PyPI works, so no install line a stranger reads points at the GitHub tag.
+    The plugin's own fallback to the tag is code in run.sh, tested in test_plugin.py."""
     for path in USER_FACING:
+        if path.name == "run.sh":
+            continue
         text = path.read_text(encoding="utf-8")
-        assert not bare.search(text), f"{path.name}: {bare.search(text).group(0)}"
+        assert f"{GIT_SOURCE}@" not in text, f"{path.name} still installs from the GitHub tag"
+    quick_start = _section(README, "Quick start")
+    assert "\nuv tool install agent-postmortem\n" in quick_start
+    for path in (REPO_ROOT / "plugin" / "README.md", REPO_ROOT / "plugin" / "skills" / "postmortem" / "SKILL.md"):
+        assert "uv tool install agent-postmortem" in path.read_text(encoding="utf-8"), path.name
 
 
 def test_every_github_tag_named_in_user_facing_text_is_the_package_version():

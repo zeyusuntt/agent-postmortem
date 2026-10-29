@@ -114,5 +114,5 @@ Bash tool.
   `--no-redact` only if the user asks to see raw paths or session ids, and
   say so when you do.
 - If the CLI is missing entirely, tell the user to run
-  `uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v0.3.4` and stop; do not try to install it
+  `uv tool install agent-postmortem` and stop; do not try to install it
   yourself.

@@ -7,15 +7,17 @@ agent-postmortem reads the transcripts Claude Code already wrote under `~/.claud
 On the maintainer's machine (scan 2026-10-27, 0.3.2), 13 of 166 workflow runs launched at least one agent's task a second time, and 10.2 hours went to retries and to attempts that ended without a result.
 
 ```
-uvx --from git+https://github.com/zeyusuntt/agent-postmortem@v0.3.4 agent-postmortem scan
+uvx agent-postmortem scan
 ```
 
-That runs the tagged release straight from GitHub (it needs [uv](https://docs.astral.sh/uv/) and git). A PyPI release is coming. On a machine with no runs yet it says where it looked and suggests `agent-postmortem demo`.
+That runs the latest release from PyPI with [uv](https://docs.astral.sh/uv/), which fetches Python 3.11 or later if you don't have it; nothing else to install. On a machine with no runs yet it says where it looked and suggests `agent-postmortem demo`.
 
 The command-line tool is local and read-only: Python standard library only, no LLM, no network access, and it never changes your files, transcripts, commits, or branches. (The Claude Code plugin's one network action, installing that tool, is described under Privacy; Limits notes two rare git index modes in which git's own `status` still updates its bookkeeping.) What it covers, below, lists the run shapes it handles and the ones it does not yet. Status: alpha, used so far on the maintainer's own machines. Claude Code only.
 
 [![CI](https://github.com/zeyusuntt/agent-postmortem/actions/workflows/ci.yml/badge.svg)](https://github.com/zeyusuntt/agent-postmortem/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/agent-postmortem.svg)](https://pypi.org/project/agent-postmortem/)
+[![Python versions](https://img.shields.io/pypi/pyversions/agent-postmortem.svg)](https://pypi.org/project/agent-postmortem/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/zeyusuntt/agent-postmortem/blob/main/LICENSE)
 
 ```
 RUN wf_00000000-d30  DEGRADED  ended 2026-01-06 19:55Z
@@ -73,10 +75,10 @@ If you run one of the partial or not-yet shapes, please open a ["my run shape is
 
 ## Quick start
 
-Install the command-line tool from the tagged GitHub release with [uv](https://docs.astral.sh/uv/) and git (uv fetches Python 3.11 or later if you don't have it), then try it:
+Install the command-line tool from PyPI with [uv](https://docs.astral.sh/uv/) (it fetches Python 3.11 or later if you don't have it), then try it:
 
 ```
-uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v0.3.4
+uv tool install agent-postmortem
 agent-postmortem demo
 agent-postmortem scan
 agent-postmortem run <run-id>
@@ -222,7 +224,7 @@ Paths inside free text (finding titles, diagnostics, error messages, and at `--l
 
 State lives in `$XDG_STATE_HOME/agent-postmortem/`, or `~/.local/state/agent-postmortem/` if that variable is unset: `state.json` (which findings a session already reported, and the rules the 0.1 `apply` command wrote, now read-only history), plus `secret` and `aliases.json` for the aliases. All three are mode 0600. The secret and the registry are never printed; `trend` shows the applied-rule history from `state.json` at the active level. If a command prints `stable aliases unavailable` on stderr, that output named everything `agent-1`, `agent-2`, and so on instead of by alias; nothing is repaired automatically, because a new secret would change every alias. Remove both `secret` and `aliases.json` to start over with new aliases.
 
-The plugin's one network action happens on `SessionStart` only: when it has not installed a CLI into its own data directory and no `agent-postmortem` on `PATH` passes its protocol check, it installs the CLI from the GitHub tag that matches the plugin's version (`v0.3.4`) into that data directory, retrying at most once every 24 hours on failure; opt out by setting `AGENT_POSTMORTEM_NO_AUTO_INSTALL=1`, or by installing the CLI yourself first.
+The plugin's one network action happens on `SessionStart` only: when it has not installed a CLI into its own data directory and no `agent-postmortem` on `PATH` passes its protocol check, it installs the CLI from PyPI at the plugin's own version, or from the matching GitHub tag if that install fails, into that data directory, retrying at most once every 24 hours on failure; opt out by setting `AGENT_POSTMORTEM_NO_AUTO_INSTALL=1`, or by installing the CLI yourself first.
 
 ## How it was built
 

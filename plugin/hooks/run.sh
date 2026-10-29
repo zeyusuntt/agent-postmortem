@@ -40,7 +40,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
 PLUGIN_JSON="$PLUGIN_ROOT/.claude-plugin/plugin.json"
-# The CLI install source (docs/DESIGN.md 7.3): the public repository at the tag v<plugin version>.
+# The CLI install sources (docs/DESIGN.md 7.3): PyPI at the plugin version first, then the
+# public repository at the tag v<plugin version> if that install fails.
+PYPI_PACKAGE="agent-postmortem"
 GIT_SOURCE="git+https://github.com/zeyusuntt/agent-postmortem"
 
 # docs/DESIGN.md 7.2's D9: one data directory, derived once, used for
@@ -325,8 +327,8 @@ _print_missing_cli_hint_if_due() {
     if _modified_within_a_day "$marker"; then
         return 0
     fi
-    printf '{"systemMessage": "agent-postmortem CLI not found; run: uv tool install %s@v%s"}\n' \
-        "$GIT_SOURCE" "$(_plugin_version)"
+    printf '{"systemMessage": "agent-postmortem CLI not found; run: uv tool install %s"}\n' \
+        "$PYPI_PACKAGE"
     : >"$marker" 2>/dev/null
 }
 
@@ -353,16 +355,22 @@ _maybe_install() {
     pinned_version="$(_plugin_version)"
     [ -n "$pinned_version" ] || return 0
 
-    # Plan B (2026-10-28): the git tag that matches the plugin version, until PyPI works.
-    source="$GIT_SOURCE@v$pinned_version"
+    # PyPI at the plugin version first; the matching GitHub tag only if that install fails
+    # (for example in the minutes between a release reaching GitHub and reaching PyPI). Both
+    # run under the one 60-second deadline the single install had, so the hook's time budget
+    # is unchanged.
+    pypi_source="$PYPI_PACKAGE==$pinned_version"
+    git_source="$GIT_SOURCE@v$pinned_version"
     {
-        printf '%s attempting: uv tool install %s\n' \
-            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$source"
+        printf '%s attempting: uv tool install %s (fallback: %s)\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$pypi_source" "$git_source"
     } >>"$install_log" 2>/dev/null
 
     mkdir -p "$DATA_DIR/bin" 2>/dev/null
     UV_TOOL_DIR="$DATA_DIR" UV_TOOL_BIN_DIR="$DATA_DIR/bin" \
-        _run_with_deadline 60 uv tool install "$source" --python 3.11+ \
+        _run_with_deadline 60 sh -c \
+        'uv tool install "$1" --python 3.11+ || uv tool install "$2" --python 3.11+' \
+        sh "$pypi_source" "$git_source" \
         </dev/null >>"$install_log" 2>&1
 }
 

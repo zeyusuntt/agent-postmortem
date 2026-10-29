@@ -41,15 +41,16 @@ On `SessionStart`, if the plugin has not installed a CLI into its own data
 directory and no `agent-postmortem` on your `PATH` passes its protocol check
 (`agent-postmortem hook capabilities` answers protocol 1), and
 [`uv`](https://docs.astral.sh/uv/) is on your `PATH`, the plugin installs
-the version pinned in the plugin manifest from its GitHub tag (`git` is
-needed too), retrying at most once every 24
+the version pinned in the plugin manifest from PyPI, or from the matching
+GitHub tag if that install fails (that fallback needs `git`), retrying at
+most once every 24
 hours on failure, and writes what happened to a log file instead of your
 terminal. This is the plugin's only network access.
 
 Opt out by setting `AGENT_POSTMORTEM_NO_AUTO_INSTALL=1` (in your shell
 profile, or wherever you set environment variables for Claude Code), or by
 installing the CLI yourself ahead of time with
-`uv tool install git+https://github.com/zeyusuntt/agent-postmortem@v0.3.4`.
+`uv tool install agent-postmortem`.
 
 ## The `/postmortem` skill
 

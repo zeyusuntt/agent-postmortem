@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5]
+
+### Changed
+
+- The PyPI summary is the positioning line the plugin already uses: it reads the Claude Code
+  logs already on your machine and tells you which agent's "done" you can't trust. The package
+  is classified as Alpha, matching the README's status line, and the README's license badge
+  links to the LICENSE file by full URL, so it also works on the PyPI page. PyPI version and
+  Python version badges join the CI and license badges.
+- Installs come from PyPI now. The README's first command is `uvx agent-postmortem scan`, and
+  Quick start, the plugin README and the `/postmortem` skill say `uv tool install
+  agent-postmortem`. No git is needed.
+- The plugin installs its CLI from PyPI at the plugin's own version. It falls back to the
+  matching GitHub tag only if that install fails, for example in the minutes between a release
+  reaching GitHub and reaching PyPI. Both attempts share the one 60-second deadline the single
+  install had. The missing-CLI hint says `uv tool install agent-postmortem`.
+
 ## [0.3.4]
 
 ### Fixed

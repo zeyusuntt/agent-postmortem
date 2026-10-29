@@ -72,6 +72,9 @@ POSITIONING = (
 )
 REPOSITORY_URL = "https://github.com/zeyusuntt/agent-postmortem"
 GIT_SOURCE = f"git+{REPOSITORY_URL}"
+# docs/DESIGN.md 7.3 (0.3.5): the CLI comes from PyPI, pinned to the plugin version; the
+# matching GitHub tag is the fallback when that install fails.
+PYPI_SPEC = "agent-postmortem=="
 
 
 def _manifest_version() -> str:
@@ -107,17 +110,17 @@ def test_plugin_version_equals_package_version():
     assert plugin["version"] == package_version
 
 
-def test_pyproject_plugin_and_package_versions_are_all_0_3_4():
+def test_pyproject_plugin_and_package_versions_are_all_0_3_5():
     """docs/DESIGN.md 7.1's D1: the literal, not just mutual equality --
     a version bump that only kept two of the three in sync would still
     pass a pure-equality check."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert pyproject["project"]["version"] == "0.3.4"
+    assert pyproject["project"]["version"] == "0.3.5"
     plugin = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
-    assert plugin["version"] == "0.3.4"
+    assert plugin["version"] == "0.3.5"
     import agent_postmortem
 
-    assert agent_postmortem.__version__ == "0.3.4"
+    assert agent_postmortem.__version__ == "0.3.5"
 
 
 def test_pyproject_declares_agent_postmortem_as_primary_and_postmortem_as_alias():
@@ -372,10 +375,7 @@ def test_run_sh_prints_the_missing_cli_hint_once_a_day(tmp_path):
     assert second.returncode == 0, second.stderr
     hint = json.loads(first.stdout)
     assert hint == {
-        "systemMessage": (
-            "agent-postmortem CLI not found; run: uv tool install "
-            f"{GIT_SOURCE}@v{_manifest_version()}"
-        )
+        "systemMessage": "agent-postmortem CLI not found; run: uv tool install agent-postmortem"
     }
     assert second.stdout == ""
 
@@ -407,13 +407,44 @@ def test_run_sh_attempts_install_once_on_session_start_when_uv_is_on_path(tmp_pa
     assert second.returncode == 0, second.stderr
     invocations = uv_log.read_text(encoding="utf-8").splitlines() if uv_log.exists() else []
     assert len(invocations) == 1, f"expected exactly one uv invocation, got {invocations!r}"
-    # Plan B (2026-10-28): the CLI comes from the GitHub tag that matches the plugin version,
-    # not from PyPI.
-    pinned = f"{GIT_SOURCE}@v{_manifest_version()}"
+    # 0.3.5: PyPI first, pinned to the plugin version; a PyPI install that succeeds is the
+    # only one attempted.
+    pinned = f"{PYPI_SPEC}{_manifest_version()}"
     assert invocations[0].startswith(f"tool install {pinned} ")
     install_log = plugin_data / "install.log"
     assert install_log.exists()
     assert f"uv tool install {pinned}" in install_log.read_text(encoding="utf-8")
+
+
+_FAKE_UV_FAILS_ON_PYPI = r"""#!/usr/bin/env bash
+echo "$@" >> "$AGENT_POSTMORTEM_TEST_UV_LOG"
+case "$*" in
+    *agent-postmortem==*) exit 1 ;;
+esac
+exit 0
+"""
+
+
+def test_run_sh_falls_back_to_the_matching_github_tag_when_the_pypi_install_fails(tmp_path):
+    uv_bin = tmp_path / "uv-bin"
+    uv_log = tmp_path / "uv-invocations.log"
+    _write_fake_cli(uv_bin, "uv", _FAKE_UV_FAILS_ON_PYPI)
+    plugin_data = tmp_path / "plugin-data"
+
+    result = _run_run_sh(
+        "session-start", path_entries=[str(uv_bin)], plugin_data=plugin_data,
+        stdin='{"source": "startup"}', extra_env={"AGENT_POSTMORTEM_TEST_UV_LOG": str(uv_log)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    invocations = uv_log.read_text(encoding="utf-8").splitlines()
+    version = _manifest_version()
+    assert len(invocations) == 2, f"expected PyPI then the GitHub tag, got {invocations!r}"
+    assert invocations[0].startswith(f"tool install {PYPI_SPEC}{version} ")
+    assert invocations[1].startswith(f"tool install {GIT_SOURCE}@v{version} ")
+    log = (plugin_data / "install.log").read_text(encoding="utf-8")
+    assert f"uv tool install {PYPI_SPEC}{version}" in log
+    assert f"{GIT_SOURCE}@v{version}" in log
 
 
 def test_run_sh_never_installs_when_no_auto_install_is_set(tmp_path):
