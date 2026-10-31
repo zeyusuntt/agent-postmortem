@@ -4742,7 +4742,19 @@ trend row's target) and `Finding.title`, rendered through `Redactor.title()`
 followed by structural `redact()`; **(N3b S1)** names come first, so a label
 that holds a UUID, an email, or a `-Users-...` slug is replaced whole
 instead of being half-rewritten by the structural pass and then missed)
-work exactly as before. Evidence, a diagnostic, and a metrics value are
+work exactly as before. **(0.3.6)** A story clause is capitalized only after the sink
+substituted names in it (`report._render_pieces` renders each `_Clause` through
+`Redactor.title`, then upper-cases its first character), so a name meets the pattern as
+written and becomes `Agent-1` at a sentence start. Through 0.3.5 the clause was capitalized
+first: a `mislabeled_kill` title starts with the label, and when it was an agent's whole
+story the label `impl:x` reached share output as `Impl:x`, which the case-sensitive pattern
+never matched (`run` text and `run --json` stories only; `tests/test_share_label_case.py`).
+Matching stays case-sensitive, and every clause in the tool's own words is written with
+its capital already (`report._own_clause`: "Killed 1 time by the runtime", "Attempt 2
+failed: ...", "Wrote no paths."), so a label that is a plain word (`killed`, `attempt`,
+`wrote`) never rewrites them, and neither are finding titles, except the title of a
+detector that leads with its agent's own label (`report._LABEL_LED_TITLES`:
+`mislabeled_kill`), which is capitalized only after the substitution. Evidence, a diagnostic, and a metrics value are
 never fed to the five *name* categories (agent/desc/phase/type/target): they
 pass through structural `redact()` alone (plain `Redactor.__call__`),
 because they are a faithful quote of transcript text (4.5), not a rendered
@@ -6707,7 +6719,7 @@ later events go positional).
 
 ### 8.1 Package
 
-`pyproject.toml`: name `agent-postmortem`, version `0.3.5`, console scripts
+`pyproject.toml`: name `agent-postmortem`, version `0.3.6`, console scripts
 `agent-postmortem` and `postmortem`, `requires-python >= 3.11`, no runtime
 dependencies, `[project.optional-dependencies].dev = ["pytest>=8",
 "ruff>=0.6"]`, classifiers, URLs (Homepage, Issues, Changelog). The wheel

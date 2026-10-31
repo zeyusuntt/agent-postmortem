@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6]
+
+### Fixed
+
+- The default (share) output could print an agent's own label. A story sentence starts with
+  a capital, and when an agent's whole story was its interrupt finding, whose title starts
+  with the label, the label was capitalized before the name substitution ran. That
+  substitution matched names case-sensitively, so a workflow label such as `impl:t2` or a
+  subagent description starting with a lowercase letter printed as `Impl:t2` in the
+  STORIES section of `run` and in `stories[].text` of `run --json`. A story clause is now
+  capitalized after its names are replaced, so it reads `Agent-1 interrupted after ...`.
+  `scan`, `run --bug-report`, `rescue` and the hook messages never carried it, and none of
+  the 382 runs on the maintainer's machine hit it. `--local` and `--raw` are unchanged.
+
 ## [0.3.5]
 
 ### Changed

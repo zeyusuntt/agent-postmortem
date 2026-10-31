@@ -110,17 +110,17 @@ def test_plugin_version_equals_package_version():
     assert plugin["version"] == package_version
 
 
-def test_pyproject_plugin_and_package_versions_are_all_0_3_5():
+def test_pyproject_plugin_and_package_versions_are_all_0_3_6():
     """docs/DESIGN.md 7.1's D1: the literal, not just mutual equality --
     a version bump that only kept two of the three in sync would still
     pass a pure-equality check."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert pyproject["project"]["version"] == "0.3.5"
+    assert pyproject["project"]["version"] == "0.3.6"
     plugin = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
-    assert plugin["version"] == "0.3.5"
+    assert plugin["version"] == "0.3.6"
     import agent_postmortem
 
-    assert agent_postmortem.__version__ == "0.3.5"
+    assert agent_postmortem.__version__ == "0.3.6"
 
 
 def test_pyproject_declares_agent_postmortem_as_primary_and_postmortem_as_alias():

@@ -1,6 +1,6 @@
 {
   "name": "agent-postmortem",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Reads the Claude Code logs already on your machine and tells you which agent's 'done' you can't trust, and what to run next.",
   "author": {
     "name": "zeyusuntt",

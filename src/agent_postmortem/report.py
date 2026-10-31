@@ -1759,9 +1759,11 @@ def _agent_story_pieces(agent, agent_findings: list[Finding]) -> list:
                 all_runtime = False
         if all_runtime and silences:
             silence_text = ", ".join(silences)
-            lead = f"killed {k} {_plural(k, 'time')} by the runtime ({silence_text} of silence)"
+            lead = _own_clause(
+                f"killed {k} {_plural(k, 'time')} by the runtime ({silence_text} of silence)"
+            )
         else:
-            lead = f"restarted {k} {_plural(k, 'time')}"
+            lead = _own_clause(f"restarted {k} {_plural(k, 'time')}")
 
     parent_stop = False
     if final is not None:
@@ -1773,13 +1775,13 @@ def _agent_story_pieces(agent, agent_findings: list[Finding]) -> list:
     elif lead is not None:
         clauses.append(lead)
     elif parent_stop:
-        clauses.append("stopped by the parent")
+        clauses.append(_own_clause("stopped by the parent"))
 
     for finding in by_detector.get("attempt_failed", []):
         ordinal = _finding_ordinal(finding, attempts_sorted)
         phrase = _cause_phrase(finding.metrics.get("cause", "unattributed"))
         reset_time = finding.metrics.get("reset_time")
-        text = f"attempt {ordinal} failed: {phrase}"
+        text = _own_clause(f"attempt {ordinal} failed: {phrase}")
         if reset_time:
             text += f", resets {reset_time}"
         clauses.append(text)
@@ -1787,7 +1789,9 @@ def _agent_story_pieces(agent, agent_findings: list[Finding]) -> list:
     for finding in by_detector.get("claim_contradiction", []):
         ordinal = _finding_ordinal(finding, attempts_sorted)
         phrases = _claim_contradiction_phrases(finding.metrics)
-        clauses.append(f"attempt {ordinal} completed but reported {'; '.join(phrases)}")
+        clauses.append(
+            _own_clause(f"attempt {ordinal} completed but reported {'; '.join(phrases)}")
+        )
 
     _paths_display, commits_count = _agent_facts_totals(agent)
     path_count, paths_partial = _agent_paths(agent)
@@ -1818,9 +1822,50 @@ def _agent_story_pieces(agent, agent_findings: list[Finding]) -> list:
         clauses.append("; ".join(tooling_bits))
 
     if not clauses and agent_findings:
-        clauses.append(agent_findings[0].title_parts or agent_findings[0].title)
+        clauses.append(_title_clause(agent_findings[0], agent.label))
 
     return _sentences_pieces(clauses)
+
+
+def _sentence_case(text: str) -> str:
+    """`text` with its first character upper-cased: how a story sentence starts."""
+    return text[:1].upper() + text[1:]
+
+
+def _own_clause(text: str) -> str:
+    """A story clause in the tool's own words, capitalized where it is written (0.4 review round
+    2): every clause is capitalized again only after names are substituted, and a label that is
+    the clause's first word (`killed`, `restarted`, `attempt`) must not meet that word in
+    lowercase."""
+    return _sentence_case(text)
+
+
+# Detectors whose title starts with the agent's own label ("<label> interrupted after ...").
+_LABEL_LED_TITLES = frozenset({"mislabeled_kill"})
+
+
+def _title_clause(finding: Finding, label: str | None) -> object:
+    """A finding title as a story clause (0.3.6 review round 3). The title of a detector that
+    leads with the agent's own label stays as written, so the name substitution meets the label
+    before the sentence is capitalized; every other title is in the tool's own words and is
+    capitalized where it is used (`_own_clause`), so a label that is its first word ("the" in
+    "the harness reported this workflow failed") never rewrites it."""
+    if finding.title_parts:
+        return finding.title_parts
+    title = finding.title
+    if (
+        finding.detector in _LABEL_LED_TITLES
+        and isinstance(label, str) and label and title.startswith(label)
+    ):
+        return title
+    return _own_clause(title)
+
+
+class _Clause(str):
+    """A story clause as written, without its final period. Its first character is upper-cased
+    only after a sink rendered it (0.3.6): a clause can start with a user-authored name (a
+    `mislabeled_kill` title starts with the label), and the case-sensitive name substitution
+    must meet that name as written (docs/DESIGN.md 5.1)."""
 
 
 def _sentences(clauses: list[str]) -> str:
@@ -1828,20 +1873,17 @@ def _sentences(clauses: list[str]) -> str:
     ends with one period. Finding titles start lowercase by convention
     (docs/DESIGN.md 4.3), so this is where a story gets its capitals."""
     parts = [clause.rstrip(".") for clause in clauses if clause]
-    text = ". ".join(c[:1].upper() + c[1:] for c in parts)
+    text = ". ".join(_sentence_case(c) for c in parts)
     return f"{text}." if text else ""
 
 
 def _sentences_pieces(clauses: list) -> list:
-    """`_sentences` as pieces (F fix 7, W7-2): a clause is a string or the `TitleParts` of a
-    finding title that names a path. With no `TitleParts` the result is the one string
-    `_sentences` returns (or no piece for no text). With one, the template is capitalized and
-    stripped of a final period like any clause, and the pieces are the strings around it (merged)
-    and the `TitleParts` themselves, so `_render_pieces` can render the path once and never scan
-    the tool's own words."""
-    if not any(isinstance(clause, TitleParts) for clause in clauses):
-        text = _sentences(clauses)
-        return [text] if text else []
+    """`_sentences` as pieces (F fix 7, W7-2; 0.3.6): one piece per clause, with the ". "
+    between clauses and the final "." as plain strings. A string clause is a `_Clause`, which a
+    sink renders first and capitalizes after (`_render_pieces`), so a name at its start is
+    substituted as written. The `TitleParts` of a finding title that names a path has its
+    template capitalized and stripped of a final period here, since those words are the tool's
+    own, and `_render_pieces` renders the path once and never scans them. No text, no piece."""
     parts: list = []
     for clause in clauses:
         if not clause:
@@ -1849,35 +1891,39 @@ def _sentences_pieces(clauses: list) -> list:
         if isinstance(clause, TitleParts):
             head, placeholder, tail = clause.template.partition("{path}")
             template = head + placeholder + tail.rstrip(".")
-            parts.append(TitleParts(template[:1].upper() + template[1:], clause.path))
+            parts.append(TitleParts(_sentence_case(template), clause.path))
         else:
-            text = clause.rstrip(".")
-            parts.append(text[:1].upper() + text[1:])
+            parts.append(_Clause(clause.rstrip(".")))
+    if all(isinstance(part, _Clause) and not part for part in parts):
+        return []
     pieces: list = []
     for index, part in enumerate(parts):
-        for piece in ((". ",) if index else ()) + (part,):
-            if isinstance(piece, str) and pieces and isinstance(pieces[-1], str):
-                pieces[-1] += piece
-            else:
-                pieces.append(piece)
-    if pieces and isinstance(pieces[-1], str):
-        pieces[-1] += "."
-    else:
-        pieces.append(".")
+        if index:
+            pieces.append(". ")
+        pieces.append(part)
+    pieces.append(".")
     return pieces
 
 
 def _pieces_raw(pieces: list) -> str:
-    """The pieces with the real path (the raw text of a story)."""
-    return "".join(piece.raw() if isinstance(piece, TitleParts) else piece for piece in pieces)
+    """The pieces with the real path and real names (the raw text of a story)."""
+    return "".join(
+        piece.raw() if isinstance(piece, TitleParts)
+        else _sentence_case(piece) if isinstance(piece, _Clause)
+        else piece
+        for piece in pieces
+    )
 
 
 def _render_pieces(pieces: list, redactor: Redactor) -> str:
-    """The pieces as a sink prints them: a string through `Redactor.title` (labels, paths and the
-    rest of the scanner), a `TitleParts` through `Redactor.title_parts` (its path rendered once,
-    its words never scanned)."""
+    """The pieces as a sink prints them: a `_Clause` through `Redactor.title` (labels, paths and
+    the rest of the scanner) and only then capitalized, a `TitleParts` through
+    `Redactor.title_parts` (its path rendered once, its words never scanned), and the separators
+    as they are."""
     return "".join(
-        redactor.title_parts(piece) if isinstance(piece, TitleParts) else redactor.title(piece)
+        redactor.title_parts(piece) if isinstance(piece, TitleParts)
+        else _sentence_case(redactor.title(piece)) if isinstance(piece, _Clause)
+        else piece
         for piece in pieces
     )
 
@@ -1933,7 +1979,7 @@ def _story_records(run: Run, findings: list[Finding], verbose: bool) -> list[dic
     run_relevant = [f for f in run_level if verbose or f.severity != "info"]
     if run_relevant:
         rank = min(_SEVERITIES.index(f.severity) for f in run_relevant)
-        pieces = _sentences_pieces([f.title_parts or f.title for f in run_relevant])
+        pieces = _sentences_pieces([_title_clause(f, None) for f in run_relevant])
         entries.append({
             "agent": "run",
             "severity": _SEVERITIES[rank],
