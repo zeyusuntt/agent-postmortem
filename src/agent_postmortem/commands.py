@@ -1320,18 +1320,62 @@ def commit_command_ran(words: list[str] | tuple[str, ...]) -> bool:
     )
 
 
+def _run_as_is_command(words) -> list[str] | None:
+    """FA6 (field report 2026-10-30, COMMITS 0 for an agent that committed): a segment's words
+    after the prefixes that run the command after them unchanged, in the same directory:
+    leading NAME=VALUE words, `env` followed by NAME=VALUE words only, and `mise exec|x
+    [tool@version ...] --`. None when such a prefix takes an option (`env -C DIR`, `mise exec
+    -C DIR` could change the directory), `mise exec` has no `--`, or nothing follows. Words
+    with no such prefix come back unchanged, so an opaque first word (`eval`, `time`) still
+    reads as no commit. Used for the presence fact only; A1's id grammar keeps such a segment
+    unplaced, since an assignment can name another repository (GIT_DIR=...)."""
+    rest = list(words)
+    i, n = 0, len(rest)
+    # NAME=VALUE is an assignment only where a shell or env reads one: at the start and after
+    # `env`. mise runs the word after `--` as the command itself (batch 1 review).
+    assignments = True
+    while i < n:
+        word = rest[i]
+        if assignments and "=" in word.raw and _ASSIGN_RE.match(word.raw):
+            i += 1
+        elif word.raw == "env":
+            i += 1
+            assignments = True
+            if i < n and rest[i].text.startswith("-"):
+                return None
+        elif word.raw == "mise" and i + 1 < n and rest[i + 1].raw in ("exec", "x"):
+            j = i + 2
+            while j < n and rest[j].raw != "--":
+                if rest[j].text.startswith("-"):
+                    return None
+                j += 1
+            if j >= n:
+                return None
+            i = j + 1
+            assignments = False
+        else:
+            break
+    if i >= n:
+        return None
+    return [word.text for word in rest[i:]]
+
+
 def _commit_ran_in_lexed(lexed: Lexed, depth: int) -> bool:
     """Whether some foreground commit segment of one lexed command is a
     commit_command_ran segment whose OWN reasons are empty. A reason raised in
     another segment (an expansion in an earlier `cd $WT`) does not hide it;
     any reason in the candidate itself (opaque or malformed syntax, quoting,
     heredoc data) fails closed, as does an `&` ending its and-or list."""
-    flagged = {index for _, index in lexed.reason_at}
+    own_reasons: dict[int, set[str]] = {}
+    for reason, index in lexed.reason_at:
+        own_reasons.setdefault(index, set()).add(reason)
     background = _backgrounded_lists(lexed)
     for index, (seg, bg) in enumerate(zip(lexed.segments, background)):
-        if bg or index in flagged:
+        if bg or own_reasons.get(index, set()) - {"first_word"}:
             continue
-        words = [w.text for w in seg.words]
+        words = _run_as_is_command(seg.words)
+        if words is None:
+            continue
         if (
             len(words) == 3
             and not seg.redirects

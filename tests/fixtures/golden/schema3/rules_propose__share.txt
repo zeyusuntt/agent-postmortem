@@ -19,7 +19,7 @@ exit=0
     {
       "rule_id": "R-ASSERT-ARTIFACT",
       "target_kind": "workflow prompt",
-      "findings": 6,
+      "findings": 7,
       "runs": 4,
       "first": "2026-01-09",
       "last": "2026-09-17",

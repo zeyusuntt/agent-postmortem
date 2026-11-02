@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
-from . import detectors, disclosure, ledger, reader, report
+from . import detectors, disclosure, ledger, live, reader, report
 from .detectors import attempt_failed as _attempt_failed
 from .detectors.base import final_event, meaningful_event_before
 from .markers import KILL_SENTINEL_PREFIX
@@ -325,6 +325,9 @@ class _PendingOk:
 
     occurrence: object
     polls: int = 0
+    # docs/DESIGN.md 4.14.2 R1, R2: decided when the result is read, never when a rate-limited
+    # line is finally printed (a report created or removed in between changes nothing)
+    clauses: list | None = None
 
 
 # The lifecycle terminals that make DONE eligible at once (docs/DESIGN.md 4.12): the
@@ -592,16 +595,25 @@ def watch_run(
                 continue
             handle = (occurrence.key, occurrence.ordinal)
             if handle not in handled_ok and handle not in pending_ok:
-                pending_ok[handle] = _PendingOk(occurrence=occurrence)
+                pending_ok[handle] = _PendingOk(
+                    occurrence=occurrence,
+                    clauses=live.result_clauses(getattr(occurrence, "closing_entry", None)),
+                )
 
         for handle in list(pending_ok.keys()):
             pending = pending_ok[handle]
-            status = _try_emit_ok(names, pending.occurrence, now, last_print, json_mode, out)
+            status = _try_emit_ok(
+                names, pending.occurrence, now, last_print, json_mode, out, run_id,
+                pending.clauses,
+            )
             if status == "retry":
                 pending.polls += 1
                 if pending.polls < _MAX_PENDING_POLLS:
                     continue
-                _force_emit_ok(names, pending.occurrence, now, last_print, json_mode, out)
+                _force_emit_ok(
+                    names, pending.occurrence, now, last_print, json_mode, out, run_id,
+                    pending.clauses,
+                )
             handled_ok.add(handle)
             del pending_ok[handle]
 
@@ -849,8 +861,30 @@ def _emit_start(run_id: str, occurrences: list, json_mode: bool, out) -> None:
         )
 
 
-def _emit_ok_line(names: _AgentNames, occurrence, json_mode: bool, out) -> None:
+def _emit_ok_line(
+    names: _AgentNames, occurrence, json_mode: bool, out, run_id: str = "",
+    clauses: list | None = None,
+) -> None:
     agent = names.name(occurrence)
+    # docs/DESIGN.md 4.14.2 R1, R2: a result whose own claims contradict it is a CLAIM, in place
+    # of its OK, under the same rate limit and bounded retry
+    if clauses is None:
+        clauses = live.result_clauses(getattr(occurrence, "closing_entry", None))
+    if clauses:
+        next_command = f"agent-postmortem run {run_id}"
+        if json_mode:
+            payload = {
+                "event": "CLAIM", "agent": agent, "attempt": occurrence.ordinal,
+                "clauses": [clause_id for clause_id, _phrase in clauses], "run_id": run_id,
+                "next_command": next_command,
+            }
+            print(json.dumps(payload), file=out)
+        else:
+            print(_line("CLAIM", f"{agent} attempt {occurrence.ordinal} returned, but its own "
+                                 "result reports:"), file=out)
+            print(_line("", "; ".join(phrase for _id, phrase in clauses) + "."), file=out)
+            print(_line("", f"-> {next_command}"), file=out)
+        return
     if json_mode:
         payload = {"event": "OK", "agent": agent, "attempt": occurrence.ordinal}
         print(json.dumps(payload), file=out)
@@ -860,23 +894,23 @@ def _emit_ok_line(names: _AgentNames, occurrence, json_mode: bool, out) -> None:
 
 def _try_emit_ok(
     names: _AgentNames, occurrence, now: float, last_print: dict[str, float], json_mode: bool,
-    out,
+    out, run_id: str = "", clauses: list | None = None,
 ) -> str:
     """docs/DESIGN.md 4.12 (N8b K5.2): 'emitted' or 'retry' (suppressed by the per-agent rate
     limit, the only reason an OK waits)."""
     if _rate_limited(occurrence.key, now, last_print):
         return "retry"
-    _emit_ok_line(names, occurrence, json_mode, out)
+    _emit_ok_line(names, occurrence, json_mode, out, run_id, clauses)
     last_print[occurrence.key] = now
     return "emitted"
 
 
 def _force_emit_ok(
     names: _AgentNames, occurrence, now: float, last_print: dict[str, float], json_mode: bool,
-    out,
+    out, run_id: str = "", clauses: list | None = None,
 ) -> None:
     """The bounded retry ran out: printed through the rate limit, so an OK is never dropped."""
-    _emit_ok_line(names, occurrence, json_mode, out)
+    _emit_ok_line(names, occurrence, json_mode, out, run_id, clauses)
     last_print[occurrence.key] = now
 
 

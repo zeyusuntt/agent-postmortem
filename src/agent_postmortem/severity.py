@@ -260,6 +260,35 @@ def work_risk(run: Run) -> str:
     return "none"
 
 
+def removed_dir(directory: str) -> bool:
+    """docs/DESIGN.md 4.3 (0.4): `directory` is absent now while its parent is present: removed
+    after the run (a cleaned-up worktree leaves its parent). A path with no existing parent (a
+    synthetic one, or one from another machine) is not called removed. Both checks go through
+    `absence`, so the scan cache records them like any other probe."""
+    if not isinstance(directory, str) or not os.path.isabs(directory):
+        return False
+    directory = directory.rstrip("/") or "/"
+    parent = os.path.dirname(directory)
+    return (
+        parent != directory and absence(directory) == "absent_now"
+        and absence(parent) == "present_now"
+    )
+
+
+def working_dir_gone(path: str, cwds) -> bool:
+    """docs/DESIGN.md 4.3 (0.4): `path` lies inside one of an attempt's own working directories
+    and that directory was removed after the run (`removed_dir`)."""
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return False
+    for cwd in cwds or ():
+        if not isinstance(cwd, str) or not os.path.isabs(cwd):
+            continue
+        base = cwd.rstrip("/") + "/"
+        if path.startswith(base) and removed_dir(cwd):
+            return True
+    return False
+
+
 def absence(path: str) -> str:
     """`present_now`, `absent_now`, or `unknown` for one path. Not absolute, a
     stat error other than not-found, or a path stat rejects outright is

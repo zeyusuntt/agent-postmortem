@@ -42,6 +42,13 @@ KILL_SENTINEL_VARIANTS = (
     "[Request interrupted by user for tool use]",
 )
 
+# A foreground subagent launched by another subagent (spawn depth 2) returns its report to
+# that launcher as a plain tool_result starting with this prefix, with no toolUseResult and no
+# task notification (Claude Code 2.1.309 to 2.1.314; 4 of the 10 nested children on the
+# reference machine, the other 6 background launches whose result reads "Async agent launched").
+# The live reads take it as that child's return (docs/DESIGN.md 4.14.3).
+SUBAGENT_HAND_BACK = "[Subagent hand-back]"
+
 # A Bash tool_result reporting that the command outlived its timeout and was
 # detached to run in the background instead of being killed. Observed as
 # "Command did not complete within its 30s timeout and was moved to the

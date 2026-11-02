@@ -29,12 +29,20 @@ _MAX_GAP = 80
 
 # A write/save/append/create/persist verb, then up to _MAX_GAP arbitrary
 # characters, then an absolute path ending in one of the artifact
-# extensions. The path itself is not length-limited, only its start. The
-# trailing (?!...) boundary keeps a longer filename that merely contains one
-# of the extensions (report.md.backup) from being truncated into a shorter
-# path that does not actually exist as its own file (report.md).
+# extensions. (v0.4, 4.14.2) The path must start a token: a slash inside a
+# relative path (`data/v2/x.json`), after a placeholder (`<vault>/x.md`,
+# `${OUT}/x.md`, `{out}/x.md`, `$(pwd)/x.md`) or after `~` is not an
+# absolute path the prompt names; on the reference
+# corpus those were the false matches of this rule. The path itself is not
+# length-limited, only its start. The trailing (?!...) boundary keeps a
+# longer filename that merely contains one of the extensions
+# (report.md.backup) from being truncated into a shorter path that does not
+# actually exist as its own file (report.md); (v0.4) a period that ends the
+# sentence right after the path ("... to /tmp/x/report.md.") does not count
+# as that longer name.
 _ARTIFACT_PATH_RE = re.compile(
-    r"""\b(?:write|save|append|create|persist)\b.{0,80}?(/[^\s,;:"'()]+\.(?:md|json|txt|jsonl))(?![A-Za-z0-9_.-])""",
+    r"""\b(?:write|save|append|create|persist)\b.{0,80}?(?<![\w.~<>/}){$-])"""
+    r"""(/[^\s,;:"'()]+\.(?:md|json|txt|jsonl))(?![A-Za-z0-9_-]|\.[A-Za-z0-9_])""",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -95,16 +103,22 @@ def _is_under_allowed_root(path: Path) -> bool:
 _ABSENT_TEMPLATE = (
     "{path} is absent now; the tool cannot tell whether it existed when the run ended"
 )
+_GONE_TEMPLATE = (
+    "{path} is in a working directory that no longer exists (a worktree removed after the "
+    "run?); the tool cannot check it"
+)
 _UNCHECKED_TEMPLATE = (
     "{path} could not be checked now; the tool cannot tell whether it existed "
     "when the run ended"
 )
 
 
-def _title_parts(path: str, state: str) -> TitleParts:
+def _title_parts(path: str, state: str, gone: bool = False) -> TitleParts:
     """D2 (docs/DESIGN.md 4.13.4): a check made now says nothing about the end of the run. The
     title is a fixed template and the path (F fix 7, W7-2): a renderer formats it once and never
-    scans the result."""
+    scans the result. A path in a working directory that is gone now says so (0.4)."""
+    if gone:
+        return TitleParts(_GONE_TEMPLATE, path)
     template = _ABSENT_TEMPLATE if state == "absent_now" else _UNCHECKED_TEMPLATE
     return TitleParts(template, path)
 
@@ -112,6 +126,23 @@ def _title_parts(path: str, state: str) -> TitleParts:
 def _title(path: str, state: str) -> str:
     """The title with the real path (what `raw` prints)."""
     return _title_parts(path, state).raw()
+
+
+_TEMPLATE_RE = re.compile(r"[<>*{}$]")
+
+
+def artifact_paths(text: str) -> list[str]:
+    """The absolute artifact paths a prompt tells its agent to write, in order, negated ones left
+    out: the one rule this detector and live mode's R4 (docs/DESIGN.md 4.14.2) share."""
+    paths: list[str] = []
+    for match in _ARTIFACT_PATH_RE.finditer(text):
+        preceding = text[max(0, match.start() - _NEGATION_WINDOW):match.start()]
+        if _NEGATION_RE.search(preceding):
+            continue
+        if _TEMPLATE_RE.search(match.group(1)):
+            continue  # a template (<case>, {id}, *, $VAR) names no one file
+        paths.append(match.group(1))
+    return paths
 
 
 class MissingArtifact:
@@ -125,11 +156,7 @@ class MissingArtifact:
             event = _first_user_event(attempt)
             if event is None:
                 continue
-            for match in _ARTIFACT_PATH_RE.finditer(event.text):
-                preceding = event.text[max(0, match.start() - _NEGATION_WINDOW):match.start()]
-                if _NEGATION_RE.search(preceding):
-                    continue
-                path_str = match.group(1)
+            for path_str in artifact_paths(event.text):
                 state = severity_rules.absence(path_str)
                 if state == "present_now":
                     continue
@@ -138,7 +165,10 @@ class MissingArtifact:
                     run, ID, obligation="prompt_path", absence=state,
                 )
                 evidence = [evidence_line(run, event)]
-                parts = _title_parts(path_str, state)
+                gone = state == "absent_now" and severity_rules.working_dir_gone(
+                    path_str, attempt.facts.cwds if attempt.facts is not None else (),
+                )
+                parts = _title_parts(path_str, state, gone)
                 findings.append(
                     Finding(
                         detector=ID,
@@ -148,7 +178,8 @@ class MissingArtifact:
                         run_id=run.run_id,
                         agent_id=attempt.agent_id,
                         evidence=evidence,
-                        metrics={"paths": [path_str], "verified": verified},
+                        metrics={"paths": [path_str], "verified": verified,
+                                 **({"working_dir_gone": True} if gone else {})},
                         rule_id=RULE_ID,
                         finding_id=make_finding_id(run.run_id, ID, attempt.agent_id, evidence[0]),
                     )

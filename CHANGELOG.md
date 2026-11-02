@@ -5,6 +5,128 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+0.4 adds live mode: the tool checks a subagent's "done" the moment it returns, and tells the
+main agent at its next tool call, with nothing to arm. It speaks only for what Claude Code does
+not already say: an interrupt nothing in the session explains, a failure that left files
+changed, and a return its own transcript contradicts. A second `scan` is fast.
+
+### Added
+
+- Per-call live checks. The plugin runs `hook post-tool` after every tool call and
+  `hook prompt-submit` on every prompt. When one of the session's own subagents was interrupted
+  with nothing in the session to explain it, failed after changing files (with the count), or
+  returned while its own last entry is an error or the file its prompt asked for is missing,
+  the agent hears it at its next tool call, or at its next prompt if it sat idle. A call with
+  nothing new prints nothing: 58 ms median through the plugin with its bundled CLI, about
+  130 ms with a CLI on PATH, which the plugin checks at every call.
+  Each ending is told once across every channel: these hooks, `watch --session`, Stop and the
+  resume sentence.
+- `agent-postmortem watch --session [SESSION_ID|PATH]` follows one session, for a Claude Code
+  Monitor on a long background run. It prints a line only for the endings above, passes
+  background-session state changes through, says ENDED when the session exits, and a re-armed
+  watch never repeats a line.
+- `agent-postmortem status [SESSION]` prints one snapshot of a session: its subagents running,
+  returned, interrupted or failed, what an interrupted one changed, returns their own
+  transcripts contradict, how each of its workflows ended, and the background sessions' states
+  as Claude Code records them. With no argument it reads the calling session. A second call
+  reads only what was appended (0.13 to 0.37 s warm on the maintainer's machine). A session
+  that ran shell commands in the background (for example a `codex exec` worker) gets one
+  COMMANDS line counting them by how Claude Code says they ended, with the oldest running
+  one's age, and saying that status does not check their output.
+- `agent-postmortem statusline subagents` is a `subagentStatusLine` command for Claude Code's
+  subagent panel. It rewrites a row only when it has something to add: an interrupt nothing in
+  the session explains, how many paths an interrupted or failed subagent changed, a return its
+  own last entry contradicts, or quiet time over two minutes. `AGENT_POSTMORTEM_STATUSLINE=0`
+  turns it off.
+- `hook agent-launched` runs on every Agent and Task launch. A foreground subagent that returns
+  on an error or without its prompted output file is reported in the same hook. The first
+  background launch of a session says that its subagents are checked when they return and
+  that a Monitor running `watch --session` is an option for a long run; a foreground launch
+  gets no hint, and `AGENT_POSTMORTEM_WATCH_HINT=0` turns it off.
+- `hook session-start` on a resumed session says how many of its own subagents never returned
+  or were interrupted before it stopped, and how many paths they changed, unless a live
+  channel already told it.
+- `watch <RUN_ID>` checks each result the moment it lands. A workflow agent that returns
+  `ok: false`, failed tests, failure counts or a report path that does not exist gets a CLAIM
+  line in place of its OK line, so the main agent hears about it before using the result.
+- `agent-postmortem --version` names the build when it was installed from a git checkout, as
+  `agent-postmortem <version> (<branch> <commit>, <date>)`, with `+dirty` when tracked files
+  were modified. A release prints the plain version, and `hook capabilities` always does.
+- The plugin keeps its bundled CLI at the plugin's version. Before, it installed one only when
+  none was found, so a plugin upgrade left the old CLI in place. Now SessionStart compares the
+  bundled CLI's version with the plugin's and, when they differ, reinstalls the plugin's
+  version in the background, at most once a day per version. A CLI you installed yourself on
+  PATH is never touched, and neither is a bundled CLI that is a link to a CLI outside the
+  plugin's data directory.
+
+### Changed
+
+- A second `scan` is fast. Each run's analysis is cached by the exact size, time and inode of
+  every file it reads, and is read again the moment any of them changes, a path it checked
+  appears or disappears, the config or version changes, or its 72-hour report window closes.
+  A transcript that grew is parsed again on its own, so a live session with hundreds of
+  subagents no longer makes every scan slow: on the maintainer's machine a warm scan takes
+  2.7 s after the largest session grew, where it took 17 to 23 s. A warm scan prints exactly
+  what a cold one prints. `--no-cache` reads everything.
+- `scan --since D` no longer reads runs it is about to drop: a run whose files were all last
+  written more than a day before D is skipped before it is parsed. The result set is the same,
+  except for a run with no readable event at all, which has no start date and can be left out.
+  The totals line says `SINCE D` instead of `ALL TIME`.
+- `scan` says it is working. On a terminal one stderr line counts the runs read and is erased
+  at the end; elsewhere, a scan of more than 50 runs prints one line when it starts.
+- The `missing_artifact` path rule, shared with the live check: a path must start a token,
+  templates (`<case>`, `{id}`, `*`, `$VAR`) are skipped, and a period that ends the sentence
+  right after a path no longer hides it. On the maintainer's 355 runs this removes 12 info
+  findings (placeholders and slashes inside relative paths) and adds 16, all in sessions
+  built to leave that file missing.
+- README: a table maps the live words KILL, FAILED and CLAIM to what `scan` and `run` print.
+
+### Fixed
+
+- A subagent that another subagent launched in the foreground no longer stays RUNNING
+  ("quiet 7d") in `status`, the resume sentence and the per-call check after it returned. Its
+  result lands in its launcher's transcript as a "[Subagent hand-back]" with no notice in the
+  main one; live mode now reads it there, as `run` already did.
+- The share-label fix of 0.3.6 also covers an attempt whose journal entry has no key and an
+  agent id that carries two labels. Such an attempt's interrupt finding is told as the run's
+  story, and its label is now replaced there too.
+- A forked session no longer owns its parent's history when the copied entries carry the fork's
+  own `sessionId` (Claude Code 2.1.305 and later). The hook attachments in the copied block still
+  name the session that wrote them, and that now marks where the fork's own entries begin. On a
+  background session forked from its dispatcher, `status` had counted the dispatcher's subagent
+  as running and `run` had said WORK AT RISK unknown; both now read 0 subagents.
+- `rescue plan` on a session names, under BRIEF FOR A RELAUNCH, only what the rescued subagents
+  wrote. It listed every subagent's files, so a relaunched agent was told to build on other
+  agents' work. A workflow's brief still covers the whole run.
+- A commit run behind `NAME=VALUE`, `env NAME=VALUE` or `mise exec ... --` counts as a commit
+  command, so an agent that committed that way and printed no summary line reads `COMMITS ?`
+  instead of `0`.
+- `scan --since <today>` could print more runs under SINCE than under LAST 7 DAYS. A run whose
+  files carry no timestamp is kept by `--since`; the 7-day line now places it by its newest
+  file write too.
+- `status --local` and `--raw` print real agent ids (the `agent-<id>.jsonl` names), and a blocked
+  or failed background session's own name and working directory. Before, `--no-redact` printed
+  the same aliases as the default, which ends with one line saying what `--local` adds.
+- `scan` marks the caller's own runs: a triage row ends in `(this session)` or
+  `(started by this session)` when `CLAUDE_CODE_SESSION_ID` names that session.
+- A story's count agrees with its noun: `1 Bash command backgrounded`, not `1 Bash commands`.
+- An unattributed interrupt's title says what the transcript logged: `..., cause unattributed,
+  logged as a user interrupt, consistent with a runtime kill`.
+- `status` says how each of the session's workflows ended. Open ones keep their `watch` command,
+  a failed, killed or stopped one points at `run`, and completed ones are one count line, where
+  a long session printed one watch line per workflow.
+- A worktree removed after its run (a merged branch, cleaned up) no longer reads as false
+  alarms: its report files are named as in a directory that no longer exists, WHAT TO DO stops
+  asking to check them, WORK AT RISK names the removed directory instead of a `git status`
+  command for it, and `status` makes no CLAIM of an output there.
+- `rules propose` reads through scan's cache: 101 s on 382 runs before, 1.2 s warm.
+- A no-match error repeats a typed `wf_` or `s_` id and says `agent-postmortem scan --all` lists
+  every run id.
+- A FAILED workflow whose agents all completed says that Claude Code reported the failure and to
+  check what the workflow itself returned.
+
 ## [0.3.6]
 
 ### Fixed

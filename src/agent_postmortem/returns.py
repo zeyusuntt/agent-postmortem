@@ -19,7 +19,21 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-ABSENT = object()
+
+class _Absent:
+    """A key that is missing, never equal to any JSON value. It pickles by name, so a stored
+    parse (docs/DESIGN.md 4.14.9 item 4) gives back this same object and `is ABSENT` holds."""
+
+    __slots__ = ()
+
+    def __reduce__(self) -> str:
+        return "ABSENT"
+
+    def __repr__(self) -> str:
+        return "ABSENT"
+
+
+ABSENT = _Absent()
 
 AGENT_LAUNCH_TOOLS = ("Agent", "Task")
 SEND_TOOL = "SendMessage"

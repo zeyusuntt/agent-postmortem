@@ -281,18 +281,19 @@ def test_no_field_test_carries_an_xfail_or_skip_mark_except_the_held_one():
     assert offenders == []
 
 
-def test_exactly_one_strict_xfail_remains_and_it_names_the_owner_decision():
+def test_no_strict_xfail_remains_since_n7_step_3_shipped():
+    """v0.4 (docs/DESIGN.md 4.14.9): the run cache is N7 step 3, so the one test held as a
+    strict xfail for the owner's decision C passes unmarked now and nothing else is held."""
     xfails = []
+    held_seen = False
     for file_name, name, marks, module_marks, body_skips in _scan():
+        if name == HELD_TEST and file_name == HELD_FILE:
+            held_seen = True
         for mark, deco in marks:
             if mark == "xfail":
                 xfails.append((file_name, name, deco))
-    assert [(f, n) for f, n, _ in xfails] == [(HELD_FILE, HELD_TEST)]
-    deco = xfails[0][2]
-    strict = _kwarg(deco, "strict")
-    assert isinstance(strict, ast.Constant) and strict.value is True
-    assert HELD_REASON_PHRASE in _constant_text(_kwarg(deco, "reason"))
-    assert "a warm scan parses every transcript today" in _constant_text(_kwarg(deco, "reason"))
+    assert xfails == []
+    assert held_seen
 
 
 def test_no_test_is_unconditionally_skipped_and_no_module_mark_skips_or_xfails():

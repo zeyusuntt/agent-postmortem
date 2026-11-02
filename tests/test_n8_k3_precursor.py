@@ -146,7 +146,7 @@ def test_k3_unattributed_precursor_is_named_after_the_silence_clause(tmp_path):
     title = _title(_build(tmp_path, "wf_00000000-8c1", "last", retried=False))
     assert title == (
         "impl interrupted after 350s of silence" + CLAUSE.format(n=3)
-        + ", cause unattributed, consistent with a runtime kill"
+        + ", cause unattributed, logged as a user interrupt, consistent with a runtime kill"
     )
 
 
@@ -207,7 +207,9 @@ def test_k3_an_unattributed_kill_with_unknown_silence_never_names_a_precursor(tm
         line.pop("timestamp", None)
     _write_jsonl(transcript, lines)
     title = _title(run_dir)
-    assert title == "impl interrupted with silence unknown, cause unattributed"
+    assert title == (
+        "impl interrupted with silence unknown, cause unattributed, logged as a user interrupt"
+    )
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "runs"
@@ -236,3 +238,10 @@ def test_k3_no_title_in_any_fixture_claims_a_cause_by_the_precursor(word):
     assert titles, "the sweep found no mislabeled_kill title at all"
     for name, title in titles:
         assert not re.search(rf"\b{word}\b", title.lower()), (name, title)
+
+
+# field report 2026-09-30 "mislabeled_kill major with no paths written reads as alarming": the
+# title says what the transcript logged, as the runtime-cause title already does
+def test_every_unattributed_title_says_the_log_called_it_a_user_interrupt(tmp_path):
+    title = _title(_build(tmp_path, "wf_00000000-8c1", "last", retried=False))
+    assert ", logged as a user interrupt" in title

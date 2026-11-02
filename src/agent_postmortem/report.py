@@ -735,6 +735,15 @@ def _workflow_account_lines(run: Run, findings: list[Finding]) -> list[str]:
         f"{agent_count} {_plural(agent_count, 'agent')} took "
         f"{attempt_count} {_plural(attempt_count, 'attempt')}."
     ]
+    finals = [
+        max(agent.attempts, key=lambda a: a.ordinal) for agent in run.agents if agent.attempts
+    ]
+    if lifecycle_failed(run) and finals and all(a.outcome == "completed" for a in finals):
+        # 0.4: FAILED with every agent completed puzzled readers; say what failed (4.7 rule 2)
+        sentences.append(
+            "Claude Code reported the workflow failed, though every agent's last attempt "
+            "completed: check what the workflow itself returned."
+        )
 
     runtime = 0
     parent_stop = 0
@@ -1134,6 +1143,11 @@ def _manual_command_text(repo: str, redactor: Redactor) -> str:
     """The manual `run yourself: git ... status --short` command for one repository, in the
     spelling the level allows (docs/DESIGN.md 4.7 item 4; REPO STATE reuses it, 4.9)."""
     shown = redactor.names.path(repo)
+    if severity.removed_dir(repo):
+        # 0.4: a repository removed after the run (a cleaned-up worktree) has nothing to check
+        return (
+            f"{shown} no longer exists (a worktree removed after the run?); nothing to check there"
+        )
     if redactor.level == "share":
         return f"run yourself: git status --short in {shown}; --raw prints the exact command"
     return f"run yourself: git -C {_shell_arg(shown, redactor.level)} status --short"
@@ -1279,6 +1293,8 @@ def _absent_files_item(run: Run, findings: list[Finding]) -> dict | None:
     count = sum(
         1 for finding in findings
         if finding.detector in _ABSENT_FILE_DETECTORS and finding.severity == "info"
+        # 0.4: a file in a working directory that is gone cannot be checked; not a look item
+        and not finding.metrics.get("working_dir_gone")
     )
     if count == 0 or not _ended_within_72h_strict(run, _now()):
         return None
@@ -1650,17 +1666,24 @@ def _findings_section(
     return lines
 
 
+# (one, many): the story says "1 Bash command backgrounded", "2 Bash commands backgrounded"
 _TOOLING_STORY_PHRASES = {
-    "bash_backgrounded": "Bash commands backgrounded",
-    "bash_timeout": "Bash commands timed out",
-    "tool_json_error": "tool input JSON errors",
-    "structured_output_failure": "structured output failures",
-    "codex_write_denied": "sandbox write denials",
-    "codex_unavailable": "Codex call(s) could not start",
-    "classifier_unavailable": "classifier outages",
-    "git_cwd_mismatch": "git cwd mismatches",
-    "permission_denied": "tool calls denied",
+    "bash_backgrounded": ("Bash command backgrounded", "Bash commands backgrounded"),
+    "bash_timeout": ("Bash command timed out", "Bash commands timed out"),
+    "tool_json_error": ("tool input JSON error", "tool input JSON errors"),
+    "structured_output_failure": ("structured output failure", "structured output failures"),
+    "codex_write_denied": ("sandbox write denial", "sandbox write denials"),
+    "codex_unavailable": ("Codex call could not start", "Codex calls could not start"),
+    "classifier_unavailable": ("classifier outage", "classifier outages"),
+    "git_cwd_mismatch": ("git cwd mismatch", "git cwd mismatches"),
+    "permission_denied": ("tool call denied", "tool calls denied"),
 }
+
+
+def _tooling_phrase(detector_id: str, count: int) -> str:
+    """`<count> <noun phrase>` for a tooling detector's story clause, the noun agreeing with it."""
+    one, many = _TOOLING_STORY_PHRASES[detector_id]
+    return f"{count} {one if count == 1 else many}"
 
 _CLAIM_CLAUSE_PHRASES = {
     "ok_false": "ok is false",
@@ -1692,6 +1715,9 @@ def _claim_contradiction_phrases(metrics: dict) -> list[str]:
         elif clause_id == "self_reported_failure":
             n = metrics.get("self_reported_failure_counts", 0)
             phrases.append(f"{n} {_plural(n, 'failure count')}")
+        elif clause_id == "report_path_missing" and metrics.get("working_dir_gone"):
+            # 0.4: the file was in a working directory removed after the run (4.3)
+            phrases.append("a report_path in a working directory that no longer exists")
         else:
             phrases.append(_CLAIM_CLAUSE_PHRASES.get(clause_id, clause_id))
     return phrases or ["a contradiction"]
@@ -1810,19 +1836,14 @@ def _agent_story_pieces(agent, agent_findings: list[Finding]) -> list:
         clauses.append("Wrote no paths.")
 
     tooling_bits = []
-    for detector_id, phrase in _TOOLING_STORY_PHRASES.items():
+    for detector_id in _TOOLING_STORY_PHRASES:
         for finding in by_detector.get(detector_id, []):
-            count = finding.metrics.get("count", 1)
-            if detector_id == "permission_denied":
-                phrase = f"tool {_plural(count, 'call')} denied"
-            elif detector_id == "codex_unavailable":
-                phrase = f"Codex {_plural(count, 'call')} could not start"
-            tooling_bits.append(f"{count} {phrase}")
+            tooling_bits.append(_tooling_phrase(detector_id, finding.metrics.get("count", 1)))
     if tooling_bits:
         clauses.append("; ".join(tooling_bits))
 
     if not clauses and agent_findings:
-        clauses.append(_title_clause(agent_findings[0], agent.label))
+        clauses.append(_title_clause(agent_findings[0]))
 
     return _sentences_pieces(clauses)
 
@@ -1844,7 +1865,7 @@ def _own_clause(text: str) -> str:
 _LABEL_LED_TITLES = frozenset({"mislabeled_kill"})
 
 
-def _title_clause(finding: Finding, label: str | None) -> object:
+def _title_clause(finding: Finding) -> object:
     """A finding title as a story clause (0.3.6 review round 3). The title of a detector that
     leads with the agent's own label stays as written, so the name substitution meets the label
     before the sentence is capitalized; every other title is in the tool's own words and is
@@ -1852,13 +1873,10 @@ def _title_clause(finding: Finding, label: str | None) -> object:
     "the harness reported this workflow failed") never rewrites it."""
     if finding.title_parts:
         return finding.title_parts
-    title = finding.title
-    if (
-        finding.detector in _LABEL_LED_TITLES
-        and isinstance(label, str) and label and title.startswith(label)
-    ):
-        return title
-    return _own_clause(title)
+    if finding.detector in _LABEL_LED_TITLES:
+        # whatever label it leads with (batch 2 review: an agent id can carry two labels)
+        return finding.title
+    return _own_clause(finding.title)
 
 
 class _Clause(str):
@@ -1979,7 +1997,8 @@ def _story_records(run: Run, findings: list[Finding], verbose: bool) -> list[dic
     run_relevant = [f for f in run_level if verbose or f.severity != "info"]
     if run_relevant:
         rank = min(_SEVERITIES.index(f.severity) for f in run_relevant)
-        pieces = _sentences_pieces([_title_clause(f, None) for f in run_relevant])
+        # an attempt outside every logical agent (no journal key) is told here (batch 1 review)
+        pieces = _sentences_pieces([_title_clause(f) for f in run_relevant])
         entries.append({
             "agent": "run",
             "severity": _SEVERITIES[rank],
@@ -2221,14 +2240,22 @@ def is_attention_candidate(run: Run, findings: list[Finding], now: datetime, liv
     NOW instead, and is a candidate only through (b) to (d). `live` stays in the signature
     because the caller computes it once for the row, the ranking key, and the LIVE NOW group."""
     del live
-    verdict = _verdict_bare(run, findings)
+    return attention_candidate_from(
+        _verdict_bare(run, findings), run, lambda: bool(_risk_paths_and_commits(run)[0]), now,
+    )
+
+
+def attention_candidate_from(verdict: str, run, risk_paths, now: datetime) -> bool:
+    """is_attention_candidate's rules over facts a scan can keep (docs/DESIGN.md 4.14.9): the
+    bare verdict, anything with `ended_at`, and whether the risk population wrote a path (a
+    bool, or a callable computing it only when rule (c) needs it)."""
     if verdict == "FAILED":  # (d) verdict FAILED regardless of age
         return True
     if _ended_within_72h_strict(run, now):
         if verdict == "DEGRADED":  # (b) ended recently, FAILED already handled above
             return True
-        paths, _commits = _risk_paths_and_commits(run)
-        if paths:  # (c) ended recently, a killed/failed/superseded attempt wrote a path
+        has_paths = risk_paths() if callable(risk_paths) else risk_paths
+        if has_paths:  # (c) ended recently, a killed/failed/superseded attempt wrote a path
             return True
     return False
 
@@ -2321,9 +2348,14 @@ def attention_next_command(run: Run, now: datetime) -> str:
     as recent" convention _what_to_do_items already uses for this exact
     decision on the `run` report."""
     paths, _commits = _risk_paths_and_commits(run)
-    if paths and _ended_recently(run, now):
-        return f"agent-postmortem run {run.run_id} --observe"
-    return f"agent-postmortem run {run.run_id}"
+    return attention_command_from(run.run_id, bool(paths), run, now)
+
+
+def attention_command_from(run_id: str, risk_paths: bool, run, now: datetime) -> str:
+    """attention_next_command over kept facts (docs/DESIGN.md 4.14.9)."""
+    if risk_paths and _ended_recently(run, now):
+        return f"agent-postmortem run {run_id} --observe"
+    return f"agent-postmortem run {run_id}"
 
 
 def attention_sort_key(
@@ -2334,12 +2366,25 @@ def attention_sort_key(
     working tree still holds the work), then paths at risk descending, then
     verdict (FAILED, DEGRADED, CLEAN), then wasted seconds descending, then
     ended_at descending (unknown last)."""
-    recent = _ended_within_72h_strict(run, now)
-    verdict_rank = _VERDICT_RANK.get(_verdict_bare(run, findings), 3)
+    return attention_sort_key_from(
+        run, _verdict_bare(run, findings), wasted_seconds_of(findings), live, paths_at_risk, now,
+    )
+
+
+def wasted_seconds_of(findings: list[Finding]) -> float:
     wasted_seconds = 0.0
     for finding in findings:
         if finding.detector == "wasted_time":
             wasted_seconds = finding.metrics.get("wasted_seconds", 0.0) or 0.0
+    return wasted_seconds
+
+
+def attention_sort_key_from(
+    run, verdict: str, wasted_seconds: float, live: bool, paths_at_risk: int, now: datetime,
+) -> tuple:
+    """attention_sort_key over kept facts (docs/DESIGN.md 4.14.9)."""
+    recent = _ended_within_72h_strict(run, now)
+    verdict_rank = _VERDICT_RANK.get(verdict, 3)
     ended_ts = _aware(run.ended_at).timestamp() if run.ended_at is not None else float("-inf")
     return (
         0 if live else 1, 0 if recent else 1, -paths_at_risk, verdict_rank,
@@ -2359,12 +2404,19 @@ def _scan_triage_totals_line(label: str, totals: dict) -> str:
     session = totals.get("session", {})
     wasted_seconds = workflow.get("wasted_hours", 0.0) * 3600.0
     return (
-        f"{label:<14}{workflow.get('runs', 0)} workflow runs, "
+        f"{label:<14}{'  ' if len(label) >= 14 else ''}{workflow.get('runs', 0)} workflow runs, "
         f"{workflow.get('runs_with_retries', 0)} with retries, "
         f"{format_duration(wasted_seconds)} wasted; "
         f"{session.get('runs', 0)} session runs, "
         f"{session.get('interrupted', 0)} subagents interrupted"
     )
+
+
+def _triage_tag(entry: dict, redactor: Redactor) -> str:
+    """docs/DESIGN.md 4.7 (0.4): after a triage row's run id, the caller's marker. The same at
+    every level, like the rest of the triage text, which names no identity (`scan --all --local`
+    prints each run's project)."""
+    return f" ({entry['mark']})" if entry.get("mark") else ""
 
 
 def render_scan_triage_text(
@@ -2378,6 +2430,7 @@ def render_scan_triage_text(
     live_now: list[dict] | None = None,
     total_live_now: int = 0,
     both_kinds: bool = True,
+    all_label: str = "ALL TIME",
 ) -> str:
     """unit M3b: the new default `scan` text output. `shown_candidates` is
     already sorted and already truncated to --limit by the caller;
@@ -2410,8 +2463,8 @@ def render_scan_triage_text(
     for candidate in shown_candidates:
         run = candidate["run"]
         lines.append(
-            f"  {run.run_id}  {candidate['age']}  {candidate['verdict']}  "
-            f"{redactor(candidate['reason'])}"
+            f"  {run.run_id}{_triage_tag(candidate, redactor)}  {candidate['age']}  "
+            f"{candidate['verdict']}  {redactor(candidate['reason'])}"
         )
         lines.append(f"    -> {redactor(candidate['command'])}")
     if total_live_now:
@@ -2423,11 +2476,11 @@ def render_scan_triage_text(
         lines.append(f"LIVE NOW ({total_live_now} of {total_runs} runs{live_note})")
         for entry in shown_live:
             lines.append(
-                f"  {entry['run'].run_id}  possibly live  {entry['verdict']}  "
-                f"{redactor(entry['command'])}"
+                f"  {entry['run'].run_id}{_triage_tag(entry, redactor)}  possibly live  "
+                f"{entry['verdict']}  {redactor(entry['command'])}"
             )
     lines.append(_scan_triage_totals_line("LAST 7 DAYS", totals_7d))
-    lines.append(_scan_triage_totals_line("ALL TIME", totals_all))
+    lines.append(_scan_triage_totals_line(all_label, totals_all))
     lines.append("  full list: agent-postmortem scan --all")
     silenced_line = _silenced_detectors_line(silenced_detectors)
     if silenced_line is not None:

@@ -110,17 +110,17 @@ def test_plugin_version_equals_package_version():
     assert plugin["version"] == package_version
 
 
-def test_pyproject_plugin_and_package_versions_are_all_0_3_6():
+def test_pyproject_plugin_and_package_versions_are_all_0_4_0():
     """docs/DESIGN.md 7.1's D1: the literal, not just mutual equality --
     a version bump that only kept two of the three in sync would still
     pass a pure-equality check."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert pyproject["project"]["version"] == "0.3.6"
+    assert pyproject["project"]["version"] == "0.4.0"
     plugin = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
-    assert plugin["version"] == "0.3.6"
+    assert plugin["version"] == "0.4.0"
     import agent_postmortem
 
-    assert agent_postmortem.__version__ == "0.3.6"
+    assert agent_postmortem.__version__ == "0.4.0"
 
 
 def test_pyproject_declares_agent_postmortem_as_primary_and_postmortem_as_alias():
@@ -130,19 +130,26 @@ def test_pyproject_declares_agent_postmortem_as_primary_and_postmortem_as_alias(
     resolution step (1) looks for."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     scripts = pyproject["project"]["scripts"]
-    assert scripts["agent-postmortem"] == "agent_postmortem.cli:main"
-    assert scripts["postmortem"] == "agent_postmortem.cli:main"
+    # 4.14.5 (0.4): entry.main answers the per-tool-call hooks without importing the CLI and
+    # hands every other command to cli.main unchanged
+    assert scripts["agent-postmortem"] == "agent_postmortem.entry:main"
+    assert scripts["postmortem"] == "agent_postmortem.entry:main"
 
 
 # --- hooks.json: matches the docs/DESIGN.md 7.1 table exactly ---------------
 
 # event -> (matcher or None, run.sh subcommand, timeout)
 _EXPECTED_HOOKS = {
-    "SessionStart": (None, "session-start", 90),
-    "Stop": (None, "check", 10),
-    "StopFailure": (None, "check", 10),
-    "SessionEnd": (None, "session-end", 20),
-    "PostToolUse": ("^Workflow$", "workflow-launched", 10),
+    "SessionStart": [(None, "session-start", 90)],
+    "Stop": [(None, "check", 10)],
+    "StopFailure": [(None, "check", 10)],
+    "SessionEnd": [(None, "session-end", 20)],
+    # docs/DESIGN.md 7.1 and 4.14.5: the Workflow launch hint, then the Agent/Task one
+    "PostToolUse": [("^Workflow$", "workflow-launched", 10),
+                    ("^(Agent|Task)$", "agent-launched", 10),
+                    # 4.14.5 (0.4): the return-time checks at every tool call, no Monitor needed
+                    ("*", "post-tool", 5)],
+    "UserPromptSubmit": [(None, "prompt-submit", 5)],
 }
 
 
@@ -150,20 +157,24 @@ def test_hooks_json_matches_the_design_table():
     data = _load_json(PLUGIN_ROOT / "hooks" / "hooks.json")
     hooks = data["hooks"]
     assert set(hooks) == set(_EXPECTED_HOOKS)
-    for event, (matcher, subcommand, timeout) in _EXPECTED_HOOKS.items():
+    for event, expected in _EXPECTED_HOOKS.items():
         entries = hooks[event]
-        assert len(entries) == 1, f"{event}: expected exactly one hook-group entry"
-        entry = entries[0]
-        if matcher is None:
-            assert "matcher" not in entry, f"{event}: unexpected matcher {entry.get('matcher')!r}"
-        else:
-            assert entry["matcher"] == matcher
-        commands = entry["hooks"]
-        assert len(commands) == 1, f"{event}: expected exactly one command"
-        command_entry = commands[0]
-        assert command_entry["type"] == "command"
-        assert command_entry["timeout"] == timeout
-        assert command_entry["command"] == f'"${{CLAUDE_PLUGIN_ROOT}}/hooks/run.sh" {subcommand}'
+        assert len(entries) == len(expected), f"{event}: expected {len(expected)} hook groups"
+        for entry, (matcher, subcommand, timeout) in zip(entries, expected):
+            _check_hook_entry(event, entry, matcher, subcommand, timeout)
+
+
+def _check_hook_entry(event, entry, matcher, subcommand, timeout):
+    if matcher is None:
+        assert "matcher" not in entry, f"{event}: unexpected matcher {entry.get('matcher')!r}"
+    else:
+        assert entry["matcher"] == matcher
+    commands = entry["hooks"]
+    assert len(commands) == 1, f"{event}: expected exactly one command"
+    command_entry = commands[0]
+    assert command_entry["type"] == "command"
+    assert command_entry["timeout"] == timeout
+    assert command_entry["command"] == f'"${{CLAUDE_PLUGIN_ROOT}}/hooks/run.sh" {subcommand}'
 
 
 # --- run.sh: shape ------------------------------------------------------------

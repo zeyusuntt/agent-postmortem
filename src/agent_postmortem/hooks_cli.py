@@ -46,11 +46,11 @@ import re
 import sys
 import time
 import traceback
-from dataclasses import dataclass, replace
-from importlib import metadata
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import config, detectors, disclosure, reader, report, state
+from . import config, detectors, disclosure, live, reader, report, state
 from .markers import KILL_SENTINEL_PREFIX
 from .redact import Redactor
 
@@ -526,6 +526,53 @@ class _UnitOutcome:
     entry: dict
     notify: _NotifyInfo | None
     newly_analyzed: bool = False
+    # (session main transcript, live delivery key) for each ending this check tells (4.14.6)
+    live_claims: list = field(default_factory=list)
+
+
+# the detectors whose session findings are the endings the live channels tell (4.14.2 R3 to R6),
+# with the delivery keys that tell the same ending: a kill or a failure is a KILL or FAILED line
+# (`:end`), or a CLAIM (`:claim`) when a "completed" notice answered it (R3), so either counts
+# and Stop claims both
+_LIVE_ENDING_KEYS = {
+    "mislabeled_kill": ("end", "claim"), "attempt_failed": ("end", "claim"),
+    "claim_contradiction": ("claim",), "missing_artifact": ("claim",),
+}
+
+
+def _live_endings(
+    main_path: Path, shown: list, threshold_rank: int, reported_prev: list,
+) -> tuple[set[str], list[tuple[Path, str]]]:
+    """(the ids of shown findings whose ending a live channel already told, the live keys of
+    the ones still to tell). A finding names an ending by its agent and that agent's final entry
+    time (`live.ending_key`), the key the watch and the post-tool hook claim."""
+    reported = live.delivered_keys(main_path)
+    told: set[str] = set()
+    claims: list[tuple[Path, str]] = []
+    endings: dict[str, str | None] = {}
+    for finding in shown:
+        suffixes = _LIVE_ENDING_KEYS.get(finding.detector)
+        if suffixes is None or not finding.agent_id:
+            continue
+        if finding.agent_id not in endings:
+            transcript = main_path.parent / main_path.stem / "subagents" / \
+                f"agent-{finding.agent_id}.jsonl"
+            facts = live.SubFacts()
+            if transcript.is_file():
+                facts.update(live.Tail(transcript).read(live._sub_want))
+                endings[finding.agent_id] = live.ending_key(finding.agent_id, facts)
+            else:
+                endings[finding.agent_id] = None
+        ending = endings[finding.agent_id]
+        if ending is None:
+            continue
+        keys = [f"{ending}:{suffix}" for suffix in suffixes]
+        if any(key in reported for key in keys):
+            told.add(finding.finding_id)
+        elif _SEVERITY_RANK.get(finding.severity, 0) >= threshold_rank \
+                and finding.finding_id not in reported_prev:
+            claims.extend((main_path, key) for key in keys)
+    return told, claims
 
 
 def _fallback_run_id(kind: str, path: Path) -> str:
@@ -715,6 +762,12 @@ def _check_one_unit(
     )
 
     threshold_rank = _SEVERITY_RANK[_notify_threshold()]
+    live_claims: list[tuple[Path, str]] = []
+    if kind == "subagent":
+        # 4.14.6 rule 3 (0.4): an ending the live channels (post-tool hook, watch, resume)
+        # already told counts as reported here, and one this check tells is claimed for them
+        told, live_claims = _live_endings(main_transcript, shown, threshold_rank, reported_prev)
+        reported_prev = [*reported_prev, *sorted(told - set(reported_prev))]
     new_finding_ids = [
         f.finding_id
         for f in shown
@@ -747,7 +800,7 @@ def _check_one_unit(
             finding_count=len(new_finding_ids),
             agent_ids=_notified_agent_ids(shown, reported_prev, threshold_rank),
         )
-    return _UnitOutcome(entry=entry, notify=notify)
+    return _UnitOutcome(entry=entry, notify=notify, live_claims=live_claims if notify else [])
 
 
 def _process_units_for_session(
@@ -909,11 +962,24 @@ def _cmd_check(payload: dict) -> None:
     stop_hook_active = bool(payload.get("stop_hook_active", False))
 
     notifications: list[_NotifyInfo] = []
+    live_claims: list[tuple[Path, str]] = []
     with state.transaction() as data:
         outcomes = _process_units_for_session(data, session_key, session_dir, payload)
         for outcome in outcomes:
             if outcome.notify is not None:
                 notifications.append(outcome.notify)
+                live_claims.extend(outcome.live_claims)
+    # 4.14.6 rule 3: the endings told here are claimed in the live gate after the state lock is
+    # released, so the post-tool hook and the watch never tell them again; nothing there may
+    # stop the notification itself
+    by_session: dict[Path, list[str]] = {}
+    for main_path, key in live_claims:
+        by_session.setdefault(main_path, []).append(key)
+    for main_path, keys in by_session.items():
+        try:
+            live.claim_deliveries(main_path, keys)
+        except Exception:
+            pass  # a repeat later beats a notification lost now
 
     if not notifications:
         return
@@ -960,6 +1026,30 @@ def _cmd_session_start(payload: dict) -> None:
     # ever concerns entries qualified with this root's own key.
     root_prefix = _root_key(root) + _ROOT_KEY_SEPARATOR
 
+    resume_sentence: str | None = None
+    if source == "resume":
+        try:
+            resume_sentence = _resume_sentence(_main_path_for(session_dir))
+        except (state.StateError, OSError):
+            resume_sentence = None
+
+    message: str | None = None
+    try:
+        message = _session_start_digest(payload, root, root_prefix)
+    finally:
+        output: dict = {}
+        if message:
+            output["systemMessage"] = message
+        if resume_sentence:
+            output["hookSpecificOutput"] = {
+                "hookEventName": "SessionStart", "additionalContext": resume_sentence,
+            }
+        if output:
+            print(json.dumps(output))
+
+
+def _session_start_digest(payload: dict, root: Path, root_prefix: str) -> str | None:
+    """The 7.2 digest of this root's newly analyzed units, or None."""
     message: str | None = None
     with state.transaction() as data:
         remaining = _DIGEST_ANALYSIS_CAP
@@ -985,7 +1075,7 @@ def _cmd_session_start(payload: dict) -> None:
         pending = list(digest.get("pending", []))
         own_root_pending = [qualified for qualified in pending if qualified.startswith(root_prefix)]
         if not own_root_pending:
-            return
+            return None
 
         summaries = []
         for qualified in own_root_pending:
@@ -1001,7 +1091,7 @@ def _cmd_session_start(payload: dict) -> None:
         ]
 
         if not summaries:
-            return
+            return None
 
         rank = {"CLEAN": 0, "DEGRADED": 1, "FAILED": 2}
 
@@ -1020,9 +1110,7 @@ def _cmd_session_start(payload: dict) -> None:
             )
             + f"{_POSTMORTEM_HINT} {redactor(str(worst.get('run_id', '')))}"
         )
-
-    if message:
-        print(json.dumps({"systemMessage": message}))
+    return message
 
 
 # --- hook session-end --------------------------------------------------
@@ -1206,19 +1294,249 @@ def _cmd_workflow_launched(payload: dict) -> None:
         )
 
 
+# --- hook agent-launched (docs/DESIGN.md 4.14.5) ----------------------------
+
+_SESSION_WATCH_HINT = (
+    "Subagents of this session are checked when they return: an interruption nothing explains, "
+    "a failure that left files changed, or a result its own transcript contradicts is reported "
+    "at your next tool call. For a long background run you can also arm a Monitor (timeout_ms "
+    "1800000, re-arm on expiry) with: agent-postmortem watch --session"
+)
+
+
+def _main_path_for(session_dir: Path) -> Path:
+    return session_dir.parent / f"{session_dir.name}.jsonl"
+
+
+def _claim_sentence(agent: str, claim: dict, public_id: str) -> str:
+    if claim["check"] == "returned_on_error":
+        return (f"Subagent {agent} returned, but its own last entry says: {claim['detail']}. "
+                f"Check its work before using the result: agent-postmortem run {public_id}")
+    return (f"Subagent {agent} returned, but a file its prompt asked for is missing: "
+            f"agent-postmortem status {public_id} --local names it")
+
+
+_HOOK_BUDGET = 400
+
+
+def _cmd_agent_launched(payload: dict) -> None:
+    session_dir = _session_dir_plain(payload)
+    if session_dir is None:
+        return
+    main_path = _main_path_for(session_dir)
+    response = payload.get("tool_response")
+    agent_id = response.get("agentId") if isinstance(response, dict) else None
+    messages: list[str] = []
+    status_word = response.get("status") if isinstance(response, dict) else None
+    synchronous = isinstance(response, dict) and (
+        status_word == "completed"
+        or (status_word is None and response.get("isAsync") is not True))  # T2 (returns.py)
+    claim_key = None  # claimed last, once the message is ready (release review, 0.4.0)
+    claim_message = None
+    if synchronous and disclosure.is_canonical_id("agent", agent_id):
+        transcript = session_dir / "subagents" / f"agent-{agent_id}.jsonl"
+        if transcript.is_file():
+            facts = live.SubFacts()
+            facts.update(live.Tail(transcript).read(live._sub_want))
+            # docs/DESIGN.md 4.14.6 rule 3: one delivery per ending, shared with the watch
+            claim_key = f"{live.ending_key(agent_id, facts)}:claim"
+            claim = live.claim_for(transcript)
+            if claim is not None:
+                names = live._Names()
+                claim_message = live.session_redactor(main_path, [agent_id])(_claim_sentence(
+                    names(agent_id), claim, live.session_public_id(main_path)))
+                messages.append(claim_message)
+    record = live.mark_reported(main_path, [])
+    hint_wanted = os.environ.get("AGENT_POSTMORTEM_WATCH_HINT", "").strip() != "0"
+    fits = len(" ".join([*messages, _SESSION_WATCH_HINT])) <= _HOOK_BUDGET
+    # else the claim goes first and the hint waits for the next launch; the hint is claimed
+    # through the same locked gate, so two launches at once never both hint
+    # 4.14.5 (0.4): the hooks report at the next tool call, so the Monitor is an option offered
+    # once, for a background launch only
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    background = tool_input.get("run_in_background") is True or (
+        isinstance(response, dict) and (response.get("isAsync") is True
+                                        or response.get("status") == "async_launched"))
+    hint = hint_wanted and fits and background and not record.get("hinted") \
+        and not live.watch_active(record)
+    # every claim last, in one locked write right before printing: a call that fails or is
+    # killed before this point has claimed nothing, so another channel still tells the ending
+    keys = ([claim_key] if claim_key is not None else []) + (["hint"] if hint else [])
+    won = live.claim_deliveries(main_path, keys)[0] if keys else []
+    if claim_message is not None and claim_key not in won:
+        messages.remove(claim_message)  # another channel told this ending first
+    if hint and "hint" in won:
+        messages.append(_SESSION_WATCH_HINT)
+    if messages:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse", "additionalContext": " ".join(messages),
+        }}))
+
+
+# --- post-tool / prompt-submit: the return-time checks without a Monitor (4.14.5, 0.4) ---
+
+_HOOK_EVENT_KINDS = ("KILL", "FAILED", "CLAIM")
+# 4.14.5: the reading one call may do. A first check of a session with hundreds of subagents
+# (2.6 s for 453 in the field) goes on over the next calls instead of meeting run.sh's deadline.
+_FIRST_READ_BUDGET_SECONDS = 1.5
+# 4.14.5: once one ending is ready, the rest wait for the next call past this point, so a call
+# always ends inside run.sh's 3 s deadline with what it found
+_CALL_BUDGET_SECONDS = 2.0
+
+
+def _render_endings(events: list[dict], main_path: Path, follower) -> str | None:
+    if not events:
+        return None
+    redact = live.session_redactor(main_path, follower._agent_ids())
+    parts: list[str] = []
+    for index, event in enumerate(events):
+        text = "\n".join(line.rstrip() for line in live.render_text(event, redact))
+        rest = len(events) - index - 1
+        tail = f"\n... and {rest} more: agent-postmortem status" if rest else ""
+        if parts and len("\n".join([*parts, text])) + len(tail) > _HOOK_BUDGET:
+            parts.append(f"... and {len(events) - index} more: agent-postmortem status")
+            break
+        parts.append(text)
+    return "\n".join(parts)
+
+
+def post_tool_check(main_path_str: str, payload: dict) -> tuple[Callable[[], str | None], bool]:
+    """The full check behind hook_gate's fast gate: one watch-style poll of the session, restored
+    from the live store as `status` restores it, that speaks only for a new KILL, FAILED or CLAIM
+    ending. Returns (deliver, pending). `deliver()` claims every ending's key in one locked
+    write (4.14.6 rule 3) and returns the message for the ones this call won, or None; the
+    caller runs it last, right before printing, so a call killed earlier claims nothing.
+    `pending`: the gate must open at the next call even if nothing changes (a kill inside its
+    wait for a native notice, a first read not finished, endings left for later)."""
+    from . import status as _status
+
+    started = time.monotonic()
+    main_path = Path(main_path_str)
+    if not main_path.is_file():
+        return _nothing, False
+    follower = live.SessionFollower(main_path, caller_session=None)
+    _status._restore(follower, state.read_cache(follower.store_path))
+    complete = follower._read(deadline=started + _FIRST_READ_BUDGET_SECONDS)
+    if not follower.load_endings(new_baseline=complete or follower.read_once_each()):
+        # no baseline yet and a transcript never read: keep the place, and take the baseline
+        # only once every transcript was read, so an old ending is never told as new
+        _status._save(follower, {}, time.time())
+        return _nothing, True
+    now = time.time()
+    found: list[tuple[dict, str]] = []  # (event, its delivery key): claimed only once rendered
+    handled: list[str] = []  # the keys of endings that need no line (4.14.6 rule 1)
+    pending = not complete  # the rest of the read goes on at the next call
+    judged = 0  # agents whose endings this call worked out
+    for agent_id in follower._agent_ids():
+        # past the budget, the rest wait for the next call, whether or not anything is told yet:
+        # an ending that needs no line can still need a full parse, and a call killed at run.sh's
+        # deadline saves nothing, so the next one would redo it (release review, 0.4.0)
+        if judged and time.monotonic() >= started + _CALL_BUDGET_SECONDS:
+            pending = True  # tell what is ready now and the rest at the next call
+            break
+        sub = follower.subs.get(agent_id)
+        if sub is not None and sub.deferred is not None:
+            continue  # its transcript is not read up to date: judged at a later call
+        if sub is not None and sub.facts.final_kind == "kill":
+            killed_at = sub.facts.final_ts if isinstance(sub.facts.final_ts, (int, float)) \
+                else sub.tail.mtime
+            if killed_at is None or now - killed_at >= live.KILL_NOTICE_GRACE_SECONDS:
+                sub.pending_kill = True  # its wait for a native notice is over (4.14.3)
+            elif live.ending_key(agent_id, sub.facts) not in follower.baseline:
+                pending = True  # only the wait holds the gate open; after it this same call
+                # decides the ending, by a KILL line or by its native notice
+        before = len(found) + len(handled)
+        for event, key in follower._agent_events(agent_id):
+            if event is not None and event.get("event") in _HOOK_EVENT_KINDS:
+                found.append((event, key))
+            else:
+                follower.reported.add(key)
+                handled.append(key)
+        if len(found) + len(handled) > before:
+            judged += 1  # only an agent with an ending counts, so every call makes progress
+    if follower.unsettled_meta or follower.rule_pending:
+        pending = True  # a meta file to read again, or a baseline to extend (4.14.5)
+    message = _render_endings([event for event, _key in found], main_path, follower)
+    _status._save(follower, {}, now)
+    follower._save_reported(handled)
+
+    def deliver() -> str | None:
+        if not found:
+            return None
+
+        def message_for(won: list[str]) -> str | None:  # inside the claim's lock, before its write
+            if len(won) == len(found):
+                return message
+            return _render_endings([event for event, key in found if key in won], main_path,
+                                   follower)
+
+        _won, text = live.claim_deliveries(main_path, [key for _event, key in found],
+                                           follower.store_path, then=message_for)
+        return text
+
+    # endings to deliver keep the gate open for one more call: the gate is written before
+    # deliver() runs, so a call killed while it claims is checked again, and a call whose claims
+    # went through finds nothing new and closes it
+    return deliver, pending or bool(found)
+
+
+def _nothing() -> None:
+    return None
+
+
+# --- SessionStart on resume: own subagents that ended while it was down -------
+
+
+def _resume_sentence(main_path: Path) -> str | None:
+    from . import status as _status
+
+    snap = _status.snapshot(main_path)
+    reported = live.delivered_keys(main_path)
+    sub_dir = main_path.parent / main_path.stem / "subagents"
+
+    def end_key(row: dict) -> str:
+        facts = live.SubFacts()
+        transcript = sub_dir / f"agent-{row['agent_id']}.jsonl"
+        if transcript.is_file():
+            facts.update(live.Tail(transcript).read(live._sub_want))
+        return f"{live.ending_key(row['agent_id'], facts)}:end"  # the watch's own key
+
+    rows = [row for row in snap["subagents"]
+            if row["state"] in ("running", "interrupted") and end_key(row) not in reported
+            and live.claim_delivery(main_path, end_key(row))]  # locked: one sentence per ending
+    if not rows:
+        return None
+    paths = 0
+    partial = False
+    for row in rows[:20]:
+        if "paths" in row:
+            count, part = row["paths"], row.get("paths_partial", False)
+        else:
+            count, _commits, part = live.changes(sub_dir / f"agent-{row['agent_id']}.jsonl")
+        paths += count
+        partial = partial or part
+    partial = partial or len(rows) > 20
+    never = sum(1 for row in rows if row["state"] == "running")
+    interrupted = len(rows) - never
+    clauses = []
+    if never:
+        clauses.append(f"{never} subagent{'' if never == 1 else 's'} of this session never "
+                       "returned")
+    if interrupted:
+        clauses.append(f"{interrupted} {'was' if interrupted == 1 else 'were'} interrupted")
+    paths_text = f"{paths}+" if partial else str(paths)  # a lower bound, also at 0 (4.14.3)
+    return (f"{' and '.join(clauses)} before this session stopped; {paths_text} "
+            f"path{'' if paths == 1 and not partial else 's'} changed. "
+            f"Check them before relying on that work. -> agent-postmortem status")
+
+
 # --- hook capabilities ---------------------------------------------------
 
 
 def _cmd_capabilities() -> None:
-    try:
-        sys.stdin.read()
-    except Exception:
-        pass
-    try:
-        version = metadata.version("agent-postmortem")
-    except metadata.PackageNotFoundError:
-        version = "0.0.0"
-    print(json.dumps({"protocol": 1, "version": version}))
+    from . import entry  # the one definition, also reached without the CLI (4.14.5)
+
+    entry.capabilities()
 
 
 # --- dispatch ------------------------------------------------------------
@@ -1228,6 +1546,7 @@ _EVENT_FOR_COMMAND = {
     "session-start": ("SessionStart",),
     "session-end": ("SessionEnd",),
     "workflow-launched": ("PostToolUse",),
+    "agent-launched": ("PostToolUse",),
 }
 
 
@@ -1240,6 +1559,10 @@ def dispatch(command: str) -> int:
         if command == "capabilities":
             _cmd_capabilities()
             return 0
+        if command in ("post-tool", "prompt-submit"):
+            from . import hook_gate
+
+            return hook_gate.run(command)
 
         payload = _read_payload()
         if payload is None or _is_subagent_context(payload):
@@ -1251,6 +1574,8 @@ def dispatch(command: str) -> int:
             return 0
         if command == "workflow-launched" and payload.get("tool_name") != "Workflow":
             return 0
+        if command == "agent-launched" and payload.get("tool_name") not in ("Agent", "Task"):
+            return 0
 
         if command == "check":
             _cmd_check(payload)
@@ -1260,6 +1585,8 @@ def dispatch(command: str) -> int:
             _cmd_session_end(payload)
         elif command == "workflow-launched":
             _cmd_workflow_launched(payload)
+        elif command == "agent-launched":
+            _cmd_agent_launched(payload)
         return 0
     except Exception:
         if os.environ.get("AGENT_POSTMORTEM_DEBUG"):

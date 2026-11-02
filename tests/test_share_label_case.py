@@ -96,10 +96,22 @@ def _session(tmp_path: Path) -> tuple[Path, Path, Path]:
     return root, main, main
 
 
-_KINDS = {"workflow": _workflow, "session": _session}
+def _unkeyed_workflow(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A workflow whose `started` entry has no `key` (batch 1 review): the attempt belongs to no
+    logical agent, so its interrupt title is told as a run-level story."""
+    root, run_dir, main = _workflow(tmp_path)
+    journal = run_dir / "journal.jsonl"
+    when = journal.stat().st_mtime
+    _write_jsonl(journal, [{"type": "started", "agentId": _AGENT, "label": _LABEL, "phase": _PHASE}])
+    os.utime(journal, (when, when))
+    return root, run_dir, main
 
 
-def _outputs(capsys, monkeypatch, tmp_path, root: Path, run: Path, main: Path) -> dict[str, str]:
+_KINDS = {"workflow": _workflow, "session": _session, "unkeyed": _unkeyed_workflow}
+
+
+def _outputs(capsys, monkeypatch, tmp_path, root: Path, run: Path, main: Path,
+             kind: str = "workflow") -> dict[str, str]:
     """Every share sink that can carry a label, by command."""
     # (argv, expected exit code): run and scan succeed; rescue exits 4 for a run whose risk
     # population it cannot complete (docs/DESIGN.md 4.11)
@@ -120,6 +132,11 @@ def _outputs(capsys, monkeypatch, tmp_path, root: Path, run: Path, main: Path) -
     for name, (argv, expected) in commands.items():
         code = cli.main(argv)
         captured = capsys.readouterr()
+        if kind == "unkeyed" and name.startswith("rescue"):
+            # no logical agent, so nothing to rescue: only the leak check applies
+            assert captured.out.strip(), (name, code, captured.err)
+            out[name] = captured.out + captured.err
+            continue
         assert code == expected and captured.out.strip(), (name, code, captured.err)
         if name.endswith("--json"):
             json.loads(captured.out)
@@ -144,7 +161,7 @@ def test_a_lowercase_label_never_reaches_share_output_in_any_case(
 ):
     _no_config(monkeypatch, tmp_path)
     root, run, main = _KINDS[kind](tmp_path)
-    outputs = _outputs(capsys, monkeypatch, tmp_path, root, run, main)
+    outputs = _outputs(capsys, monkeypatch, tmp_path, root, run, main, kind)
     # the planted case is exercised: the story that used to carry the label is there, aliased
     assert "Agent-1 interrupted after 400s" in outputs["run"]
     stories = [entry["text"] for entry in json.loads(outputs["run --json"])["stories"]]
@@ -282,3 +299,20 @@ def test_a_run_title_in_the_tools_own_words_keeps_its_capital_whatever_the_label
     assert cli.main(["run", str(run_dir), "--json"]) == 3
     stories = [entry["text"] for entry in json.loads(capsys.readouterr().out)["stories"]]
     assert "The harness reported this workflow failed." in stories, stories
+
+
+def test_two_unkeyed_attempts_sharing_an_agent_id_leak_neither_label(tmp_path, monkeypatch, capsys):
+    # batch 2 review: a map from agent id to label kept only the last one
+    _no_config(monkeypatch, tmp_path)
+    _root, run_dir, _main = _workflow(tmp_path)
+    journal = run_dir / "journal.jsonl"
+    when = journal.stat().st_mtime
+    _write_jsonl(journal, [
+        {"type": "started", "agentId": _AGENT, "label": "zz-first-label", "phase": _PHASE},
+        {"type": "started", "agentId": _AGENT, "label": "zz-second-label", "phase": _PHASE},
+    ])
+    os.utime(journal, (when, when))
+    for argv in (["run", str(run_dir)], ["run", str(run_dir), "--json"]):
+        cli.main(argv)
+        out = capsys.readouterr().out.lower()
+        assert "zz-first-label" not in out and "zz-second-label" not in out, out

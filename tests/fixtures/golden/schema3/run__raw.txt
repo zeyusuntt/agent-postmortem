@@ -287,7 +287,7 @@ exit=4
     {
       "agent": "impl:demo",
       "severity": "major",
-      "text": "Restarted 1 time. 1 Bash commands timed out.",
+      "text": "Restarted 1 time. 1 Bash command timed out.",
       "finding_ids": [
         "b9c6e03aa7e9",
         "57fcc5ba404d"
@@ -1901,7 +1901,7 @@ exit=0
     {
       "detector": "mislabeled_kill",
       "severity": "info",
-      "title": "impl:killed-edit interrupted after 5s of silence, cause unattributed",
+      "title": "impl:killed-edit interrupted after 5s of silence, cause unattributed, logged as a user interrupt",
       "run_id": "wf_00000000-af0",
       "agent_id": "af200000000000003",
       "evidence": [
@@ -1959,7 +1959,7 @@ exit=0
     {
       "agent": "impl:backgrounded",
       "severity": "minor",
-      "text": "1 Bash commands backgrounded.",
+      "text": "1 Bash command backgrounded.",
       "finding_ids": [
         "cac37d71e6af"
       ]
@@ -3494,6 +3494,28 @@ exit=0
       "silenced": false
     },
     {
+      "detector": "missing_artifact",
+      "severity": "info",
+      "title": "/tmp/agent-postmortem-fixture/proxy-review.md is absent now; the tool cannot tell whether it existed when the run ended",
+      "run_id": "wf_00000000-c06",
+      "agent_id": "ac500000000000001",
+      "evidence": [
+        "agent-ac500000000000001.jsonl:1"
+      ],
+      "metrics": {
+        "paths": [
+          "/tmp/agent-postmortem-fixture/proxy-review.md"
+        ],
+        "verified": true
+      },
+      "rule_id": "R-ASSERT-ARTIFACT",
+      "rule_ids": [
+        "R-ASSERT-ARTIFACT"
+      ],
+      "finding_id": "d14853d6c8ae",
+      "silenced": false
+    },
+    {
       "detector": "wasted_time",
       "severity": "info",
       "title": "run spent 24m wall-clock; 0s wasted across 0 retried attempts",
@@ -3517,7 +3539,7 @@ exit=0
   "rules": [
     {
       "rule_id": "R-ASSERT-ARTIFACT",
-      "count": 2
+      "count": 3
     },
     {
       "rule_id": "R-CODEX-CONTRACT",
@@ -3530,7 +3552,7 @@ exit=0
     {
       "agent": "review:proxy-doctor",
       "severity": "minor",
-      "text": "1 sandbox write denials.",
+      "text": "1 sandbox write denial.",
       "finding_ids": [
         "e249f394ca38"
       ]
@@ -3538,7 +3560,7 @@ exit=0
     {
       "agent": "impl:cleanup",
       "severity": "minor",
-      "text": "1 sandbox write denials.",
+      "text": "1 sandbox write denial.",
       "finding_ids": [
         "1d28842ff6f0"
       ]
@@ -4226,7 +4248,7 @@ exit=4
     {
       "detector": "mislabeled_kill",
       "severity": "info",
-      "title": "impl:failed-sentinel interrupted after 290s of silence, cause unattributed",
+      "title": "impl:failed-sentinel interrupted after 290s of silence, cause unattributed, logged as a user interrupt",
       "run_id": "wf_00000000-c0a",
       "agent_id": "ad800000000000001",
       "evidence": [

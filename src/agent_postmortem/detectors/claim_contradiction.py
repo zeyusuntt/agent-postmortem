@@ -153,16 +153,24 @@ def _self_report_title(self_report: SelfReport) -> str:
 _ABSENT_TEMPLATE = (
     "{path} is absent now; the tool cannot tell whether it existed when the run ended"
 )
+_GONE_TEMPLATE = (
+    "{path} is in a working directory that no longer exists (a worktree removed after the "
+    "run?); the tool cannot check it"
+)
 _UNCHECKED_TEMPLATE = (
     "{path} could not be checked now; the tool cannot tell whether it existed "
     "when the run ended"
 )
 
 
-def _report_path_title_parts(path: str, state: str) -> TitleParts:
+def _report_path_title_parts(path: str, state: str, gone: bool = False) -> TitleParts:
     """The D2 title of a finding whose only clause is an absent report_path, as a fixed template
-    and the path (F fix 7, W7-2): a renderer formats it once and never scans the result."""
-    template = _ABSENT_TEMPLATE if state == "absent_now" else _UNCHECKED_TEMPLATE
+    and the path (F fix 7, W7-2): a renderer formats it once and never scans the result. A path
+    in a working directory that is gone now says so (0.4)."""
+    if gone:
+        template = _GONE_TEMPLATE
+    else:
+        template = _ABSENT_TEMPLATE if state == "absent_now" else _UNCHECKED_TEMPLATE
     return TitleParts(template, path)
 
 
@@ -195,6 +203,13 @@ class ClaimContradiction:
                 continue
 
             phrases = "; ".join(phrase for _clause_id, phrase, _absence in clauses)
+            gone = any(
+                clause_id == "report_path_missing" and absence == "absent_now"
+                for clause_id, _p, absence in clauses
+            ) and severity_rules.working_dir_gone(
+                claims.get("report_path"),
+                attempt.facts.cwds if attempt.facts is not None else (),
+            )
             title_parts = None
             self_clause = any(
                 clause_id in ("self_reported_failure", "self_reported_blocked")
@@ -203,7 +218,7 @@ class ClaimContradiction:
             if self_clause:
                 title = _self_report_title(self_report)
             elif all(clause_id == "report_path_missing" for clause_id, _p, _a in clauses):
-                title_parts = _report_path_title_parts(claims["report_path"], clauses[0][2])
+                title_parts = _report_path_title_parts(claims["report_path"], clauses[0][2], gone)
                 title = title_parts.raw()
             else:
                 title = (
@@ -224,6 +239,8 @@ class ClaimContradiction:
                 "clauses": [clause_id for clause_id, _phrase, _absence in clauses],
                 "claims": claims,
             }
+            if gone:
+                metrics["working_dir_gone"] = True
             if self_clause:
                 metrics["self_reported_failure_counts"] = self_report.failed_counts
                 metrics["self_reported_blocked"] = self_report.blocked

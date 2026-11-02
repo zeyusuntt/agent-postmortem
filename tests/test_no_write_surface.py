@@ -178,62 +178,62 @@ _ALLOWED_SINK_CALLS = {
         "(docs/DESIGN.md 4.9, N5c-1); a read-only PATH lookup, writes nothing",
     # GC-1b: the session sniffers, _fork_scan (docs/DESIGN.md 4.2, FA4), _read_transcript, the
     # hook's kill-sentinel check and rescue's task text all read through _transcript_lines
-    ("reader.py", 411, "path.open"):
+    ("reader.py", 414, "path.open"):
         "_ends_in_torn_line: read a transcript's last bytes backwards, mode 'rb', never written",
-    ("reader.py", 441, "path.open"): "_transcript_lines: read a transcript line by line, mode 'r'",
-    ("reader.py", 449, "path.open"):
+    ("reader.py", 444, "path.open"): "_transcript_lines: read a transcript line by line, mode 'r'",
+    ("reader.py", 452, "path.open"):
         "_transcript_lines: read on past a torn last line, mode 'r' (surrogateescape)",
-    ("reader.py", 1025, "journal_path.open"): "read journal.jsonl line by line, mode 'r'",
-    ("reader.py", 1307, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
-    ("reader.py", 2777, "transcript_path.open"):
+    ("reader.py", 1034, "journal_path.open"): "read journal.jsonl line by line, mode 'r'",
+    ("reader.py", 1316, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
+    ("reader.py", 3018, "transcript_path.open"):
         "probe that a transcript can be opened at all, immediately closed again, mode 'r'",
-    ("state.py", 231, "os.open"):
+    ("state.py", 232, "os.open"):
         "_backup_writer: create 'state.json.corrupt-<timestamp>' inside the state "
         "directory, O_CREAT|O_EXCL, never a caller-named path (docs/DESIGN.md 7.5)",
-    ("state.py", 438, "os.open"):
+    ("state.py", 439, "os.open"):
         "_open_lock_file: open/create state.lock inside the state directory, O_CREAT, "
         "never a caller-named path",
-    ("state.py", 469, "os.open"):
+    ("state.py", 470, "os.open"):
         "_fsync_dir: open the state directory itself read-only (O_RDONLY), to fsync it "
         "after a rename (best effort, state.json's own writer only)",
-    ("state.py", 497, "os.replace"):
+    ("state.py", 498, "os.replace"):
         "_write_state: the state store's own atomic rename of its temp file over "
         "state.json, both inside the state directory",
-    ("state.py", 691, "os.open"):
+    ("state.py", 941, "os.open"):
         "_open_verified_state_dir: open the state directory itself read-only "
         "(O_RDONLY|O_DIRECTORY|O_NOFOLLOW) to fstat it before either disclosure file is "
         "ever touched, and (N3a fix round 3, new Finding 1) returns this same verified "
         "descriptor for lock_state_dir to keep open and use for every later disclosure "
         "operation instead of reopening by path; reads only, touches no path a caller "
         "names (docs/DESIGN.md 7.5a, N3a fix round 2, Finding 4)",
-    ("state.py", 738, "os.open"):
+    ("state.py", 988, "os.open"):
         "_open_lock_file_at: open/create state.lock relative to the verified state "
         "directory descriptor (dir_fd), O_CREAT|O_RDWR|O_NONBLOCK|O_NOFOLLOW, mode 0600, "
         "so the held lock always belongs to the directory every disclosure operation "
         "uses (N3a Codex round 4, MAJOR 1); never a caller-named path",
-    ("state.py", 876, "os.open"):
+    ("state.py", 1126, "os.open"):
         "_open_probe_fd: O_RDONLY|O_NONBLOCK|O_NOFOLLOW probe open of the disclosure "
         "secret or alias registry, both fixed names, either inside the state directory "
         "by path or (N3a fix round 3, new Finding 1) relative to the verified directory "
         "descriptor via dir_fd -- never a caller-named path (docs/DESIGN.md 7.5, N3a)",
-    ("state.py", 942, "os.open"):
+    ("state.py", 1192, "os.open"):
         "_fsync_dir_strict: open the state directory itself read-only (O_RDONLY), to "
         "fsync it after the secret create or the registry rename, only when no dir_fd "
         "was given (N3a fix round 3: with dir_fd, it fsyncs that already-open "
         "descriptor directly instead); the disclosure-only sibling of _fsync_dir that "
         "reports failure instead of swallowing it (docs/DESIGN.md 7.5a, N3a fix round "
         "2, Finding 1)",
-    ("state.py", 1039, "os.open"):
+    ("state.py", 1289, "os.open"):
         "create_secret: O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW exclusive create of the "
         "disclosure secret, a fixed name, either inside the state directory by path or "
         "(N3a fix round 3, new Finding 1) relative to the verified directory "
         "descriptor via dir_fd -- never a caller-named path (docs/DESIGN.md 7.5, N3a)",
-    ("state.py", 1124, "os.open"):
+    ("state.py", 1374, "os.open"):
         "_create_exclusive_temp_file: O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW create of the "
         "alias registry's own temp file, either inside the state directory by path or "
         "(N3a fix round 3, new Finding 1) relative to the verified directory "
         "descriptor via dir_fd -- never a caller-named path (docs/DESIGN.md 7.5, N3a)",
-    ("state.py", 1166, "os.open"):
+    ("state.py", 1416, "os.open"):
         "_verify_registry_after_commit: O_RDONLY|O_NONBLOCK|O_NOFOLLOW reopen of the "
         "alias registry's own fixed path, right after write_registry_bytes's commit, "
         "either by path or (N3a fix round 3, new Finding 1) relative to the verified "
@@ -241,7 +241,7 @@ _ALLOWED_SINK_CALLS = {
         "descriptor instead of a symlink-following stat() (docs/DESIGN.md 7.5a, N3a "
         "fix round 2, Finding 6; O_NONBLOCK added in fix round 3, new Finding 2); "
         "reads only, touches no caller-named path",
-    ("state.py", 1242, "os.rename"):
+    ("state.py", 1492, "os.rename"):
         "write_registry_bytes: the alias registry's own atomic commit, used only when "
         "dir_fd is given (N3a fix round 3, new Finding 1) -- os.rename(..., "
         "src_dir_fd=dir_fd, dst_dir_fd=dir_fd) renames the temp file over aliases.json "
@@ -249,16 +249,48 @@ _ALLOWED_SINK_CALLS = {
         "atomic overwrite, and os.rename (unlike os.replace) is the function "
         "os.supports_dir_fd actually lists on this platform -- both names, never a "
         "caller-named path (docs/DESIGN.md 7.5, N3a)",
-    ("state.py", 1244, "os.replace"):
+    ("state.py", 1494, "os.replace"):
         "write_registry_bytes: the alias registry's own atomic rename of its temp "
         "file over aliases.json by path, used only when no dir_fd was given, both "
         "inside the state directory (docs/DESIGN.md 7.5, N3a)",
+    ("state.py", 790, "os.replace"):
+        "_write_cache: the live store's or the scan cache's own atomic rename of its temp "
+        "file over live.json or scan-cache.json, both inside the state directory "
+        "(docs/DESIGN.md 4.14.8, 4.14.9)",
+    ("state.py", 636, "os.open"):
+        "_open_private_dir: open the state directory's transcript-cache/ itself read-only "
+        "(O_RDONLY|O_DIRECTORY|O_NOFOLLOW) to fstat it and run every later cache operation "
+        "relative to that descriptor; never a caller-named path (docs/DESIGN.md 4.14.9 item 4)",
+    ("state.py", 664, "os.open"):
+        "read_private_bytes: O_RDONLY|O_NONBLOCK|O_NOFOLLOW open of one transcript-cache file "
+        "relative to the verified cache directory descriptor, fstat-checked; reads only "
+        "(docs/DESIGN.md 4.14.9 item 4)",
+    ("state.py", 697, "os.open"):
+        "write_private_bytes: O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW 0600 create of the transcript "
+        "cache's (or the hook gate's, 4.14.5) own temp file relative to the verified cache "
+        "directory descriptor (docs/DESIGN.md 4.14.9 item 4)",
+    ("state.py", 704, "os.rename"):
+        "write_private_bytes: the transcript cache's own atomic rename of its temp file over one "
+        "run's file, both relative to the verified cache directory descriptor "
+        "(docs/DESIGN.md 4.14.9 item 4)",
+    ("live.py", 119, "self.path.open"):
+        "Tail.read: read appended transcript bytes from the last offset, mode 'rb', never "
+        "written (docs/DESIGN.md 4.14.3)",
+    ("live.py", 1148, "path.open"):
+        "SessionFollower._nested_link: read a nested child's .meta.json (at most 64 KB) for its "
+        "launcher and launch id, mode 'rb', never written (docs/DESIGN.md 4.14.3)",
+    ("cli.py", 1706, "path.open"):
+        "_has_a_timestamp: read a run file's first 64 KB for a timestamp before the --since "
+        "pre-filter skips it, mode 'rb', never written (docs/DESIGN.md 4.14.9)",
+    ("hook_gate.py", 87, "<expr>.open"):
+        "_read_range: read the main transcript's bytes appended since the gate's offset (or its "
+        "last 64 KB) to look for a mark, mode 'rb', never written (docs/DESIGN.md 4.14.5)",
     ("watch.py", 179, "path.open"):
         "_read_new_journal_lines: read appended journal bytes, mode 'rb', never written",
-    ("reader.py", 3626, "self.path.open"):
+    ("reader.py", 3867, "self.path.open"):
         "ParentIndex._hash_prefix: re-read already-parsed prefix bytes to validate the "
         "incremental cache, mode 'rb', never written",
-    ("reader.py", 3824, "self.path.open"):
+    ("reader.py", 4065, "self.path.open"):
         "ParentIndex._parse_increment: read appended parent-transcript bytes, mode 'rb', "
         "never written",
 }

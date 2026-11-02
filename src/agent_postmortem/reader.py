@@ -22,12 +22,15 @@ import contextlib
 import contextvars
 import copy
 import hashlib
+import io
 import json
 import os
+import pickle
 import re
 import time
+import zlib
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import commands, disclosure, ledger, markers, returns
@@ -487,6 +490,12 @@ class _ReadSkips:
 
 _READ_SKIPS: contextvars.ContextVar[_ReadSkips | None] = contextvars.ContextVar(
     "read_skips", default=None,
+)
+
+
+# docs/DESIGN.md 4.14.9 item 4: the transcript memo a caller that reads many runs sets
+_TRANSCRIPT_MEMO: contextvars.ContextVar["TranscriptMemo | None"] = contextvars.ContextVar(
+    "transcript_memo", default=None,
 )
 
 
@@ -2281,7 +2290,8 @@ def _apply_background_hits(
 # The child-launching session tools; SendMessage continues an existing child
 # and launches none.
 _LAUNCH_TOOLS = ("Agent", "Task", "Workflow")
-_ABSENT = object()
+# a missing key; the same object as returns.ABSENT, which keeps its identity through pickle
+_ABSENT = returns.ABSENT
 
 
 def _result_digest(block: dict, tool_use_result: object) -> str | None:
@@ -2544,6 +2554,12 @@ def _note_entry_shape(entry: dict, raw_type: object, state: "ledger.TranscriptSt
         state.unknown_type = True
 
 
+# docs/DESIGN.md 4.2 (FA4, hook identity): the first hook `session_id` decides a fork only when it
+# starts this early. Measured on 193 transcripts: in the 5 forks it starts at 24 KB to 134 KB; in
+# the 2 later ones (6 MB, 129 MB) it never names the file's own session, so they inherit nothing.
+_HOOK_IDENTITY_SPAN = 1 << 20
+
+
 def _fork_scan(path: Path) -> tuple[int, bool]:
     """(boundary, settled) for a session main transcript (docs/DESIGN.md 4.2, FA4).
 
@@ -2553,15 +2569,37 @@ def _fork_scan(path: Path) -> tuple[int, bool]:
     entry at all). settled is True once an own entry was seen, so the boundary can never
     change as the file grows; False means the file has no own entry yet (nothing is
     inherited for now). An unreadable file inherits nothing. Undecodable, blank, and
-    sessionId-less lines never decide the boundary themselves."""
+    sessionId-less lines never decide the boundary themselves.
+
+    Hook identity (0.4): from Claude Code 2.1.305 a fork's copied block carries the fork's own
+    `sessionId`, and only its hook attachments still name the session that wrote them, in a
+    top-level `session_id`. When the sessionId rule finds no foreign prefix, the first line
+    with a string `session_id` decides, if it starts within the first _HOOK_IDENTITY_SPAN
+    characters: one naming another session opens an inherited block that runs to the last
+    such line before the first `session_id` naming the file's own stem (settled then;
+    unsettled, nothing inherited, until that line is written). The first one naming the stem,
+    or none that early, means no hook-identified prefix; until one of those is known the answer
+    is unsettled, so a reader that keeps a settled boundary looks again as the file grows."""
     own = path.stem
     last_foreign = 0
+    sid_own_seen = False
+    hook_state = "undecided"  # then "none", "open" (foreign seen) or "closed" (own after it)
+    hook_last_foreign = 0
+    consumed = 0
     try:
         with _transcript_reader(path) as lines:
             for line_no, line, _torn in lines:
-                # cheap prefilter: an entry with a top-level sessionId spells the key
-                # literally, so a line without it is never decoded here
-                if '"sessionId"' not in line:
+                start = consumed
+                consumed += len(line)
+                if hook_state == "undecided" and start >= _HOOK_IDENTITY_SPAN:
+                    hook_state = "none"
+                if hook_state == "closed" or (sid_own_seen and hook_state == "none"):
+                    break
+                # cheap prefilter: an entry with a top-level sessionId or session_id spells the
+                # key literally, so a line with neither is never decoded here
+                has_sid = not sid_own_seen and '"sessionId"' in line
+                has_hook = hook_state in ("undecided", "open") and '"session_id"' in line
+                if not (has_sid or has_hook):
                     continue
                 try:
                     entry = json.loads(line)
@@ -2569,15 +2607,30 @@ def _fork_scan(path: Path) -> tuple[int, bool]:
                     continue
                 if not isinstance(entry, dict):
                     continue
-                session = entry.get("sessionId")
-                if not isinstance(session, str):
-                    continue
-                if session == own:
-                    return last_foreign, True
-                last_foreign = line_no
+                session = entry.get("sessionId") if has_sid else None
+                if isinstance(session, str):
+                    if session == own:
+                        if last_foreign:
+                            return last_foreign, True
+                        sid_own_seen = True
+                    else:
+                        last_foreign = line_no
+                process = entry.get("session_id") if has_hook else None
+                if isinstance(process, str):
+                    if process != own:
+                        hook_state, hook_last_foreign = "open", line_no
+                    elif hook_state == "open":
+                        hook_state = "closed"
+                    else:
+                        hook_state = "none"
     except (OSError, UnicodeError):
         return 0, False
-    return 0, False
+    if hook_state == "closed":
+        return hook_last_foreign, True
+    # no hook-identified prefix yet: settled only once the first window passed without a hook
+    # line, or the first one named this session ("none"); a fork's copied block may still be
+    # arriving, and a settled boundary is never read again (batch 1 review)
+    return 0, sid_own_seen and hook_state == "none"
 
 
 def _fork_boundary(path: Path) -> int:
@@ -2760,6 +2813,194 @@ _UNDECODABLE_LINE_THRESHOLD = 0.05
 
 
 def _read_transcript_tracked(
+    transcript_path: Path, diagnostics: list[str], *, launch_log: "_LaunchLog | None" = None,
+    state: "ledger.TranscriptState | None" = None, skip_through_line: int = 0,
+) -> tuple[list[Event], str | None, str | None, bool, bool, list[ToolCall], list[MarkerHit]]:
+    """_read_transcript_fresh, through the transcript memo when a caller set one
+    (docs/DESIGN.md 4.14.9 item 4)."""
+    memo = _TRANSCRIPT_MEMO.get()
+    if memo is None:
+        return _read_transcript_fresh(
+            transcript_path, diagnostics, launch_log=launch_log, state=state,
+            skip_through_line=skip_through_line,
+        )
+    return memo.read(transcript_path, diagnostics, launch_log, state, skip_through_line)
+
+
+def _file_fingerprint(path: Path) -> tuple | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+class TranscriptMemo:
+    """docs/DESIGN.md 4.14.9 item 4: stored parses of single transcripts, keyed by the path and
+    the shape of the call (state, launch log, fork skip), each with the fingerprint its file had
+    before it was read. A stored parse is given back only while the file's fingerprint is the
+    same; it holds the parse result, the diagnostics the read appended, the state and launch log
+    it filled and the lines it counted as skipped, pickled and compressed at once, so every hit
+    is a fresh copy that later analysis may change freely. `entries` is what the caller found
+    stored, `used`
+    every entry this memo gave back or made (what the caller stores again), and `parsed` and
+    `reused` count the reads. With `store` False a fresh read is not kept (nothing will be
+    written, so the pickling would be wasted)."""
+
+    def __init__(self, entries: dict | None = None, *, store: bool = True) -> None:
+        self.entries = dict(entries) if entries else {}
+        self.store = store
+        self.used: dict = {}
+        self.parsed = 0
+        self.reused = 0
+
+    def read(
+        self, path: Path, diagnostics: list[str], launch_log: "_LaunchLog | None",
+        state: "ledger.TranscriptState | None", skip_through_line: int,
+    ):
+        # a state or launch log that already holds something is not one a stored parse fills
+        if (state is not None and vars(state) != vars(ledger.TranscriptState())) or (
+            launch_log is not None and vars(launch_log) != vars(_LaunchLog())
+        ):
+            return _read_transcript_fresh(
+                path, diagnostics, launch_log=launch_log, state=state,
+                skip_through_line=skip_through_line,
+            )
+        key = (str(path), state is not None, launch_log is not None, skip_through_line)
+        fingerprint = _file_fingerprint(path)
+        found = self.entries.get(key)
+        if (
+            fingerprint is not None and isinstance(found, tuple) and len(found) == 2
+            and found[0] == fingerprint
+        ):
+            stored = self._unpickle(found[1], state, launch_log)
+            if stored is not None:
+                result, appended, kept_state, kept_log, (lines, files) = stored
+                diagnostics.extend(appended)
+                if state is not None:
+                    vars(state).update(vars(kept_state))
+                if launch_log is not None:
+                    vars(launch_log).update(vars(kept_log))
+                _skipped_line(lines)
+                for _ in range(files):
+                    _skipped_file()
+                self.used[key] = found
+                self.reused += 1
+                return result
+        before = len(diagnostics)
+        skips = _ReadSkips()
+        token = _READ_SKIPS.set(skips)
+        try:
+            result = _read_transcript_fresh(
+                path, diagnostics, launch_log=launch_log, state=state,
+                skip_through_line=skip_through_line,
+            )
+        finally:
+            _READ_SKIPS.reset(token)
+        _skipped_line(skips.lines)
+        for _ in range(skips.files):
+            _skipped_file()
+        self.parsed += 1
+        # an unreadable file may be readable next time, so its read is never stored
+        if self.store and fingerprint is not None and not result[3]:
+            try:
+                blob = zlib.compress(pickle.dumps(
+                    (result, diagnostics[before:], state, launch_log, (skips.lines, skips.files)),
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                ), 1)
+            except Exception:
+                # a value json accepted that pickle cannot hold (deep nesting on some Python
+                # builds): the read stands, it is only not stored
+                blob = None
+            if blob is not None:
+                self.used[key] = (fingerprint, blob)
+        return result
+
+    @staticmethod
+    def _unpickle(blob: object, state, launch_log):
+        """The stored tuple, or None when it does not load or any part of it is not the shape a
+        read gives (a damaged entry is a miss, never a crash later in the load)."""
+        try:
+            stored = _ParseUnpickler(io.BytesIO(zlib.decompress(blob))).load()
+            result, appended, kept_state, kept_log, (lines, files) = stored
+            events, version, session_id, unreadable, over_threshold, tool_calls, hits = result
+        except Exception:
+            return None
+        if not (
+            isinstance(result, tuple)
+            and _all_of(events, Event) and _all_of(tool_calls, ToolCall)
+            and _all_of(hits, MarkerHit)
+            and all(value is None or isinstance(value, str) for value in (version, session_id))
+            and type(unreadable) is bool and type(over_threshold) is bool
+            and _all_of(appended, str)
+            and all(type(count) is int and count >= 0 for count in (lines, files))
+            and (state is None or _same_shape(kept_state, ledger.TranscriptState()))
+            and (launch_log is None or (
+                _same_shape(kept_log, _LaunchLog())
+                and _same_shape(kept_log.facts, returns.ReturnFacts())
+            ))
+        ):
+            return None
+        return stored
+
+
+def _all_of(values: object, kind: type) -> bool:
+    return isinstance(values, list) and all(isinstance(value, kind) for value in values)
+
+
+def _same_shape(value: object, fresh: object) -> bool:
+    """value is of fresh's class and each of its attributes is of the type fresh's is."""
+    if type(value) is not type(fresh) or vars(value).keys() != vars(fresh).keys():
+        return False
+    return all(type(vars(value)[name]) is type(default) for name, default in vars(fresh).items())
+
+
+# docs/DESIGN.md 4.14.9 item 4: every global a stored parse is made of. Unpickling looks a global
+# up here by the (module, name) pickle wrote, before importing anything, so a stored file can
+# name no function to call and no module to import; anything else fails the load, and the
+# transcript is parsed again.
+_STORED_PARSE_GLOBALS = {
+    (obj.__module__, obj.__qualname__): obj
+    for obj in (
+        Event, MarkerHit, ToolCall, QualityNote, ledger.TranscriptState, _LaunchLog,
+        returns.ReturnFacts, returns.UseInfo, returns.ResultInfo, commands.CallClass,
+        commands.CommitFacts, commands.CommitSegment, commands.WriteTarget, commands.WriteMatch,
+        commands.GitPrefix, datetime, timezone, timedelta, type(Path()),
+    )
+}
+_STORED_PARSE_GLOBALS[(returns.__name__, "ABSENT")] = returns.ABSENT
+
+
+class _ParseUnpickler(pickle.Unpickler):
+    def find_class(self, module: str, name: str):
+        found = _STORED_PARSE_GLOBALS.get((module, name))
+        if found is None:
+            raise pickle.UnpicklingError(f"{module}.{name} is not part of a stored parse")
+        return found
+
+
+class _PlainUnpickler(pickle.Unpickler):
+    def find_class(self, module: str, name: str):
+        raise pickle.UnpicklingError(f"{module}.{name}: a cache file holds no objects")
+
+
+def unpickle_plain(data: bytes) -> object:
+    """Unpickle data that may hold only built-in values (dict, list, tuple, str, bytes,
+    numbers, None, booleans): any global, and so any call, fails with UnpicklingError."""
+    return _PlainUnpickler(io.BytesIO(data)).load()
+
+
+@contextlib.contextmanager
+def transcript_memo(memo: TranscriptMemo):
+    """Every _read_transcript_tracked call inside the block goes through memo."""
+    token = _TRANSCRIPT_MEMO.set(memo)
+    try:
+        yield memo
+    finally:
+        _TRANSCRIPT_MEMO.reset(token)
+
+
+def _read_transcript_fresh(
     transcript_path: Path, diagnostics: list[str], *, launch_log: "_LaunchLog | None" = None,
     state: "ledger.TranscriptState | None" = None, skip_through_line: int = 0,
 ) -> tuple[list[Event], str | None, str | None, bool, bool, list[ToolCall], list[MarkerHit]]:

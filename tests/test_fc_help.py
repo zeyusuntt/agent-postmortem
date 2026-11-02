@@ -53,12 +53,13 @@ exit codes (the first condition that applies wins):
 WATCH = """\
 exit codes (the first condition that applies wins):
   exit 1  usage error
-  exit 2  no journal appeared within 60 seconds
+  exit 2  no journal appeared within 60 seconds (with --session: no such session)
   exit 3  DONE with verdict FAILED
   exit 4  LIMIT (--max-hours, or a malformed journal), or DONE with the lifecycle
           terminal unknown and the verdict not FAILED
   exit 0  DONE otherwise (verdict CLEAN or DEGRADED, with or without the
-          (INCOMPLETE) suffix)
+          (INCOMPLETE) suffix); with --session: ENDED, or another watch already
+          follows the session
 """
 
 CASES = [

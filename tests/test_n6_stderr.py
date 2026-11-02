@@ -68,17 +68,20 @@ def _case(kind, ident, monkeypatch, tmp_path):
         arg = uid(777)
         return arg, 2, (
             f"postmortem: no run matches 'uuid:{arg[-4:]}' under path-1 ({EXPECTED_RUN})\n"
+            f"  {NO_MATCH_NEXT}\n"
         ), f"postmortem: no run matches '{arg}' under {ident.root}\n"
     if kind == "agent stem no match":
         arg = f"agent-{aid(777)}"
         return arg, 2, (
             f"postmortem: no run matches 'value-1' under path-1 ({EXPECTED_RUN})\n"
+            f"  {NO_MATCH_NEXT}\n"
         ), f"postmortem: no run matches '{arg}' under {ident.root}\n"
     if kind == "alias no match":
         _register(ident.w2a)
         arg = "a:" + "0" * 12
         return arg, 2, (
             f"postmortem: no run matches 'value-1' under path-1 ({EXPECTED_RUN})\n"
+            f"  {NO_MATCH_NEXT}\n"
         ), f"postmortem: no run matches '{arg}' under {ident.root}\n"
     if kind == "alias state unavailable":
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "no-such-state"))
@@ -109,6 +112,10 @@ def _run_ids(ident, *keys):
 
     wanted = [ident.paths[key] for key in keys]
     return [ref.run_id for ref in reader.discover_runs(ident.root) if ref.path in wanted]
+
+
+# docs/DESIGN.md 4.13.5 (0.4): a no-match error ends with where the run ids are
+NO_MATCH_NEXT = "next: agent-postmortem scan --all lists every run id"
 
 
 KINDS = [

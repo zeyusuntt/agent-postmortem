@@ -109,7 +109,6 @@ def test_fa6_a1s_id_grammar_still_rejects_the_quiet_forms():
         pytest.param("git commit -q -m $(date)", False, id="a substitution in the candidate"),
         pytest.param('git commit -q -m "unterminated', False, id="an unbalanced quote"),
         pytest.param("git commit -q -m *.md", False, id="a glob in the candidate"),
-        pytest.param("GIT_X=1 git commit -q -m x", False, id="an assignment prefix"),
         pytest.param("git commit -q -m x &&", False, id="a dangling operator"),
         pytest.param("bash -c 'bash -c \"git commit -q\"'", False, id="a wrapper two deep"),
         pytest.param("bash -c 'git commit -q $X'", False, id="an unplaced wrapper body"),
@@ -119,6 +118,47 @@ def test_fa6_a1s_id_grammar_still_rejects_the_quiet_forms():
 )
 def test_fa6_call_ran_a_commit_command(command, expected):
     assert _ran(command) is expected
+
+
+# Field report 2026-10-30 "COMMITS 0 for an agent that committed": the commit ran as
+# `SKIP=mypy mise exec -- git commit -m ...` and printed no summary line. A run-as-is prefix
+# (leading NAME=VALUE words, `env` with only NAME=VALUE words, `mise exec|x [tool@version ...]
+# --`) leaves the command a commit command; one that takes an option (which could change the
+# directory) or hides the command still fails closed. docs/DESIGN.md 4.13.1 (FA6).
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        pytest.param("GIT_X=1 git commit -q -m x", True, id="an assignment prefix"),
+        pytest.param("SKIP=mypy git commit -m x", True, id="a hook-skip assignment"),
+        pytest.param("SKIP=mypy mise exec -- git commit -m x", True, id="the field shape"),
+        pytest.param("mise x node@20 -- git -C /r commit -q", True, id="mise x with a tool"),
+        pytest.param("env A=1 B=2 git commit -m x", True, id="env with assignments"),
+        pytest.param("A=1 env B=2 mise exec -- git commit -m x", True, id="stacked prefixes"),
+        pytest.param("cd /r && SKIP=a mise exec -- git commit -m x && git log -1", True,
+                     id="inside an and-or list"),
+        pytest.param("env -C /other git commit -m x", False, id="an env option"),
+        pytest.param("env git commit -m x", True, id="a bare env"),
+        pytest.param("mise exec -C /other -- git commit -m x", False, id="a mise option"),
+        pytest.param("mise exec git commit -m x", False, id="mise exec without --"),
+        pytest.param("SKIP=mypy mise exec -- git commit --dry-run", False, id="a dry run behind it"),
+        pytest.param("SKIP=mypy mise exec -- git commit -m x &", False, id="backgrounded"),
+        pytest.param('SKIP="$X" git commit -m x', False, id="an expansion in the assignment"),
+        pytest.param("SKIP=mypy mise exec -- echo git commit", False, id="the words in an echo"),
+        pytest.param("eval git commit -m x", False, id="eval stays opaque"),
+        # batch 1 review: mise runs the word after -- as the command, so A=1 is no assignment
+        pytest.param("mise exec -- A=1 git commit -q || true", False,
+                     id="an assignment-shaped command after mise --"),
+        pytest.param("mise exec -- env A=1 git commit -m x", True, id="env after mise --"),
+    ],
+)
+def test_e36_a_run_as_is_prefix_leaves_a_commit_command(command, expected):
+    assert _ran(command) is expected
+
+
+def test_e36_the_id_grammar_still_reads_no_id_behind_a_prefix():
+    # an assignment can redirect the repository (GIT_DIR=...), so A1's ids stay unplaced
+    facts = commands.commit_facts("SKIP=mypy git commit -m x", CWD)
+    assert facts.is_commit is False
 
 
 def test_fa6_run_in_background_is_not_a_ran_commit():
@@ -181,6 +221,14 @@ def test_fa6_two_separate_calls_are_two(tmp_path):
     entries = _call("git commit -q -m a", tool_id="t1") + _call("git commit -q -m b", tool_id="t2")
     _, facts = _attempt_facts(tmp_path, entries)
     assert facts.commit_commands_without_id == 2
+
+
+def test_e36_the_field_shape_reads_commit_count_unknown_not_zero(tmp_path):
+    command = ("SKIP=mypy mise exec -- git commit -m 'test: x' && "
+               "git log -1 --format='%h %s'")
+    _, facts = _attempt_facts(tmp_path, _call(command, "ad4e3ef8b1 test: x\n"))
+    assert facts.commits == []
+    assert facts.commit_commands_without_id == 1
 
 
 def test_fa6_a_commit_with_a_summary_line_counts_its_id_and_no_missing_one(tmp_path):

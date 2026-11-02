@@ -12,7 +12,7 @@ uvx agent-postmortem scan
 
 That runs the latest release from PyPI with [uv](https://docs.astral.sh/uv/), which fetches Python 3.11 or later if you don't have it; nothing else to install. On a machine with no runs yet it says where it looked and suggests `agent-postmortem demo`.
 
-The command-line tool is local and read-only: Python standard library only, no LLM, no network access, and it never changes your files, transcripts, commits, or branches. (The Claude Code plugin's one network action, installing that tool, is described under Privacy; Limits notes two rare git index modes in which git's own `status` still updates its bookkeeping.) What it covers, below, lists the run shapes it handles and the ones it does not yet. Status: alpha, used so far on the maintainer's own machines. Claude Code only.
+The command-line tool is local and read-only: Python standard library only, no LLM, no network access, and it never changes your files, transcripts, commits, or branches. (The Claude Code plugin's one network action, installing that tool into its own data directory or replacing that copy with the plugin's version, is described under Privacy; Limits notes two rare git index modes in which git's own `status` still updates its bookkeeping.) What it covers, below, lists the run shapes it handles and the ones it does not yet. Status: alpha, used so far on the maintainer's own machines. Claude Code only.
 
 [![CI](https://github.com/zeyusuntt/agent-postmortem/actions/workflows/ci.yml/badge.svg)](https://github.com/zeyusuntt/agent-postmortem/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/agent-postmortem.svg)](https://pypi.org/project/agent-postmortem/)
@@ -65,9 +65,9 @@ Coverage today, checked against the failure reports in Claude Code's issue track
 | Workflow runs: runtime kills and retries | covered | kills logged as `[Request interrupted by user]` with no one at the keyboard, cold same-key retries and the time they cost, failed attempts with their cause (usage limit and reset time, machine sleep, server error), and a workflow the harness reported failed |
 | A "done" you can't trust | covered | an agent that completed while its own result reports failed tests, `ok: false` or blockers (`claim_contradiction`), or while its Codex companion call never started (`codex_unavailable`) |
 | Subagents that never returned | covered | WORK AT RISK says `unknown` instead of `none`, and names them |
-| `claude -p` (headless) | partial | killed and unreturned subagents show; the process's own exit status (for example exit 0 with `result: success` after a kill) is not in the transcript, so the tool cannot see it |
+| `claude -p` (headless) | partial | killed and unreturned subagents show; with the plugin, a foreground subagent that returns on an error or without its prompted output file is reported at once. The process's own exit status (for example exit 0 with `result: success` after a kill) is not in the transcript, so the tool cannot see it |
 | Background subagents (`run_in_background`) | partial | killed and unreturned ones show; a "completed" that arrived while the agent's own background work was still running, or with a tool call that never got a result, is not flagged yet |
-| `claude --bg` sessions | not yet | each job's session is read like any session, but the job's own state (its "done" line, work still in flight) is not |
+| `claude --bg` sessions | partial | each job's session is read like any session; `watch --session` and `status` pass the job's own state (working, blocked, done, stopped) through as Claude Code records it, and a resumed session hears which of its subagents never returned. Work still in flight inside the job is not modeled |
 | Agent teams | not yet | teammates and their idle or blocked states are not modeled |
 | Cross-session messages (`SendMessage`) | not yet | whether a message was delivered is not checked |
 
@@ -116,9 +116,12 @@ Verdict: 0.3 stops guessing. Severity, the WORK AT RISK block, and the run's end
 | `agent-postmortem rescue plan <run-id>` | Print a read-only decision packet: what a killed or failed attempt wrote, its repo state, declared checks, and the steps to take next. Never edits anything or runs a check itself. |
 | `agent-postmortem rescue status <run-id>` | Print what the main session's own transcript shows was run and observed after the run ended. Reports only what it saw, never a confirmation that a check passed. |
 | `agent-postmortem watch <run-id>` | Follow one running workflow: print START, then KILL, FAILED, OK (a result came back), and QUIET as they happen, then DONE or LIMIT. DONE comes the moment the session's own record says the run ended, or after a grace period once every journal key is resolved. Read-only, designed to be a Claude Code Monitor command. |
+| `agent-postmortem watch --session [<session-id>]` | Follow one session while it runs, for a Claude Code Monitor: a line only when a subagent is interrupted with nothing in the session to explain it, fails after changing files, or returns while its own last entry says otherwise, plus background-session state changes. With no id it follows the session you are in. |
+| `agent-postmortem status [<session-id>]` | One snapshot of a session: its subagents running, returned, interrupted or failed, what an interrupted one changed, returns its own transcript contradicts, and the background sessions' states. Reads only what was appended since the last call. |
+| `agent-postmortem statusline subagents` | A `subagentStatusLine` command: adds a fact to a row of Claude Code's subagent panel and leaves every other row as Claude Code draws it. |
 | `agent-postmortem hook <event>` | Claude Code plugin hook entry point; reads hook JSON from stdin. |
 
-`scan`, `run`, `rules`, `trend`, and `rescue` take `--json` and the level flags; `apply` takes the level flags only; `demo` and `watch` take `--json` only; `hook` takes neither. The level flags are `--local` and `--raw` (`--no-redact` is the same as `--raw`); see Privacy.
+`scan`, `run`, `rules`, `trend`, `rescue`, and `status` take `--json` and the level flags; `apply` takes the level flags only; `demo` and `watch` take `--json` only; `statusline` and `hook` take neither. The level flags are `--local` and `--raw` (`--no-redact` is the same as `--raw`); see Privacy.
 
 ## Why
 
@@ -164,7 +167,18 @@ Install the command-line tool first (Quick start above), so the plugin finds it 
 /plugin install agent-postmortem@agent-postmortem
 ```
 
-Its hooks shell out to the same CLI, never touch a run directory, and never fail a turn. On `SessionStart` they summarize any run that finished since you last looked. On `Stop` and `StopFailure` they check every subagent and workflow unit spawned so far and print a finding the moment it is detected, not only at session end. On `SessionEnd` they run the read-only tooling checks over the main thread itself. On a `Workflow` launch they register the run immediately, so it is tracked even before its own directory exists, and hand the session the `watch` command to arm as a Monitor. Two skills come with it: `/postmortem` for the verdict and `/rescue` for the bounded rescue protocol.
+Its hooks shell out to the same CLI, never touch a run directory, and never fail a turn. After every tool call and on every prompt they check the session's own subagents: one that was interrupted with nothing in the session to explain it, failed after changing files, or returned while its own transcript contradicts the return is reported to the agent at its next tool call, once. A call with nothing new prints nothing. On `SessionStart` they summarize any run that finished since you last looked, and a resumed session hears which of its own subagents never returned. On `Stop` and `StopFailure` they check every subagent and workflow unit spawned so far and print a finding the moment it is detected, not only at session end. On `SessionEnd` they run the read-only tooling checks over the main thread itself. On a `Workflow` launch they register the run immediately, so it is tracked even before its own directory exists, and hand the session the `watch` command to arm as a Monitor. Two skills come with it: `/postmortem` for the verdict and `/rescue` for the bounded rescue protocol.
+
+For your own view, add the subagent panel command to `~/.claude/settings.json`, at the top level:
+
+```json
+"subagentStatusLine": {
+  "type": "command",
+  "command": "agent-postmortem statusline subagents"
+}
+```
+
+It rewrites a row of the subagent panel only when it has a fact to add (an interrupt nothing explains, how many paths an interrupted or failed subagent changed, a return its own last entry contradicts, quiet over two minutes) and leaves every other row as Claude Code draws it. `agent-postmortem status` prints the same facts for the session you are in.
 
 ## What it detects
 
@@ -191,6 +205,17 @@ The honesty rule: `mislabeled_kill` blames the runtime only when the same key wa
 
 The verdict follows from those severities: `FAILED` when the harness itself reported the workflow failed (or a finding is critical, which no detector produces today), `DEGRADED` when any finding is major, `CLEAN` otherwise, with `(INCOMPLETE)` added when the tool could not read everything. `run`, `demo`, and `scan` exit 3 for `FAILED` and 4 for `INCOMPLETE` without `FAILED`; 3 wins when both apply. They exit 2 when there is nothing to judge: no run matches, or no runs at all under the root, in which case the message says where it looked (`~/.claude/projects` by default), what it reads, and to try `agent-postmortem demo`.
 
+### Live words and report words
+
+`watch`, `status`, the statusline and the hooks speak in three words; `scan` and `run` speak in
+verdicts and detector names. A line to settle in one is the same thing in the other:
+
+| Live line | What it means | In `scan` and `run` |
+|---|---|---|
+| `KILL` | a subagent was interrupted and nothing in the session explains it | `mislabeled_kill`, and `silent_retry` when a workflow restarted it |
+| `FAILED` | an agent failed (usage limit, API error, stall) or the harness failed the workflow | `attempt_failed`; the verdict `FAILED` and `workflow_failed` |
+| `CLAIM` | an agent said it was done, but its own result or its last entry says otherwise | `claim_contradiction`, `missing_artifact`, and `codex_unavailable` when a Codex review never ran |
+
 ### Quieting a detector
 
 A detector you have already acted on, or one that does not apply to how you work, can be quieted without losing its data. List its id in `~/.config/agent-postmortem/config.toml` (or `$XDG_CONFIG_HOME/agent-postmortem/config.toml`):
@@ -214,7 +239,7 @@ The default output is meant for sharing: names become aliases, every path the to
 | local | `--local` | real labels, phase titles, agent ids, and project names | a recognized path is relative to the repository, `~/.../<name>` inside your home directory, otherwise `path-N`; never a recognized absolute path | only with `--evidence` |
 | raw | `--raw` | real | absolute | only with `--evidence` |
 
-At `local` and `raw` the first line of a command's output says so and says not to paste it (an error printed alone on stderr carries no such line; at the default and `local` levels an error never echoes a path or id, and at `raw` it prints as 0.2 did). Hooks and `watch` always print at the default level. An error message never echoes a path or id you typed back at the default level: it says `path-1` or `value-1` and names what it expected.
+At `local` and `raw` the first line of a command's output says so and says not to paste it (an error printed alone on stderr carries no such line; at the default and `local` levels an error never echoes a path or a private id, and at `raw` it prints as 0.2 did). Hooks and `watch` always print at the default level. An error message never echoes a path or id you typed back at the default level: it says `path-1` or `value-1` and names what it expected. The one exception is a public run id (`wf_...`, `s_...`), which is what `scan` prints and is repeated as typed.
 
 An alias is a prefix, 12 or more hex characters, of an HMAC of the real id under a secret created once on your machine. Once assigned, an alias never changes: the same agent has the same alias in `run`, `rescue`, `watch`, and hook messages, the same project in `scan --all` and `run`, and nobody without the secret can turn an alias back into the id or match it to a transcript file. On top of that, the default and `local` levels replace your home directory with `~`, a bare account name with `user`, an email with `email:` plus a 6-character hash, a session id inside text with `uuid:` plus its last 4 hex digits, and any other project slug with `project:` plus a 6-character hash.
 
@@ -224,7 +249,7 @@ Paths inside free text (finding titles, diagnostics, error messages, and at `--l
 
 State lives in `$XDG_STATE_HOME/agent-postmortem/`, or `~/.local/state/agent-postmortem/` if that variable is unset: `state.json` (which findings a session already reported, and the rules the 0.1 `apply` command wrote, now read-only history), plus `secret` and `aliases.json` for the aliases. All three are mode 0600. The secret and the registry are never printed; `trend` shows the applied-rule history from `state.json` at the active level. If a command prints `stable aliases unavailable` on stderr, that output named everything `agent-1`, `agent-2`, and so on instead of by alias; nothing is repaired automatically, because a new secret would change every alias. Remove both `secret` and `aliases.json` to start over with new aliases.
 
-The plugin's one network action happens on `SessionStart` only: when it has not installed a CLI into its own data directory and no `agent-postmortem` on `PATH` passes its protocol check, it installs the CLI from PyPI at the plugin's own version, or from the matching GitHub tag if that install fails, into that data directory, retrying at most once every 24 hours on failure; opt out by setting `AGENT_POSTMORTEM_NO_AUTO_INSTALL=1`, or by installing the CLI yourself first.
+The plugin's one network action happens on `SessionStart` only: it installs the CLI into its own data directory (uv keeps its download cache, and Python if it has to fetch one, in its usual places) from PyPI at the plugin's own version, or from the matching GitHub tag if that install fails. It does so when it has not installed a CLI there and no `agent-postmortem` on `PATH` passes its protocol check, retrying at most once every 24 hours on failure, and when the CLI it installed there reports another version than the plugin's (after a plugin upgrade), in the background and at most once a day per version. A CLI on `PATH`, or a bundled CLI that is a link to one outside that directory, is never replaced. Opt out of both by setting `AGENT_POSTMORTEM_NO_AUTO_INSTALL=1`, or by installing the CLI yourself first.
 
 ## How it was built
 

@@ -74,6 +74,7 @@ import errno
 import fcntl
 import json
 import os
+import re
 import secrets
 import stat
 import tempfile
@@ -575,6 +576,255 @@ def transaction(path: Path | None = None) -> Iterator[dict]:
         _verify_mode(directory, 0o700, "state directory")
         _verify_mode(state_file, 0o600, "state file")
         _verify_mode(lock_file, 0o600, "state lock file")
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
+
+
+# --- caches beside state.json (docs/DESIGN.md 4.14.8, 4.14.9) ---------------
+#
+# The live store and the scan cache hold nothing that is the only copy of anything: every value
+# in them can be recomputed from the transcripts. So they share state.json's directory, modes and
+# lock discipline, each under its own lock file, but a file that cannot be parsed is simply
+# started again empty (no backup, no repair), and they are written compactly.
+
+
+def live_store_path() -> Path:
+    return state_dir() / "live.json"
+
+
+def scan_cache_path() -> Path:
+    return state_dir() / "scan-cache.json"
+
+
+def transcript_cache_dir() -> Path:
+    return state_dir() / "transcript-cache"
+
+
+def _private(st: os.stat_result, is_kind: Callable[[int], bool]) -> bool:
+    return is_kind(st.st_mode) and st.st_uid == _current_uid() and not st.st_mode & 0o077
+
+
+# a transcript-cache or hook-gate file (32 hex digits of a path hash), or a temp file a write left
+_PRIVATE_FILE_NAME = re.compile(r"[0-9a-f]{32}\.(?:pickle|json)|\.cache-[0-9a-f]{16}\.tmp")
+
+
+def _private_dir_capable() -> bool:
+    return _dir_fd_capable() and os.stat in os.supports_dir_fd and os.listdir in os.supports_fd
+
+
+def _open_private_dir(directory: Path, *, create: bool) -> int | None:
+    """docs/DESIGN.md 4.14.9 item 4: a descriptor of directory (O_RDONLY|O_DIRECTORY|O_NOFOLLOW)
+    verified by fstat as a directory owned by the current user with no group or other
+    permission. Every later open, rename, listing and removal runs relative to it, so a swap of
+    the path afterwards changes nothing. With create, the state directory and directory are made
+    first and its mode is set to 0700. None when the platform lacks the dir_fd calls, or the
+    directory is missing or not private; OSError and StateError only from create."""
+    if not _private_dir_capable():
+        return None
+    if create:
+        _ensure_state_dir(directory.parent)
+        _reject_symlink_or_wrong_kind(directory, expect_dir=True, what="cache directory")
+        try:
+            os.mkdir(directory, 0o700)
+        except FileExistsError:
+            pass
+    try:
+        fd = os.open(str(directory), os.O_RDONLY | _O_DIRECTORY | _NOFOLLOW)
+    except OSError:
+        if create:
+            raise
+        return None
+    try:
+        st = os.fstat(fd)
+        if create and stat.S_ISDIR(st.st_mode) and st.st_uid == _current_uid():
+            os.fchmod(fd, 0o700)
+            st = os.fstat(fd)
+        if _private(st, stat.S_ISDIR):
+            return fd
+    except OSError:
+        pass
+    os.close(fd)
+    return None
+
+
+def read_private_bytes(path: Path) -> bytes | None:
+    """docs/DESIGN.md 4.14.9 item 4: the bytes of a cache file only this user can have written.
+    The file and its directory must each be of their kind (never a symlink), owned by the
+    current user, with no group or other permission; the file is opened relative to the
+    verified directory. None for anything else, and when the file is missing or unreadable."""
+    path = Path(path)
+    dir_fd = _open_private_dir(path.parent, create=False)
+    if dir_fd is None:
+        return None
+    try:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NONBLOCK | _NOFOLLOW, dir_fd=dir_fd)
+    except OSError:
+        os.close(dir_fd)
+        return None
+    try:
+        if not _private(os.fstat(fd), stat.S_ISREG):
+            return None
+        chunks = []
+        while chunk := os.read(fd, 1 << 20):
+            chunks.append(chunk)
+        return b"".join(chunks)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+        os.close(dir_fd)
+
+
+def write_private_bytes(path: Path, data: bytes) -> None:
+    """Replace path with data atomically, relative to its verified directory (a temp file
+    created O_EXCL|O_NOFOLLOW 0600, written, fsynced, renamed over path, the directory fsynced),
+    the directory 0700 under the 0700 state directory. No lock: the file is replaced whole and
+    every entry in it checks its own fingerprint. StateError when the directory cannot be made
+    private or the file cannot be written."""
+    path = Path(path)
+    try:
+        dir_fd = _open_private_dir(path.parent, create=True)
+    except OSError as exc:
+        raise StateError(f"cache directory unavailable: {exc}") from exc
+    if dir_fd is None:
+        raise StateError(f"cache directory is not private: {path.parent}")
+    temp = f".cache-{secrets.token_hex(8)}.tmp"
+    try:
+        fd = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | _NOFOLLOW, 0o600, dir_fd=dir_fd)
+        try:
+            try:
+                _write_full(fd, data, what="cache file")
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.rename(temp, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        except BaseException:
+            try:
+                os.unlink(temp, dir_fd=dir_fd)
+            except OSError:
+                pass
+            raise
+        try:
+            os.fsync(dir_fd)
+        except OSError:
+            pass
+        st = os.stat(path.name, dir_fd=dir_fd, follow_symlinks=False)
+        if not _private(st, stat.S_ISREG) or stat.S_IMODE(st.st_mode) != 0o600:
+            raise StateError(f"could not enforce 0600 on cache file {path}")
+    except OSError as exc:
+        raise StateError(f"cache not written: {exc}") from exc
+    finally:
+        os.close(dir_fd)
+
+
+def prune_private_files(directory: Path, written_before: float) -> None:
+    """Remove the cache files of a private cache directory, and the temp files a killed write
+    left there, last written before `written_before` (epoch seconds): only names of those two
+    shapes, listed and removed relative to the verified directory. Best effort; never raises,
+    and touches nothing in a directory that is not private."""
+    dir_fd = _open_private_dir(Path(directory), create=False)
+    if dir_fd is None:
+        return
+    try:
+        names = os.listdir(dir_fd)
+        for name in names:
+            if not _PRIVATE_FILE_NAME.fullmatch(name):
+                continue
+            try:
+                st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                if stat.S_ISREG(st.st_mode) and st.st_mtime < written_before:
+                    os.unlink(name, dir_fd=dir_fd)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
+
+
+def _cache_lock_path(cache_file: Path) -> Path:
+    return cache_file.with_suffix(".lock")
+
+
+def _load_cache(cache_file: Path) -> dict:
+    try:
+        raw = cache_file.read_bytes()
+    except FileNotFoundError:
+        return {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def read_cache(path: Path) -> dict:
+    """A lock-free, read-only look at a cache file: {} when it is missing or unreadable. Never
+    creates the directory or the file."""
+    try:
+        _reject_symlink_or_wrong_kind(Path(path), expect_dir=False, what="cache file")
+    except StateError:
+        return {}
+    try:
+        return _load_cache(Path(path))
+    except OSError:
+        return {}
+
+
+def _write_cache(cache_file: Path, data: dict) -> None:
+    directory = cache_file.parent
+    fd, tmp_name = tempfile.mkstemp(dir=str(directory), prefix=".cache-", suffix=".json.tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, separators=(",", ":"), sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.chmod(tmp_name, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp_name, cache_file)
+        _fsync_dir(directory)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+@contextmanager
+def cache_transaction(path: Path) -> Iterator[dict]:
+    """state.transaction()'s discipline for a cache file: its own `<name>.lock`, exclusive with
+    the same 2 s timeout (StateLocked), load, yield, and on normal exit an atomic write and a
+    mode check; nothing is written when the block raises."""
+    cache_file = Path(path)
+    directory = cache_file.parent
+    try:
+        _ensure_state_dir(directory)
+        _reject_symlink_or_wrong_kind(cache_file, expect_dir=False, what="cache file")
+        lock_file = _cache_lock_path(cache_file)
+        fd = _open_lock_file(lock_file)
+    except OSError as exc:  # an unusable cache is a StateError, never a crash (4.14.8)
+        raise StateError(f"cache unavailable: {exc}") from exc
+    try:
+        _acquire_lock(fd)
+        try:
+            data = _load_cache(cache_file)
+        except OSError as exc:
+            raise StateError(f"cache unreadable: {exc}") from exc
+        yield data
+        try:
+            _write_cache(cache_file, data)
+            _verify_mode(directory, 0o700, "state directory")
+            _verify_mode(cache_file, 0o600, "cache file")
+            _verify_mode(lock_file, 0o600, "cache lock file")
+        except OSError as exc:
+            raise StateError(f"cache not written: {exc}") from exc
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)

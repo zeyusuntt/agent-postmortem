@@ -186,6 +186,80 @@ def _hook_workflow_launched(env: Env, flags: list[str]):
                  tool_response={"runId": plant.WF_ID})
 
 
+def _hook_agent_launched(env: Env, flags: list[str]):
+    return _hook(env, "agent-launched", hook_event_name="PostToolUse", tool_name="Agent",
+                 tool_response={"agentId": env.planted.agent1, "status": "async_launched"})
+
+
+def _hook_live(command: str, event: str):
+    """docs/DESIGN.md 4.14.5: the per-tool-call and per-prompt hooks over the planted session
+    subagent, whose return contradicts its own last entry (R3), so the hook has a CLAIM to tell."""
+    def runner(env: Env, flags: list[str]):
+        _planted_subagent(env)
+        body = {"transcript_path": str(env.planted.root / env.planted.slug
+                                       / f"{env.planted.session}.jsonl"),
+                "session_id": env.planted.session, "hook_event_name": event}
+        if event == "PostToolUse":
+            body.update(tool_name="Bash", tool_input={"command": "ls"},
+                        tool_response={"stdout": ""})
+        env.monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(body)))
+        return h.cli(env.capsys, "hook", command)
+    return runner
+
+
+def _planted_subagent(env: Env) -> None:
+    """docs/DESIGN.md 4.14: a session subagent of the planted session whose transcript carries
+    the planted excerpt and label and ends on an API error, so status and the statusline have
+    something to say about it."""
+    main_path = _main_transcript(env)
+    sub_dir = main_path.parent / main_path.stem / "subagents"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    agent = env.planted.agent1
+    rows = [
+        {"type": "user", "timestamp": "2026-02-01T00:00:00.000Z", "agentId": agent,
+         "message": {"role": "user", "content": f"{env.planted.label}: {env.planted.excerpt}"}},
+        {"type": "assistant", "timestamp": "2026-02-01T00:00:05.000Z", "agentId": agent,
+         "message": {"role": "assistant", "content": [
+             {"type": "text", "text": "API Error: Server error mid-response"}]}},
+    ]
+    (sub_dir / f"agent-{agent}.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    envelope = (f"<task-notification>\n<task-id>{agent}</task-id>\n<tool-use-id>t</tool-use-id>"
+                f"\n<status>completed</status>\n<summary>Agent \"{env.planted.label}\" finished"
+                "</summary>\n</task-notification>")
+    with main_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "user", "timestamp": "2026-02-01T00:00:06.000Z",
+                                 "origin": {"kind": "task-notification"},
+                                 "message": {"role": "user", "content": envelope}}) + "\n")
+
+
+def _status(*extra):
+    def runner(env: Env, flags: list[str]):
+        _planted_subagent(env)
+        return _run_cli(env, "status", env.planted.session, "--root", env.planted.root,
+                        *extra, *flags)
+    return runner
+
+
+def _statusline(env: Env, flags: list[str]):
+    _planted_subagent(env)
+    main_path = env.planted.root / env.planted.slug / f"{env.planted.session}.jsonl"
+    payload = {"transcript_path": str(main_path), "columns": 120, "tasks": [
+        {"id": env.planted.agent1, "type": "local_agent", "status": "completed",
+         "label": "the row label Claude Code sends", "tokenCount": 1200}]}
+    env.monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    code, out, err = h.cli(env.capsys, "statusline", "subagents")
+    # The subagentStatusLine protocol (docs/DESIGN.md 4.14.7) keys each row by the task id
+    # Claude Code sent; it is echoed back to Claude Code, never displayed. Pin that each `id`
+    # is exactly the one sent, then drop it, so every other byte meets the share rules.
+    kept = []
+    for line in out.splitlines():
+        row = json.loads(line)
+        assert row.pop("id") == env.planted.agent1
+        kept.append(json.dumps(row))
+    return code, "\n".join(kept) + ("\n" if kept else ""), err
+
+
 # --- the table ---------------------------------------------------------------
 
 
@@ -273,6 +347,21 @@ SINKS = [
     Sink("hook workflow-launched", ("hook", "workflow-launched"), _hook_workflow_launched,
          ("Workflow wf_00000000-b10 launched", "agent-postmortem watch wf_00000000-b10"),
          levels=SHARE_ONLY, json_lines=True),
+    # docs/DESIGN.md 4.14: the live sinks
+    Sink("hook agent-launched", ("hook", "agent-launched"), _hook_agent_launched,
+         ("agent-postmortem watch --session",), levels=SHARE_ONLY, json_lines=True),
+    Sink("hook post-tool", ("hook", "post-tool"), _hook_live("post-tool", "PostToolUse"),
+         ("hookSpecificOutput", "returned, but its own last entry says:",
+          "a server error occurred"), levels=SHARE_ONLY, json_lines=True),
+    Sink("hook prompt-submit", ("hook", "prompt-submit"),
+         _hook_live("prompt-submit", "UserPromptSubmit"),
+         ("UserPromptSubmit", "returned, but its own last entry says:",
+          "a server error occurred"), levels=SHARE_ONLY, json_lines=True),
+    Sink("status", ("status",), _status(),
+         ("STATUS  session s_", "returned, but its own last entry says: a server error occurred")),
+    Sink("statusline subagents", ("statusline", "subagents"), _statusline,
+         ("returned, but its last entry says: a server error occurred",), levels=SHARE_ONLY,
+         json_lines=True),
 ]
 
 # Parser paths that print no run-derived text, so they need no row.
@@ -508,6 +597,8 @@ JSON_SINKS: list[JsonSink] = [
              _rescue_args("plan", "--json", "--evidence"), ('"units"', RUN_ID), options=("--evidence",),
              local_names=("label", "agent1"), raw_names=("label", "agent1"),
              share_alias=(POINTER_ALIAS, PATH_ALIAS), evidence=True),
+    JsonSink("status --json", ("status",), _status("--json"),
+             ('"session": "s_', '"returned_on_error"'), share_alias=(r'"agent": "a:[0-9a-f]{12,}"',)),
     JsonSink("rescue status --json", ("rescue", "status"), _rescue_args("status", "--json"),
              ('"units"', '"exit_code"'), local_names=("label",), raw_names=("label",)),
     JsonSink("rescue status --json --evidence", ("rescue", "status"),

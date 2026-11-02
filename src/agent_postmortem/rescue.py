@@ -691,14 +691,24 @@ def _failed_brief_rows(run: Run, findings: list[Finding]) -> list[dict]:
 _CONFIRMED_WRITE_EFFECTS = frozenset({"observed"})
 
 
-def _already_exists(run: Run) -> tuple[list[str], list[str]]:
+def _already_exists(
+    run: Run, units: list[LogicalAgent] | None = None,
+) -> tuple[list[str], list[str]]:
     """The brief's `already exists` (docs/DESIGN.md 4.11, 4.13.8, K4.4): confirmed writes only,
-    every attempt's ledger paths of effect `observed` plus `facts.paths_written`. A
-    `claimed_target` or `attempted` path never enters it, because neither effect proves that a
-    write happened. Commit ids are the summary-shaped ones the facts carry."""
+    ledger paths of effect `observed` plus `facts.paths_written`. A `claimed_target` or
+    `attempted` path never enters it, because neither effect proves that a write happened.
+    Commit ids are the summary-shaped ones the facts carry. A workflow's brief takes every
+    attempt of the run, since a relaunch re-runs the workflow; a session's takes only the rescue
+    units' own attempts (0.4): its other subagents were separate tasks, and their files are not
+    the relaunched agent's to build on."""
     paths: list[str] = []
     commits: list[str] = []
-    for attempt in run.attempts:
+    if run.kind == "workflow":
+        attempts = run.attempts
+    else:
+        units = qualifying_units(run) if units is None else units
+        attempts = [attempt for unit in units for attempt in unit.attempts]
+    for attempt in attempts:
         for path in ledger.attempt_ledger_paths(
             attempt, _CONFIRMED_WRITE_EFFECTS, include_facts_written=True,
         ):
@@ -828,7 +838,7 @@ def build_plan(
     roots = declared_roots(cfg)
     units = [_unit_plan(run, unit, observation, global_cwd, roots) for unit in units_raw]
 
-    already_raw_paths, already_commits = _already_exists(run)
+    already_raw_paths, already_commits = _already_exists(run, units_raw)
     already_paths: list[str] = []
     already_sources: dict[str, str] = {}
     for raw_path in already_raw_paths:

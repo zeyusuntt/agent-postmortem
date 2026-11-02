@@ -346,12 +346,8 @@ def _opcount_run(tmp_path, root: Path, wf_id: str, n: int) -> Path:
     return run_dir
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="N7 step 3 is deferred past v0.3 by the owner's decision C (N7-plan.md); a warm "
-           "scan parses every transcript today",
-)
 def test_field_warm_scan_parses_zero_cached_transcripts(tmp_path, monkeypatch):
+    """N7 step 3, implemented in v0.4 as the scan run cache (docs/DESIGN.md 4.14.9)."""
     root = tmp_path / "root"
     _opcount_run(tmp_path, root, "wf_00000000-f14", 105)
     _opcount_run(tmp_path, root, "wf_00000000-f15", 106)

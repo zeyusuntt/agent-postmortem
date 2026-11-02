@@ -52,7 +52,8 @@ def test_what_it_covers_comes_before_quick_start_and_is_honest():
     for shape, expected in (
         ("`claude -p` (headless)", "partial"),
         ("Background subagents (`run_in_background`)", "partial"),
-        ("`claude --bg` sessions", "not yet"),
+        # docs/DESIGN.md 4.14: watch --session and status pass the job's own state through
+        ("`claude --bg` sessions", "partial"),
         ("Agent teams", "not yet"),
         ("Cross-session messages (`SendMessage`)", "not yet"),
     ):

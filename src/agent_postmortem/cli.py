@@ -12,16 +12,20 @@ from __future__ import annotations
 import argparse
 import contextlib
 import functools
+import hashlib
 import json
 import math
 import os
+import pickle
 import re
 import sys
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from importlib import resources
 from pathlib import Path
+from types import SimpleNamespace
 
 from . import (
     __version__,
@@ -30,15 +34,20 @@ from . import (
     detectors,
     disclosure,
     hooks_cli,
+    live,
     observe,
     reader,
     report,
     rescue,
     rules,
+    severity,
     state,
+    status,
+    statusline,
     trend,
     watch,
 )
+from .detectors import claim_contradiction
 from .disclosure import FIRST_LINE, DisclosureContext
 from .models import Finding, Run
 from .redact import Redactor
@@ -331,16 +340,60 @@ exit codes (the first condition that applies wins):
   exit 0  otherwise
 """
 
+_STATUS_EXIT_CODES = """\
+exit codes:
+  exit 0  the snapshot was printed
+  exit 1  usage error (no session named and CLAUDE_CODE_SESSION_ID not set)
+  exit 2  no such session
+"""
+
+
 _WATCH_EXIT_CODES = """\
 exit codes (the first condition that applies wins):
   exit 1  usage error
-  exit 2  no journal appeared within 60 seconds
+  exit 2  no journal appeared within 60 seconds (with --session: no such session)
   exit 3  DONE with verdict FAILED
   exit 4  LIMIT (--max-hours, or a malformed journal), or DONE with the lifecycle
           terminal unknown and the verdict not FAILED
   exit 0  DONE otherwise (verdict CLEAN or DEGRADED, with or without the
-          (INCOMPLETE) suffix)
+          (INCOMPLETE) suffix); with --session: ENDED, or another watch already
+          follows the session
 """
+
+
+# docs/DESIGN.md 8.1 (0.4): a wheel built from a git checkout carries the commit it came from
+# (hatch_build.py); a release carries nothing. Shown by --version only: `hook capabilities` keeps
+# the plain version, which the plugin compares with its manifest (4.14.11).
+_BUILD_INFO_FILE = "_build_info.json"
+_BUILD_BRANCH_RE = re.compile(r"[A-Za-z0-9._/-]{1,80}\Z")
+_BUILD_COMMIT_RE = re.compile(r"[0-9a-f]{7,40}\Z")
+_BUILD_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
+
+
+def _read_build_info() -> object:
+    """The build stamp packaged with this install, or None (a release, or a source checkout)."""
+    try:
+        text = resources.files("agent_postmortem").joinpath(_BUILD_INFO_FILE).read_text("utf-8")
+        return json.loads(text)
+    except (OSError, ValueError):
+        return None
+
+
+def _version_text(info: object) -> str:
+    """`agent-postmortem <version>`, followed by ` (<branch> <commit>[+dirty], <date>)` when
+    `info` is a well-formed build stamp; anything else in it is ignored."""
+    plain = f"agent-postmortem {__version__}"
+    if not isinstance(info, dict):
+        return plain
+    branch, commit, date, dirty = (info.get(k) for k in ("branch", "commit", "date", "dirty"))
+    if not (
+        isinstance(branch, str) and _BUILD_BRANCH_RE.match(branch)
+        and isinstance(commit, str) and _BUILD_COMMIT_RE.match(commit)
+        and isinstance(date, str) and _BUILD_DATE_RE.match(date)
+        and isinstance(dirty, bool)
+    ):
+        return plain
+    return f"{plain} ({branch} {commit}{'+dirty' if dirty else ''}, {date})"
 
 
 def _build_parser(tokens: list[str] | None = None) -> argparse.ArgumentParser:
@@ -360,7 +413,7 @@ def _build_parser(tokens: list[str] | None = None) -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--version", action="version", version=f"agent-postmortem {__version__}",
+        "--version", action="version", version=_version_text(_read_build_info()),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -405,6 +458,11 @@ def _build_parser(tokens: list[str] | None = None) -> argparse.ArgumentParser:
     )
     scan.add_argument(
         "--json", action="store_true", help="Print machine-readable JSON instead of text."
+    )
+    scan.add_argument(
+        "--no-cache", action="store_true",
+        help="Read and analyze every run, ignoring the run cache and the stored transcript parses "
+        "(docs/DESIGN.md 4.14.9).",
     )
     _add_level_flags(scan)
 
@@ -643,16 +701,24 @@ def _build_parser(tokens: list[str] | None = None) -> argparse.ArgumentParser:
         epilog=_WATCH_EXIT_CODES,
     )
     watch_cmd.add_argument(
-        "run_id", metavar="RUN_ID|PATH",
+        "run_id", metavar="RUN_ID|PATH", nargs="?", default=None,
         help="A run id, a unique prefix of one, or a path to a run directory.",
+    )
+    watch_cmd.add_argument(
+        "--session", nargs="?", const="", default=None, metavar="SESSION_ID|PATH",
+        help=(
+            "Follow one session instead of one workflow: its subagents' kills, failures that "
+            "left changes, and returns their own transcripts contradict (docs/DESIGN.md 4.14.3). "
+            "With no value, the caller's own session (CLAUDE_CODE_SESSION_ID)."
+        ),
     )
     watch_cmd.add_argument(
         "--root", type=Path, default=_default_root(),
         help="Directory to search when RUN_ID is not itself a path (default: ~/.claude/projects).",
     )
     watch_cmd.add_argument(
-        "--interval", type=_bounded_float("--interval", 0.2, 300), default=watch.DEFAULT_INTERVAL,
-        help="Seconds between polls, 0.2 to 300 (default: 5).",
+        "--interval", type=_bounded_float("--interval", 0.2, 300), default=None,
+        help="Seconds between polls, 0.2 to 300 (default: 5; 2 with --session).",
     )
     watch_cmd.add_argument(
         "--max-hours", type=_bounded_float("--max-hours", 0.01, 168),
@@ -682,13 +748,48 @@ def _build_parser(tokens: list[str] | None = None) -> argparse.ArgumentParser:
         "--json", action="store_true", help="Print one JSON object per line instead of text."
     )
 
+    status_cmd = sub.add_parser(
+        "status",
+        help=(
+            "One snapshot of one session: its subagents running, returned, interrupted or failed, "
+            "what a stopped one changed, returns their own transcripts contradict, and the "
+            "background sessions' native states (docs/DESIGN.md 4.14.4)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_STATUS_EXIT_CODES,
+    )
+    status_cmd.add_argument(
+        "session", metavar="SESSION_ID|PATH", nargs="?", default=None,
+        help="A session UUID, its public id (s_...), or its transcript path (default: the "
+             "caller's own session, CLAUDE_CODE_SESSION_ID).",
+    )
+    status_cmd.add_argument(
+        "--root", type=Path, default=_default_root(),
+        help="Directory to search for the session (default: ~/.claude/projects).",
+    )
+    status_cmd.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON instead of text."
+    )
+    _add_level_flags(status_cmd)
+
+    statusline_cmd = sub.add_parser(
+        "statusline",
+        help=(
+            "Claude Code subagentStatusLine command: reads the rows on stdin and rewrites only "
+            "the ones it adds a fact to (docs/DESIGN.md 4.14.7)."
+        ),
+    )
+    statusline_cmd.add_argument("statusline_kind", choices=("subagents",), metavar="subagents")
+
     hook = sub.add_parser(
         "hook", help="Claude Code plugin hook entry point; reads hook JSON from stdin."
     )
     hook.add_argument(
         "hook_command",
-        choices=("check", "session-start", "session-end", "workflow-launched", "capabilities"),
-        metavar="{check,session-start,session-end,workflow-launched,capabilities}",
+        choices=("check", "session-start", "session-end", "workflow-launched", "agent-launched",
+                 "post-tool", "prompt-submit", "capabilities"),
+        metavar="{check,session-start,session-end,workflow-launched,agent-launched,post-tool,"
+                "prompt-submit,capabilities}",
         help="Which hook event this invocation is for.",
     )
 
@@ -800,6 +901,7 @@ _ALIAS_EXPECTED = (
 )
 _PREFIX_ADVICE = "expected a longer prefix or the path of a run directory"
 _EXACT_ADVICE = "expected one of these run ids or the path of a run directory"
+_NO_MATCH_NEXT = "next: agent-postmortem scan --all lists every run id"
 _RUN_ID_SHAPE = re.compile(r"wf_[0-9a-f]{8}-[0-9a-f]{3}|s_[0-9a-f]{10,12}")
 _HERE_TAIL = "worked in this directory or a parent of it"
 # docs/DESIGN.md 4.8 (0.3.4): the first-run empty state. The same lines at every level: they
@@ -924,9 +1026,13 @@ def _run_error(
         }[kind]()
     errors = _errors_for(args)
     if kind == "no_match":
+        # a public run id is what scan prints, so it is repeated as typed (0.4, DESIGN 4.8)
+        typed = args.run_id
+        shown = typed if _RUN_ID_SHAPE.fullmatch(typed or "") else errors.span(typed)
         return (
-            f"postmortem: no run matches '{errors.span(args.run_id)}' under "
-            f"{_shown_root(args, root, errors)} ({_RUN_EXPECTED})"
+            f"postmortem: no run matches '{shown}' under "
+            f"{_shown_root(args, root, errors)} ({_RUN_EXPECTED})\n"
+            f"  {_NO_MATCH_NEXT}"
         )
     if kind == "ambiguous":
         assert exc is not None
@@ -1548,6 +1654,546 @@ def _print_left_out(unreadable: list[str]) -> None:
         )
 
 
+# docs/DESIGN.md 4.14.9 item 2: a run whose newest file was written before --since minus one day
+# cannot have started on or after --since, so it is never read. The flag exists for the test that
+# proves the result set is the same with and without it.
+_SINCE_MTIME_PREFILTER = True
+_SINCE_MARGIN = timedelta(days=1)
+# docs/DESIGN.md 4.14.9 item 1: the stderr progress line.
+_PROGRESS_MIN_INTERVAL = 0.5
+_PROGRESS_NOTE_MIN_RUNS = 50
+
+
+def _ref_files(ref: reader.RunRef) -> list[Path]:
+    """The files _run_files_for_liveness would name for this ref, found without loading it."""
+    if ref.kind == "workflow":
+        try:
+            return [p for p in ref.path.iterdir() if p.is_file()]
+        except OSError:
+            return []
+    files = [ref.path]
+    subagents_dir = ref.path.parent / ref.path.stem / "subagents"
+    try:
+        files.extend(p for p in subagents_dir.iterdir() if p.is_file())
+    except OSError:
+        pass
+    return files
+
+
+def _ref_newest_mtime(ref: reader.RunRef) -> float | None:
+    newest: float | None = None
+    for path in _ref_files(ref):
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or mtime > newest:
+            newest = mtime
+    return newest
+
+
+def _has_a_timestamp(ref: reader.RunRef) -> bool:
+    """Whether any transcript of the run carries a timestamp in its first 64 KB. The reader
+    takes a run's start from its transcripts' events only (a workflow's agent-*.jsonl, a
+    session's main and subagent transcripts), never from a journal or a meta file; a run with
+    no such timestamp has an unknown start, which --since keeps (4.14.9), so it is read."""
+    for path in _ref_files(ref):
+        transcript = path.suffix == ".jsonl" and (
+            ref.kind != "workflow" or path.name.startswith("agent-"))
+        if not transcript:
+            continue
+        try:
+            with path.open("rb") as handle:
+                head = handle.read(65536)
+        except OSError:
+            continue
+        for raw in head.split(b"\n"):
+            if b'"timestamp"' not in raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except (ValueError, RecursionError):
+                continue  # a torn last line or not JSON: no evidence either way
+            if isinstance(entry, dict) and entry.get("type") in ("user", "assistant") \
+                    and reader._parse_ts(entry.get("timestamp")) is not None:
+                return True  # an event the loader takes a start from
+    return False
+
+
+def _written_before_since(ref: reader.RunRef, since_date) -> bool:
+    """True when every file of the run was last written before --since minus one day and the run
+    has a start to compare (4.14.9): such a run cannot have started on or after --since."""
+    newest = _ref_newest_mtime(ref)
+    if newest is None:
+        return False
+    cutoff = datetime(since_date.year, since_date.month, since_date.day, tzinfo=timezone.utc)
+    return newest < (cutoff - _SINCE_MARGIN).timestamp() and _has_a_timestamp(ref)
+
+
+class _ScanProgress:
+    """docs/DESIGN.md 4.14.9 item 1: on a terminal, one stderr line updated at most every
+    _PROGRESS_MIN_INTERVAL seconds and erased at the end; off a terminal, one line at the start
+    of a scan that reads more than _PROGRESS_NOTE_MIN_RUNS runs, and nothing else."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.stream = sys.stderr
+        try:
+            self.tty = bool(self.stream.isatty())
+        except (AttributeError, ValueError, OSError):
+            self.tty = False
+        self.last = float("-inf")
+        self.shown = False
+        if not self.tty and total > _PROGRESS_NOTE_MIN_RUNS:
+            self._write(
+                f"postmortem: scanning {total} runs; a first scan of a long history can take "
+                "a minute or more\n"
+            )
+
+    def _write(self, text: str) -> None:
+        try:
+            self.stream.write(text)
+            self.stream.flush()
+        except (OSError, ValueError):
+            pass
+
+    def step(self, done: int) -> None:
+        if not self.tty:
+            return
+        now = time.monotonic()
+        if done < self.total and now - self.last < _PROGRESS_MIN_INTERVAL:
+            return
+        self.last = now
+        self.shown = True
+        self._write(f"\rscanning {done}/{self.total} runs")
+
+    def finish(self) -> None:
+        if self.tty and self.shown:
+            self._write("\r\x1b[K")
+
+
+# --- the scan run cache (docs/DESIGN.md 4.14.9 item 3) ------------------------
+
+_SCAN_CACHE_SCHEMA = 2  # 2 (0.4): facts carry rule ids
+
+
+def _iso_dt(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _scan_cache_meta(cfg) -> dict:
+    """What every entry depends on beyond its own files: the cache schema, the package version
+    (parser, detectors and lifecycle all ship in it), the active config's silenced set, and the
+    code digest and json limits (4.14.9 item 4), since a run's facts come from the same reads;
+    the limits count even when the source cannot be read for the digest."""
+    off = sorted(getattr(cfg, "detectors_off", ()) or ())
+    digest = hashlib.sha256(json.dumps(off).encode("utf-8")).hexdigest()[:16]
+    return {"schema": _SCAN_CACHE_SCHEMA, "version": __version__, "config": digest,
+            "code": f"{_transcript_cache_code()}:{_json_limits()}"}
+
+
+def _stat_key(path: Path) -> list | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return [st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns]
+
+
+def _scan_cache_key(ref: reader.RunRef) -> dict | None:
+    """Every input file of the run (the liveness population of 4.7, which is every file a load
+    reads for that kind) by name and (inode, size, mtime_ns, ctime_ns), and a workflow's parent
+    transcript the same way. None when a file vanished between listing and stat."""
+    files = []
+    for path in sorted(_ref_files(ref)):
+        stat_key = _stat_key(path)
+        if stat_key is None:
+            return None
+        files.append([path.name, *stat_key])
+    parent = None
+    workflows = None
+    if ref.kind == "workflow":
+        parent_path = reader._parent_transcript_path_for_workflow_dir(ref.path)
+        parent = _stat_key(parent_path) if parent_path is not None else None
+    else:
+        # a session's launch reconciliation reads which workflow directories exist
+        workflow_root = ref.path.parent / ref.path.stem / "subagents" / "workflows"
+        try:
+            workflows = sorted(p.name for p in workflow_root.iterdir() if p.is_dir())
+        except OSError:
+            workflows = []
+    return {"files": files, "parent": parent, "workflows": workflows}
+
+
+def _read_scan_cache(meta: dict) -> dict:
+    data = state.read_cache(state.scan_cache_path())
+    if {k: data.get(k) for k in meta} != meta:
+        return {}
+    runs = data.get("runs")
+    return runs if isinstance(runs, dict) else {}
+
+
+def _cached_facts(entry: object, key: dict) -> dict | None:
+    """An entry's facts when its key matches, every recorded absence probe still answers the
+    same, and its 72-hour report window (claim_contradiction) has not closed since."""
+    if not isinstance(entry, dict) or entry.get("key") != key:
+        return None
+    expires_at = entry.get("expires_at")
+    now_ts = claim_contradiction._now().timestamp()
+    if isinstance(expires_at, (int, float)) and now_ts >= expires_at:
+        return None
+    probes = entry.get("probes")
+    if not isinstance(probes, list):
+        return None
+    for probe in probes:
+        if not (isinstance(probe, list) and len(probe) == 2):
+            return None
+        if severity.absence(probe[0]) != probe[1]:
+            return None
+    facts = entry.get("facts")
+    return facts if isinstance(facts, dict) else None
+
+
+def _scan_cache_expiry(run: Run) -> float | None:
+    """When claim_contradiction's report_path clause stops being evaluated for this run, if it
+    was still being evaluated when the run was analyzed (its findings can change then)."""
+    if run.kind != "workflow" or run.ended_at is None:
+        return None
+    if not claim_contradiction._report_path_checkable(run):
+        return None
+    # in epoch seconds: a run that ends near datetime.max (year 9999) must not abort the scan
+    # (0.3.4's rule: one run never stops a whole scan)
+    return (report._aware(run.ended_at).timestamp()
+            + claim_contradiction.REPORT_PATH_MAX_AGE.total_seconds())
+
+
+def _write_scan_cache(meta: dict, updates: dict[str, dict]) -> None:
+    try:
+        with state.cache_transaction(state.scan_cache_path()) as data:
+            same = {k: data.get(k) for k in meta} == meta
+            runs = data.get("runs") if same and isinstance(data.get("runs"), dict) else {}
+            runs.update(updates)
+            for path_str in list(runs):
+                if not os.path.exists(path_str):
+                    del runs[path_str]
+            data.clear()
+            data.update(meta)
+            data["runs"] = runs
+    except state.StateError:
+        pass
+
+
+# --- the transcript cache (docs/DESIGN.md 4.14.9 item 4) -----------------------
+
+_TRANSCRIPT_CACHE_SCHEMA = 1
+# stored parses are kept for a run written in the last day (one being written may change again)
+_TRANSCRIPT_CACHE_RECENT = timedelta(hours=24)
+# and a file not written for two days is removed
+_TRANSCRIPT_CACHE_KEEP = timedelta(days=2)
+
+
+@functools.cache
+def _transcript_cache_code() -> str:
+    """A digest of the Python build and the package's own source: a stored parse holds the
+    package's objects and what the interpreter's json and datetime made of the file, so any
+    change to either discards it, not only a new version. Empty when the source cannot be read,
+    which turns the cache off."""
+    package = Path(__file__).resolve().parent
+    digest = hashlib.sha256(sys.version.encode("utf-8") + b"\0")
+    try:
+        for path in sorted(package.rglob("*.py")):
+            digest.update(path.relative_to(package).as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
+def _json_limits() -> str:
+    """The two interpreter limits json reads while it decodes: an integer longer than the int
+    digits limit, or a value nested deeper than the recursion limit, makes a line unparseable."""
+    return f"{sys.get_int_max_str_digits()}:{sys.getrecursionlimit()}"
+
+
+def _transcript_cache_identity() -> str:
+    """What a stored parse is valid for: the code digest and the json limits. Empty when the
+    source cannot be read, which turns the transcript cache off."""
+    code = _transcript_cache_code()
+    return f"{code}:{_json_limits()}" if code else ""
+
+
+def _written_recently(key: dict, now: datetime) -> bool:
+    """Whether any input file of the run (its scan cache key) was written in the last day."""
+    newest = max((entry[3] for entry in key["files"]), default=None)
+    return newest is not None and newest / 1e9 >= (now - _TRANSCRIPT_CACHE_RECENT).timestamp()
+
+
+def _transcript_cache_path(ref: reader.RunRef) -> Path:
+    name = hashlib.sha256(os.fsencode(ref.path)).hexdigest()[:32]
+    return state.transcript_cache_dir() / f"{name}.pickle"
+
+
+def _read_transcript_cache(ref: reader.RunRef) -> dict:
+    """The stored parses of one run: {} unless its file is private (state.read_private_bytes),
+    holds only built-in values, and names this run, this schema and this identity."""
+    code = _transcript_cache_identity()
+    if not code:
+        return {}
+    raw = state.read_private_bytes(_transcript_cache_path(ref))
+    if raw is None:
+        return {}
+    try:
+        data = reader.unpickle_plain(raw)
+    except Exception:
+        return {}
+    if not isinstance(data, dict) or (
+        data.get("schema"), data.get("code"), data.get("run")
+    ) != (_TRANSCRIPT_CACHE_SCHEMA, code, str(ref.path)):
+        return {}
+    entries = data.get("entries")
+    return entries if isinstance(entries, dict) else {}
+
+
+def _load_scanned_run(ref: reader.RunRef, unreadable: list[str], memo, analyze):
+    """(run, analyze(run), memo): _load_listed_run and analyze, through memo when there is one.
+    When a load or its analysis reused a stored parse and then failed (raised, or found the run
+    unreadable), both are done again from the files alone with a fresh memo, so a stored parse
+    can never be why a run fails; a failure with no reuse stands as it is."""
+
+    def attempt(memo):
+        found: list[str] = []
+        with reader.transcript_memo(memo) if memo is not None else contextlib.nullcontext():
+            run = _load_listed_run(ref, found)
+            analyzed = analyze(run) if run is not None else None
+        return run, analyzed, found
+
+    if memo is None:
+        run, analyzed, found = attempt(None)
+    else:
+        try:
+            run, analyzed, found = attempt(memo)
+        except Exception:
+            if not memo.reused:
+                raise
+            run, analyzed, found = None, None, [ref.run_id]
+        if memo.reused and found:
+            memo = reader.TranscriptMemo({}, store=memo.store)
+            run, analyzed, found = attempt(memo)
+    unreadable.extend(found)
+    return run, analyzed, memo
+
+
+def _write_transcript_cache(ref: reader.RunRef, memo: reader.TranscriptMemo) -> None:
+    """The parses this load used, as the run's whole file; an unusable cache is skipped."""
+    code = _transcript_cache_identity()
+    if not code:
+        return
+    data = pickle.dumps(
+        {"schema": _TRANSCRIPT_CACHE_SCHEMA, "code": code, "run": str(ref.path),
+         "entries": memo.used},
+        protocol=pickle.HIGHEST_PROTOCOL,
+    )
+    try:
+        state.write_private_bytes(_transcript_cache_path(ref), data)
+    except state.StateError:
+        pass
+
+
+@contextlib.contextmanager
+def _recorded_probes():
+    """Every severity.absence() answer given while one run is analyzed, as [path, answer]."""
+    probes: list[list] = []
+    real = severity.absence
+
+    def recording(path):
+        answer = real(path)
+        probes.append([path, answer])
+        return answer
+
+    severity.absence = recording
+    try:
+        yield probes
+    finally:
+        severity.absence = real
+
+
+def _scan_facts(run: Run, findings: list[Finding], shown: list[Finding]) -> dict:
+    """The clock-free facts one row, its triage entry and its totals are built from."""
+    risk_paths, _commits = report._risk_paths_and_commits(run)
+    per_detector: dict[str, int] = {}
+    for finding in findings:
+        per_detector[finding.detector] = per_detector.get(finding.detector, 0) + 1
+    wasted_all = sum(
+        finding.metrics.get("wasted_seconds", 0.0) for finding in findings
+        if finding.detector == "wasted_time"
+    )
+    lifecycle = run.lifecycle
+    return {
+        "run_id": run.run_id, "kind": run.kind, "project": run.project_slug,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "ended_at": run.ended_at.isoformat() if run.ended_at else None,
+        "agents": len(run.agents), "attempts": len(run.attempts), "finished": run.finished,
+        "lifecycle": None if lifecycle is None else {"terminal": lifecycle.terminal},
+        "verdict": report.verdict_of(run, shown),
+        "verdict_bare": report._verdict_bare(run, shown),
+        "top_detector": _top_detector(shown),
+        "attention_reason": report.attention_reason(run, shown),
+        "risk_paths": bool(risk_paths),
+        "paths_at_risk": report.scan_paths_at_risk(run),
+        "paths_at_risk_complete": report.scan_paths_at_risk_complete(run),
+        "wasted_seconds_shown": report.wasted_seconds_of(shown),
+        "totals": {
+            "subagents": len(run.attempts),
+            "interrupted": sum(1 for a in run.attempts if a.interrupt is not None),
+            "retried": report.silent_retry_count(run) > 0,
+            "wasted_hours": wasted_all / 3600.0,
+        },
+        "findings_per_detector": per_detector,
+        # every finding's rule ids, shown or silenced, which is what `rules propose` counts
+        "rule_ids": [list(finding.rule_ids) for finding in findings],
+        "skipped_lines": run.skipped_lines, "skipped_files": run.skipped_files,
+    }
+
+
+def _caller_mark(ref: reader.RunRef) -> str | None:
+    """docs/DESIGN.md 4.7 (0.4): `this session` for the session CLAUDE_CODE_SESSION_ID names,
+    `started by this session` for a workflow under it, else None. A marker, never an identity:
+    it is computed from the run's own path at every level."""
+    caller = _caller_session_id()
+    if caller is None:
+        return None
+    if ref.kind == "session":
+        return "this session" if ref.path.stem.lower() == caller else None
+    parts = ref.path.parts
+    if len(parts) >= 4 and parts[-2] == "workflows" and parts[-4].lower() == caller:
+        return "started by this session"
+    return None
+
+
+def _scan_entry(facts: dict, now: datetime, newest_mtime: float | None,
+                ref: reader.RunRef) -> dict:
+    """The row, NEEDS ATTENTION candidate and LIVE NOW entry of one run, from its facts and the
+    clock; the one path both a freshly analyzed run and a cached one take (4.14.9)."""
+    lifecycle = facts["lifecycle"]
+    run_like = SimpleNamespace(
+        run_id=facts["run_id"], kind=facts["kind"], finished=facts["finished"],
+        started_at=_iso_dt(facts["started_at"]), ended_at=_iso_dt(facts["ended_at"]),
+        lifecycle=None if lifecycle is None else SimpleNamespace(
+            terminal=lifecycle["terminal"], activity=reader.activity_word(newest_mtime),
+        ),
+    )
+    live = report.is_possibly_live(run_like, newest_mtime, now, hooks_cli._UNKNOWN_QUIET_SECONDS)
+    age = report.scan_age_string(run_like, now, live)
+    attention = report.attention_candidate_from(
+        facts["verdict_bare"], run_like, facts["risk_paths"], now,
+    )
+    reason = facts["attention_reason"] if attention else None
+    command = report.attention_command_from(run_like.run_id, facts["risk_paths"], run_like, now)
+    row = {
+        "run_id": facts["run_id"],
+        "kind": facts["kind"],
+        "date": run_like.started_at.date().isoformat() if run_like.started_at else "unknown",
+        "project": facts["project"],
+        "agents": facts["agents"],
+        "attempts": facts["attempts"],
+        "verdict": facts["verdict"],
+        "top_detector": facts["top_detector"],
+        "finished": facts["finished"],
+        "attention": attention,
+        "attention_reason": reason,
+        "age": age,
+        "possibly_live": live,
+        "paths_at_risk": facts["paths_at_risk"],
+        "paths_at_risk_complete": facts["paths_at_risk_complete"],
+        "unfinished_state": report.unfinished_state(run_like, live),
+    }
+    candidate = None
+    live_entry = None
+    if attention:
+        candidate = {
+            "run": run_like, "age": age, "verdict": facts["verdict"], "reason": reason,
+            "command": command, "mark": _caller_mark(ref),
+            "sort_key": report.attention_sort_key_from(
+                run_like, facts["verdict_bare"], facts["wasted_seconds_shown"], live,
+                facts["paths_at_risk"], now,
+            ),
+        }
+    elif live:
+        live_entry = {"run": run_like, "verdict": facts["verdict"], "command": command,
+                      "mark": _caller_mark(ref),
+                      "sort_key": _here_key(ref, run_like)}
+    return {"row": row, "candidate": candidate, "live": live_entry}
+
+
+def _accumulate_scan_totals_from(totals: dict, facts: dict) -> None:
+    """_accumulate_scan_totals over kept facts."""
+    kept = facts["totals"]
+    if facts["kind"] == "session":
+        totals["session"]["runs"] += 1
+        totals["session"]["subagents"] += kept["subagents"]
+        totals["session"]["interrupted"] += kept["interrupted"]
+    else:
+        totals["workflow"]["runs"] += 1
+        totals["workflow"]["attempts"] += facts["attempts"]
+        if kept["retried"]:
+            totals["workflow"]["runs_with_retries"] += 1
+        totals["workflow"]["wasted_hours"] += kept["wasted_hours"]
+
+
+def _facts_of_ref(
+    ref: reader.RunRef, cfg, cache_runs: dict, cache_updates: dict, unreadable_runs: list, *,
+    use_cache: bool, no_cache: bool, now: datetime, keep=None,
+) -> tuple[dict | None, dict | None]:
+    """One run's scan facts and cache key (docs/DESIGN.md 4.14.9): from the run cache when the
+    key still holds, else loaded (only the transcripts whose files moved are parsed again),
+    analyzed and queued in `cache_updates`. None for a run that cannot be read (counted in
+    `unreadable_runs`) or that `keep` rejects. `scan` and `rules propose` both read runs here."""
+    key = _scan_cache_key(ref) if use_cache else None
+    facts = _cached_facts(cache_runs.get(str(ref.path)), key) if key is not None else None
+    if facts is not None:
+        return facts, key
+    # discover_runs promises a RunRef for anything matching the layout glob, not that every
+    # candidate is fully loadable; one bad candidate must not abort the whole fleet scan
+    # (docs/DESIGN.md 4.2), and a run that cannot be read is counted (4.8)
+    memo = None
+    if key is not None:
+        # 4.14.9 item 4: only the transcripts whose files moved are parsed again
+        memo = reader.TranscriptMemo(
+            {} if no_cache else _read_transcript_cache(ref), store=_written_recently(key, now),
+        )
+
+    def analyze(run: Run) -> tuple[dict, list] | None:
+        if keep is not None and not keep(run):
+            return None
+        with _recorded_probes() as probes:
+            findings = _run_findings(run)
+            # docs/DESIGN.md 4.10: a silenced detector's findings never inform scan's own
+            # verdict, top detector, or NEEDS ATTENTION reason (the same rule `run`'s text/JSON
+            # follow), but they still count toward `totals` and `findings_per_detector`, exactly
+            # like trend.
+            shown, _silenced = config.partition_silenced(findings, cfg)
+            return _scan_facts(run, findings, shown), probes
+
+    run, analyzed, memo = _load_scanned_run(ref, unreadable_runs, memo, analyze)
+    if memo is not None and memo.store and memo.parsed:
+        _write_transcript_cache(ref, memo)
+    if run is None or analyzed is None:
+        return None, key
+    facts, probes = analyzed
+    if key is not None:
+        cache_updates[str(ref.path)] = {
+            "key": key, "facts": facts, "probes": probes, "expires_at": _scan_cache_expiry(run),
+        }
+    return facts, key
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     root = args.root.expanduser()
     redactor = _redactor_for(args)
@@ -1601,93 +2247,74 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # docs/DESIGN.md 4.7 (FB2): possibly-live runs that are not candidates, for LIVE NOW.
     live_now: list[dict] = []
 
-    for ref in run_refs:
-        # discover_runs promises a RunRef for anything matching the layout glob, not that every
-        # candidate is fully loadable; one bad candidate must not abort the whole fleet scan
-        # (docs/DESIGN.md 4.2), and a run that cannot be read is counted (4.8, 0.3.4)
-        run = _load_listed_run(ref, unreadable_runs)
-        if run is None:
-            continue
-        run_started = run.started_at
-        if since_date is not None and run_started is not None and run_started.date() < since_date:
-            continue
-        if args.here and (
-            here_caller is None
-            or (ref.path not in here_owned and not reader.run_matches_cwd(run, here_caller))
-        ):
-            continue
+    if since_date is not None and _SINCE_MTIME_PREFILTER:
+        run_refs = [ref for ref in run_refs if not _written_before_since(ref, since_date)]
+    progress = _ScanProgress(len(run_refs))
 
-        findings = _run_findings(run)
-        if run.skipped_lines:
-            skipped_lines.append((run.run_id, run.skipped_lines))
-        skipped_meta_files += run.skipped_files
-        # docs/DESIGN.md 4.10: a silenced detector's findings never inform
-        # scan's own verdict, top detector, or NEEDS ATTENTION reason (the
-        # same rule `run`'s text/JSON follow) -- but they still count toward
-        # `totals`/`findings_per_detector` below, exactly like trend.
-        shown, _silenced = config.partition_silenced(findings, cfg)
-        newest_mtime = _newest_run_mtime(run)
-        live = report.is_possibly_live(run, newest_mtime, now, hooks_cli._UNKNOWN_QUIET_SECONDS)
-        paths_at_risk = report.scan_paths_at_risk(run)
-        paths_at_risk_complete = report.scan_paths_at_risk_complete(run)
-        age = report.scan_age_string(run, now, live)
-        verdict = report.verdict_of(run, shown)
-        attention = report.is_attention_candidate(run, shown, now, live)
-        reason = report.attention_reason(run, shown) if attention else None
+    use_cache = not args.here
+    cache_meta = _scan_cache_meta(cfg)
+    cache_runs = _read_scan_cache(cache_meta) if use_cache and not args.no_cache else {}
+    cache_updates: dict[str, dict] = {}
+
+    for index, ref in enumerate(run_refs, 1):
+        progress.step(index)
+        keep = None
+        if args.here:
+            def keep(run: Run, ref=ref) -> bool:
+                return here_caller is not None and (
+                    ref.path in here_owned or reader.run_matches_cwd(run, here_caller)
+                )
+        facts, key = _facts_of_ref(
+            ref, cfg, cache_runs, cache_updates, unreadable_runs,
+            use_cache=use_cache, no_cache=args.no_cache, now=now, keep=keep,
+        )
+        if facts is None:
+            continue
+        started = _iso_dt(facts["started_at"])
+        if since_date is not None and started is not None and started.date() < since_date:
+            continue
+        if facts["skipped_lines"]:
+            skipped_lines.append((facts["run_id"], facts["skipped_lines"]))
+        skipped_meta_files += facts["skipped_files"]
+        newest_mtime = (
+            max((entry[3] for entry in key["files"]), default=None) / 1e9
+            if key is not None and key["files"] else _ref_newest_mtime(ref)
+        )
+        entry = _scan_entry(facts, now, newest_mtime, ref)
 
         # release review of 0.3.0: rows follow the instant a run started (in UTC, whatever offset
         # its timestamps were written with), oldest first, with an undated run before every dated
         # one, so the last row is the newest run that has a start time
         started_at_by_row[len(rows)] = (
-            (1, report._aware(run.started_at).timestamp()) if run.started_at else (0, 0.0)
+            (1, report._aware(started).timestamp()) if started else (0, 0.0)
         )
-        rows.append({
-            "run_id": run.run_id,
-            "kind": run.kind,
-            "date": run.started_at.date().isoformat() if run.started_at else "unknown",
-            "project": run.project_slug,
-            "agents": len(run.agents),
-            "attempts": len(run.attempts),
-            "verdict": verdict,
-            "top_detector": _top_detector(shown),
-            "finished": run.finished,
-            "attention": attention,
-            "attention_reason": reason,
-            "age": age,
-            "possibly_live": live,
-            "paths_at_risk": paths_at_risk,
-            "paths_at_risk_complete": paths_at_risk_complete,
-            "unfinished_state": report.unfinished_state(run, live),
-        })
+        rows.append(entry["row"])
+        if entry["candidate"] is not None:
+            candidates.append(entry["candidate"])
+        elif entry["live"] is not None:
+            live_now.append(entry["live"])
 
-        if attention:
-            candidates.append({
-                "run": run,
-                "age": age,
-                "verdict": verdict,
-                "reason": reason,
-                "command": report.attention_next_command(run, now),
-                "sort_key": report.attention_sort_key(run, shown, live, paths_at_risk, now),
-            })
-
-        elif live:
-            live_now.append({
-                "run": run,
-                "verdict": verdict,
-                "command": report.attention_next_command(run, now),
-                "sort_key": _here_key(ref, run),
-            })
-
-        _accumulate_scan_totals(totals, run, findings)
-        window_ts = run.ended_at or run.started_at
+        _accumulate_scan_totals_from(totals, facts)
+        window_ts = _iso_dt(facts["ended_at"]) or started
+        if window_ts is None and newest_mtime is not None:
+            # an undated run, which --since keeps: placed by its newest write (it cannot have
+            # started after it), so the 7-day line counts it whenever SINCE can (4.7)
+            window_ts = datetime.fromtimestamp(newest_mtime, tz=timezone.utc)
         if window_ts is not None and report._aware(window_ts) >= seven_days_ago:
-            _accumulate_scan_totals(totals_7d, run, findings)
+            _accumulate_scan_totals_from(totals_7d, facts)
 
-        for finding in findings:
-            totals["findings_per_detector"][finding.detector] = (
-                totals["findings_per_detector"].get(finding.detector, 0) + 1
+        for detector_id, count in facts["findings_per_detector"].items():
+            totals["findings_per_detector"][detector_id] = (
+                totals["findings_per_detector"].get(detector_id, 0) + count
             )
 
+    if use_cache and cache_updates:
+        _write_scan_cache(cache_meta, cache_updates)
+    if use_cache:
+        state.prune_private_files(
+            state.transcript_cache_dir(), (now - _TRANSCRIPT_CACHE_KEEP).timestamp()
+        )
+    progress.finish()
     if not rows:
         kind = "scan_here_no_match" if args.here else "no_runs"
         print(
@@ -1741,6 +2368,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                     silenced_detectors=cfg.detectors_off,
                     live_now=live_now[: args.limit], total_live_now=len(live_now),
                     both_kinds=args.kind is None,
+                    all_label=f"SINCE {args.since}" if since_date is not None else "ALL TIME",
                 ),
             ),
             end="",
@@ -1886,19 +2514,35 @@ def _cmd_rules_propose(args: argparse.Namespace) -> int:
             print(_run_error(args, "no_runs", root=root), file=sys.stderr)
             return 2
 
+        # docs/DESIGN.md 9 (0.4): the fleet is read through scan's run cache, so an unchanged
+        # run is not loaded again; a run and its findings are what propose_rules counts (an id,
+        # a start date, each finding's rule ids)
+        cfg = config.load_config()
+        cache_meta = _scan_cache_meta(cfg)
+        cache_runs = _read_scan_cache(cache_meta)
+        cache_updates: dict[str, dict] = {}
+        now = report._now()
         unreadable: list[str] = []
         for ref in run_refs:
-            run = _load_listed_run(ref, unreadable)
-            if run is None:
+            facts, _key = _facts_of_ref(
+                ref, cfg, cache_runs, cache_updates, unreadable,
+                use_cache=True, no_cache=False, now=now,
+            )
+            if facts is None:
                 continue
-            run_started = run.started_at
+            run_started = _iso_dt(facts["started_at"])
             if (
                 since_date is not None
                 and run_started is not None
                 and run_started.date() < since_date
             ):
                 continue
-            runs_with_findings.append((run, _run_findings(run)))
+            runs_with_findings.append((
+                SimpleNamespace(run_id=facts["run_id"], started_at=run_started),
+                [SimpleNamespace(rule_ids=tuple(ids)) for ids in facts["rule_ids"]],
+            ))
+        if cache_updates:
+            _write_scan_cache(cache_meta, cache_updates)
         _print_left_out(unreadable)
 
     # docs/DESIGN.md 9 (N8): an adopted rule is a status row, never proposed
@@ -2170,11 +2814,57 @@ def _cmd_trend(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_status(args: argparse.Namespace) -> int:
+    root = args.root.expanduser()
+    if not args.session and not os.environ.get(_CALLER_SESSION_ENV, "").strip():
+        print(
+            "postmortem: status with no session follows the caller's session, and "
+            "CLAUDE_CODE_SESSION_ID is not set; name a session id or a transcript path",
+            file=sys.stderr,
+        )
+        return 1
+    main_path = live.resolve_session(args.session, root)
+    if main_path is None:
+        print("postmortem: no such session", file=sys.stderr)
+        return 2
+    snap = status.snapshot(main_path)
+    redactor = live.session_redactor(
+        main_path, [row["agent_id"] for row in snap["subagents"]], base=_redactor_for(args))
+    if args.json:
+        sys.stdout.write(status.render_json(snap, redactor))
+    else:
+        sys.stdout.write(status.render_text(snap, redactor))
+    return 0
+
+
 def _cmd_watch(args: argparse.Namespace) -> int:
     root = args.root.expanduser()
+    if args.session is not None:
+        if args.run_id is not None:
+            print("postmortem: watch takes a RUN_ID or --session, not both", file=sys.stderr)
+            return 1
+        if not args.session and not os.environ.get(_CALLER_SESSION_ENV, "").strip():
+            print(
+                "postmortem: watch --session with no value follows the caller's session, and "
+                "CLAUDE_CODE_SESSION_ID is not set; name a session id or a transcript path",
+                file=sys.stderr,
+            )
+            return 1
+        main_path = live.resolve_session(args.session, root)
+        if main_path is None:
+            print("postmortem: no such session", file=sys.stderr)
+            return 2
+        return live.watch_session(
+            main_path, interval=args.interval or live.DEFAULT_SESSION_INTERVAL,
+            max_hours=args.max_hours, json_mode=args.json, out=sys.stdout, err=sys.stderr,
+        )
+    if args.run_id is None:
+        print("postmortem: watch needs a RUN_ID, or --session", file=sys.stderr)
+        return 1
     return watch.watch_run(
         args.run_id, root,
-        interval=args.interval, max_hours=args.max_hours, quiet_after=args.quiet_after,
+        interval=args.interval or watch.DEFAULT_INTERVAL, max_hours=args.max_hours,
+        quiet_after=args.quiet_after,
         done_grace=args.done_grace, json_mode=args.json, out=sys.stdout, err=sys.stderr,
     )
 
@@ -2267,6 +2957,10 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             return _cmd_rescue_status(args)
     if args.command == "watch":
         return _cmd_watch(args)
+    if args.command == "status":
+        return _cmd_status(args)
+    if args.command == "statusline":
+        return statusline.main_subagents()
     if args.command == "hook":
         return hooks_cli.dispatch(args.hook_command)
 

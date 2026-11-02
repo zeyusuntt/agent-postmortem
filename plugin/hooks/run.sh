@@ -25,6 +25,14 @@ set -u
 
 EVENT="${1:-}"
 
+# docs/DESIGN.md 4.14.5 (0.4): post-tool and prompt-submit run at every tool call and prompt
+# under a 5 s hooks.json timeout, so the PATH probe (step 2 below) and the call share 4 s: 1 s
+# for the probe, 3 s for the call. Every other event keeps 2 s for the probe.
+case "$EVENT" in
+    post-tool|prompt-submit) PROBE_DEADLINE=1 ;;
+    *) PROBE_DEADLINE=2 ;;
+esac
+
 # docs/DESIGN.md 7.2's D6: nothing below may reach Claude Code's own
 # stderr unless a person opted in. Most individual writes already carry
 # their own `2>/dev/null`, but a redirection target itself failing to open
@@ -263,7 +271,7 @@ sys.exit(0 if ok else 1)
 _probe_path_cli() {
     command -v agent-postmortem >/dev/null 2>&1 || return 1
     out_file="$(_tmpfile)"
-    _run_with_deadline 2 agent-postmortem hook capabilities >"$out_file" 2>/dev/null </dev/null
+    _run_with_deadline "$PROBE_DEADLINE" agent-postmortem hook capabilities >"$out_file" 2>/dev/null </dev/null
     probe_output="$(cat "$out_file" 2>/dev/null)"
     rm -f "$out_file" 2>/dev/null
     _looks_like_capabilities_v1 "$probe_output"
@@ -338,8 +346,8 @@ _plugin_version() {
     sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PLUGIN_JSON" 2>/dev/null | head -n 1
 }
 
-# docs/DESIGN.md 7.3: the plugin's only network action. SessionStart only,
-# and only when no compatible CLI resolved above.
+# docs/DESIGN.md 7.3: the plugin's network action (with _maybe_upgrade_bundled, 4.14.11).
+# SessionStart only, and only when no compatible CLI resolved above.
 _maybe_install() {
     [ "$EVENT" = "session-start" ] || return 0
     [ -z "${AGENT_POSTMORTEM_NO_AUTO_INSTALL:-}" ] || return 0
@@ -374,11 +382,78 @@ _maybe_install() {
         </dev/null >>"$install_log" 2>&1
 }
 
+# docs/DESIGN.md 4.14.11: the version a CLI's `hook capabilities` reports, or nothing.
+_cli_version() {
+    out_file="$(_tmpfile)"
+    _run_with_deadline 2 "$1" hook capabilities >"$out_file" 2>/dev/null </dev/null
+    caps="$(cat "$out_file" 2>/dev/null)"
+    rm -f "$out_file" 2>/dev/null
+    _looks_like_capabilities_v1 "$caps" || return 0
+    printf '%s' "$caps" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+}
+
+# docs/DESIGN.md 4.14.11: on SessionStart, a bundled CLI whose version is not the plugin's is
+# reinstalled at the plugin's version (PyPI first, then the matching tag), under the same 60 s
+# deadline and install lock as 7.3, with the 24 h gate kept per target version. The CLI already
+# resolved keeps serving this hook; a CLI on PATH is the person's own and is never touched.
+# docs/DESIGN.md 4.14.11 (0.4): true iff $1 is a symlink whose own target lies outside the data
+# dir: the person's own link (for example to a local build), never replaced by an upgrade. uv's
+# entry points for the CLI it installed here link inside the data dir.
+_is_own_link() {
+    [ -L "$1" ] || return 1
+    link_target="$(readlink "$1" 2>/dev/null)" || return 1
+    [ -n "$link_target" ] || return 1
+    case "$link_target" in
+        /*) ;;
+        *) link_target="$(dirname "$1")/$link_target" ;;
+    esac
+    # physical directories, so a relative target that climbs out with .. is seen as outside
+    # cd -P: resolve each symlink before a following .., as the kernel does (batch 2 review)
+    target_dir="$(cd -P "$(dirname "$link_target")" 2>/dev/null && pwd -P)" || return 0
+    data_dir="$(cd -P "$DATA_DIR" 2>/dev/null && pwd -P)" || return 0
+    case "$target_dir/" in
+        "$data_dir"/*) return 1 ;;
+    esac
+    return 0
+}
+
+_maybe_upgrade_bundled() {
+    [ "$EVENT" = "session-start" ] || return 0
+    [ -z "${AGENT_POSTMORTEM_NO_AUTO_INSTALL:-}" ] || return 0
+    [ "$CLI" = "$DATA_DIR/bin/agent-postmortem" ] || return 0
+    ! _is_own_link "$CLI" || return 0
+    command -v uv >/dev/null 2>&1 || return 0
+    pinned_version="$(_plugin_version)"
+    [ -n "$pinned_version" ] || return 0
+    current_version="$(_cli_version "$CLI")"
+    [ "$current_version" != "$pinned_version" ] || return 0
+    _ensure_data_dir || return 0
+    _try_lock "$DATA_DIR/install.lock" || return 0
+    upgrade_log="$DATA_DIR/install-$pinned_version.log"
+    if _modified_within_a_day "$upgrade_log"; then
+        return 0
+    fi
+    pypi_source="$PYPI_PACKAGE==$pinned_version"
+    git_source="$GIT_SOURCE@v$pinned_version"
+    {
+        printf '%s upgrading %s -> %s: uv tool install --force %s (fallback: %s)\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${current_version:-unknown}" "$pinned_version" \
+            "$pypi_source" "$git_source"
+    } >>"$upgrade_log" 2>/dev/null
+    UV_TOOL_DIR="$DATA_DIR" UV_TOOL_BIN_DIR="$DATA_DIR/bin" \
+        _run_with_deadline 60 sh -c \
+        'uv tool install --force "$1" --python 3.11+ || uv tool install --force "$2" --python 3.11+' \
+        sh "$pypi_source" "$git_source" \
+        </dev/null >>"$upgrade_log" 2>&1
+}
+
 # ---- main -----------------------------------------------------------------
 
 CLI="$(_resolve_cli)"
 
-if [ -z "$CLI" ]; then
+# Resolved again only after an install could have run (session-start): for any other event a
+# second probe would only double the time a missing or slow CLI costs (4.14.5).
+if [ -z "$CLI" ] && [ "$EVENT" = "session-start" ]; then
     _maybe_install
     CLI="$(_resolve_cli)"
 fi
@@ -395,6 +470,9 @@ fi
 case "$EVENT" in
     session-end) HOOK_DEADLINE=18 ;;
     session-start) HOOK_DEADLINE=80 ;;
+    # docs/DESIGN.md 4.14.5 (0.4): every tool call and prompt; hooks.json gives them 5s, of
+    # which the PATH probe may take 1s
+    post-tool|prompt-submit) HOOK_DEADLINE=3 ;;
     *) HOOK_DEADLINE=8 ;;
 esac
 
@@ -420,6 +498,15 @@ rm -f "$out_file" 2>/dev/null
 
 if [ "$cli_status" -eq 0 ] && [ -n "$cli_output" ] && _looks_like_json_object "$cli_output"; then
     printf '%s\n' "$cli_output"
+fi
+
+# docs/DESIGN.md 4.14.11: the upgrade runs detached, after this hook's output, with every fd
+# severed from the hook's pipes, so it never delays the session or holds its stdout open.
+if [ "$EVENT" = "session-start" ]; then
+    (
+        trap _release_locks EXIT
+        _maybe_upgrade_bundled
+    ) </dev/null >/dev/null 2>&1 &
 fi
 
 exit 0

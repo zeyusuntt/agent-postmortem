@@ -502,7 +502,7 @@ def test_field_cat_backgrounded_still_counts_public(tmp_path, monkeypatch, capsy
 
     cli.main(["run", str(run_dir), "--no-redact"])
     out = capsys.readouterr().out
-    assert "impl  1 Bash commands backgrounded." in out
+    assert "impl  1 Bash command backgrounded." in out
 
 
 # =============================================================================

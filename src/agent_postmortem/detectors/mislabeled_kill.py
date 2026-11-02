@@ -88,12 +88,15 @@ def _severity_and_title(run: Run, attempt: Attempt) -> tuple[str, str]:
         )
         return severity, title
 
-    # unattributed
+    # unattributed: the title says what the transcript logged, as the runtime one does (0.4)
     if silence is None:
-        return severity, f"{label} interrupted with silence unknown, cause unattributed"
+        return severity, (
+            f"{label} interrupted with silence unknown, cause unattributed, "
+            "logged as a user interrupt"
+        )
     base = (
         f"{label} interrupted after {int(round(silence))}s of silence{precursor}, "
-        "cause unattributed"
+        "cause unattributed, logged as a user interrupt"
     )
     if silence_class == "long":
         return severity, f"{base}, consistent with a runtime kill"

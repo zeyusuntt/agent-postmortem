@@ -638,8 +638,8 @@ exit=4
       "bash_timeout": 2,
       "claim_contradiction": 8,
       "codex_write_denied": 4,
+      "missing_artifact": 3,
       "mislabeled_kill": 11,
-      "missing_artifact": 2,
       "structured_output_failure": 1
     }
   }

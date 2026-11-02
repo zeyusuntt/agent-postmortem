@@ -13,7 +13,7 @@ exit=0
     {
       "rule_id": "R-ASSERT-ARTIFACT",
       "title": "Assert a required artifact exists before consuming it",
-      "count": 6
+      "count": 7
     },
     {
       "rule_id": "R-CODEX-CONTRACT",
