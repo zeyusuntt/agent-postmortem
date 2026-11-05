@@ -29,7 +29,6 @@ when a new session's file is written. Any error is silent: the hook never fails 
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sys
@@ -37,6 +36,14 @@ import time
 from pathlib import Path
 
 from . import state, workers  # standard library only; every write goes through state
+
+try:  # the same sha256 as hashlib's, without loading OpenSSL on every tool call (3.12 and later)
+    from _sha2 import sha256
+except ImportError:
+    try:
+        from _sha256 import sha256  # 3.11
+    except ImportError:
+        from hashlib import sha256  # a build with neither
 
 _EVENTS = {"post-tool": "PostToolUse", "prompt-submit": "UserPromptSubmit"}
 _LAUNCH_MARKS = (b'"backgroundTaskId"', b"--bg", b"--background", b"claude attach ")
@@ -49,7 +56,7 @@ _GATE_PRUNE_SECONDS = 7 * 86400  # the live store's own pruning age (4.14.8)
 
 
 def _gate_path(main_path: str) -> Path:
-    digest = hashlib.sha256(os.path.realpath(main_path).encode("utf-8", "surrogateescape"))
+    digest = sha256(os.path.realpath(main_path).encode("utf-8", "surrogateescape"))
     return state.state_dir() / "hook-gate" / f"{digest.hexdigest()[:32]}.json"
 
 
@@ -70,7 +77,7 @@ def _signature(subagents: str) -> str:
     except OSError:
         return ""
     rows.sort()
-    return hashlib.sha256("\n".join(rows).encode()).hexdigest()
+    return sha256("\n".join(rows).encode()).hexdigest()
 
 
 def _read_gate(path: Path) -> dict | None:

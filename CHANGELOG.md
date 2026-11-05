@@ -72,6 +72,10 @@ without it, `status` and `scan` print the same reasons when someone runs them.
 
 ### Changed
 
+- A tool call with nothing new starts about a third faster: 26 ms down to 15 ms for the CLI on Linux,
+  measured in a container. It no longer loads `dataclasses`, `tempfile`, `secrets` or `datetime`,
+  nor OpenSSL where Python has its builtin sha256, and that call uses none of them. Every tool call
+  of every session pays this.
 - `watch` flushes every line. A Monitor reads it through a pipe, where block buffering delivered
   nothing until the run ended. It also stops quietly when its reader closes the pipe.
 - `watch --session`, `status` and `scan` read a worker's `tempo` before its `state`, which is

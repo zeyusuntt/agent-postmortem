@@ -6,8 +6,12 @@ Synthetic data only: the fake session id, paths under tmp_path, invented worker 
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import importlib.util
 import json
 import os
+import subprocess
+import sys
 
 import pytest
 from live_helpers import FAKE_UUID, tool_result, tool_use
@@ -16,7 +20,7 @@ from test_plugin import _run_run_sh, _write_fake_cli
 from test_stop_watch import TASK, Life, _bg_session, _manager, _stop_check, _versioned
 from test_worker_notice import PERMISSION, Manager, _ago, _hook
 
-from agent_postmortem import cli, commands, hooks_cli, live, pre_bash, state, watcher
+from agent_postmortem import cli, commands, hook_gate, hooks_cli, live, pre_bash, state, watcher
 
 RUN = "perl -e 'alarm 1; exec @ARGV' true"
 
@@ -397,3 +401,71 @@ def test_a_cached_shell_whose_id_is_no_task_id_is_not_restored():
     good = {"tool": "t", "ts": 1.0, "end": None}
     facts = live.MainFacts.from_dict({"shells": {"/srv/private/plan.md": good, "b8ljx9he2": good}})
     assert list(facts.shells) == ["b8ljx9he2"]
+
+
+# --- the nothing-new call: what CI's first Linux run of the budget found -----------------------------
+
+
+# Loaded for a write or a job's time, which a call with nothing new does not reach. A timing budget
+# only says how a machine feels about these, so this holds on every machine.
+_NOT_ON_THE_NOTHING_NEW_PATH = {"dataclasses", "inspect", "ast", "dis", "tokenize", "tempfile",
+                                "secrets", "hmac", "random", "shutil", "bz2", "lzma", "datetime"}
+
+
+_BUILTIN_SHA256 = importlib.util.find_spec("_sha2") or importlib.util.find_spec("_sha256")
+
+
+def _modules_of_a_nothing_new_call(tmp_path, hook: str) -> set[str]:
+    main = tmp_path / f"{FAKE_UUID}.jsonl"
+    main.write_text("")
+    payload = json.dumps({"session_id": FAKE_UUID, "transcript_path": str(main), "cwd": "/tmp",
+                          "hook_event_name": "PostToolUse", "tool_name": "Bash",
+                          "tool_input": {"command": "ls"}, "tool_response": {"stdout": ""}})
+    code = ("import sys\n"
+            "from agent_postmortem.entry import main\n"
+            f"rc = main(['hook', {hook!r}])\n"
+            "print(rc, ' '.join(sorted(sys.modules)))\n")
+    env = {**os.environ, "PYTHONPATH": "src", "XDG_STATE_HOME": str(tmp_path / "state"),
+           "HOME": str(tmp_path)}
+    last = None
+    for _ in range(2):  # the first call of a session writes its gate file; the second has no news
+        last = subprocess.run([sys.executable, "-c", code], input=payload, text=True,
+                              capture_output=True, env=env, timeout=30, check=True)
+    code_word, _sep, modules = last.stdout.strip().partition(" ")
+    assert code_word == "0", last.stdout + last.stderr
+    return set(modules.split())
+
+
+@pytest.mark.parametrize("hook", ["post-tool", "prompt-submit"])
+def test_a_call_with_nothing_new_loads_no_module_it_does_not_use(tmp_path, hook):
+    loaded = _modules_of_a_nothing_new_call(tmp_path, hook)
+    assert "agent_postmortem.hook_gate" in loaded  # it did take the fast path
+    assert not loaded & _NOT_ON_THE_NOTHING_NEW_PATH, sorted(loaded & _NOT_ON_THE_NOTHING_NEW_PATH)
+    if _BUILTIN_SHA256:
+        assert "_hashlib" not in loaded  # OpenSSL was the largest single load left
+
+
+def test_the_gate_files_name_is_what_hashlib_gives(tmp_path, monkeypatch):
+    """A gate file of the previous build keeps its name, so an upgrade opens no gate by itself."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    main = tmp_path / f"{FAKE_UUID}.jsonl"
+    expected = hashlib.sha256(os.path.realpath(main).encode("utf-8", "surrogateescape")).hexdigest()
+    assert hook_gate._gate_path(str(main)).name == f"{expected[:32]}.json"
+
+
+def test_a_write_still_works_with_those_modules_loaded_late(tmp_path, monkeypatch):
+    """They moved into the calls that need them: each of those still does its job."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    with state.transaction() as data:
+        data["last_seen"] = {"r": 1}
+    assert state.state_path().is_file()
+    assert state.now_iso().endswith("Z")
+    path = tmp_path / "state" / "agent-postmortem" / "cache.json"
+    with state.cache_transaction(path) as data:
+        data["x"] = 1
+    assert state.read_cache(path)["x"] == 1
+    with state.lock_state_dir() as locked:
+        assert locked.dir_fd >= 0 and locked.path.is_dir()
+        with pytest.raises(AttributeError):
+            locked.dir_fd = 1  # frozen, as the dataclass was
+    assert len(state.create_secret(tmp_path / "state" / "agent-postmortem" / "s")) > 0

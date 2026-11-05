@@ -5337,6 +5337,17 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   session only while it is still working; a session idle on such a command is STALLED (4.14.4),
   for scan (4.7) and for item 1's deadline (below) (`tests/test_stall_hook.py`).
 
+  Why the ratio holds on Linux only because the call is small (0.5.0, CI's first Linux run of this
+  check): nearly all of a nothing-new call above a bare start is imports, which scale with the CPU,
+  while a bare start through run.sh is mostly process starts, which scale with the OS. The same build
+  read 1.41 on macOS (bare 47 ms) and 2.65 on Linux (bare 13 ms in a container, 27 ms on a CI runner),
+  where the check failed. The budget stayed at 2.0. The call got smaller: the per-call path loads no
+  module it does not use (`state.py` imports `tempfile`, `secrets` and `datetime` where they are used
+  and has no dataclass; the gate takes sha256 from the interpreter's builtin module, the same digest,
+  so OpenSSL is not loaded, with `hashlib` as the fallback on a build that has no such module), which
+  gives 1.5 to 1.8 on Linux on 3.11 to 3.13 and 1.2 on macOS. A timing check only says how one machine feels about these, so
+  `tests/test_release_050_review.py` also pins the module list, which holds on every machine.
+
 `hook agent-launched`:
 - `hook agent-launched` keeps its message within 400 characters: when a CLAIM and the first-
   launch hint together would not fit, the CLAIM goes now and the hint waits for the next

@@ -75,16 +75,17 @@ import fcntl
 import json
 import os
 import re
-import secrets
 import stat
-import tempfile
 import time
+from collections import namedtuple
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+
+# secrets, tempfile and datetime are imported where they are used: the per-call hook reads one small
+# file through this module on every tool call, and those three (with the dataclasses this module
+# no longer needs) were half of what a call with nothing new cost above a bare start.
 
 # open()/os.open() with O_NOFOLLOW refuses to follow a symlink in the final
 # path component; not every platform has the flag (Windows does not), so
@@ -167,12 +168,16 @@ class PostCommitVerificationError(StateError):
 
 def now_iso() -> str:
     """The current time as an ISO 8601 UTC timestamp, second precision."""
+    from datetime import datetime, timezone
+
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _now_iso_micro() -> str:
     """UTC timestamp with microseconds, safe to use as (most of) a
     filename: no colons, no plus sign."""
+    from datetime import datetime, timezone
+
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
 
 
@@ -484,6 +489,8 @@ def _write_state(state_file: Path, data: dict) -> None:
     so the rename itself is durable. mkstemp already creates the temp file
     mode 0600; chmod after is belt and braces."""
     directory = state_file.parent
+    import tempfile
+
     fd, tmp_name = tempfile.mkstemp(dir=str(directory), prefix=".state-", suffix=".json.tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -692,6 +699,8 @@ def write_private_bytes(path: Path, data: bytes) -> None:
         raise StateError(f"cache directory unavailable: {exc}") from exc
     if dir_fd is None:
         raise StateError(f"cache directory is not private: {path.parent}")
+    import secrets
+
     temp = f".cache-{secrets.token_hex(8)}.tmp"
     try:
         fd = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | _NOFOLLOW, 0o600, dir_fd=dir_fd)
@@ -777,6 +786,8 @@ def read_cache(path: Path) -> dict:
 
 def _write_cache(cache_file: Path, data: dict) -> None:
     directory = cache_file.parent
+    import tempfile
+
     fd, tmp_name = tempfile.mkstemp(dir=str(directory), prefix=".cache-", suffix=".json.tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -1026,8 +1037,7 @@ def _verify_lock_fd(lock_fd: int) -> None:
         raise StateError("state lock file is not owned by the current user")
 
 
-@dataclass(frozen=True)
-class LockedStateDir:
+class LockedStateDir(namedtuple("LockedStateDir", ("path", "dir_fd"))):
     """What lock_state_dir() yields (N3a fix round 3, new Finding 1): the
     state directory's own path, for building the caller-facing Path values
     secret_path()/registry_path() already return, and the verified
@@ -1036,8 +1046,7 @@ class LockedStateDir:
     exactly that scope -- lock_state_dir() closes it on exit -- and must
     never be used, or stored, past the `with` block that produced it."""
 
-    path: Path
-    dir_fd: int
+    __slots__ = ()
 
 
 @contextmanager
@@ -1285,6 +1294,8 @@ def create_secret(path: Path, *, dir_fd: int | None = None) -> bytes:
 
     dir_fd: see _open_probe_fd/_dir_relative.
     """
+    import secrets
+
     data = secrets.token_bytes(_SECRET_SIZE)
     fd = os.open(
         _dir_relative(path, dir_fd),

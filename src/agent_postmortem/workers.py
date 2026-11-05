@@ -14,11 +14,9 @@ a command that names `claude` and `--bg`.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
-from datetime import datetime
 from pathlib import Path
 
 WORKERS_KEPT = 128
@@ -191,6 +189,8 @@ def read_job(path: str) -> dict | None:
 def _instant(value: object) -> float | None:
     if not isinstance(value, str):
         return None
+    from datetime import datetime  # not on the per-call path with nothing new
+
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
     except ValueError:
@@ -286,7 +286,12 @@ def identity(data: dict, cls: str | None = None) -> str:
     cls = classify(data)[0] if cls is None else cls
     word = effective_state(data)
     needs = _text(data.get("needs")) if word == "blocked" else ""  # else it is a stale leftover
-    digest = hashlib.sha256(needs.encode("utf-8", "replace")).hexdigest()[:8] if needs else ""
+    if needs:
+        import hashlib  # only for a job file that changed
+
+        digest = hashlib.sha256(needs.encode("utf-8", "replace")).hexdigest()[:8]
+    else:
+        digest = ""
     return f"{_text(word)}/{cls}/{digest}"
 
 
