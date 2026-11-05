@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import disclosure, ledger, markers, reader, severity, state
+from . import commands, disclosure, ledger, markers, reader, severity, state, workers
 from .detectors.base import PARENT_SENTINEL_WINDOW_SECONDS, PARENT_STOP_WINDOW_SECONDS
 from .detectors.missing_artifact import artifact_paths
 from .redact import Redactor
@@ -416,16 +416,22 @@ _ENVELOPE_RE = {
 
 # docs/DESIGN.md 4.14.8: the shape of the main-transcript facts kept in the live store; a stored
 # entry of another version is read again from the transcript (2: workflow task ids, 0.4)
-MAIN_FACTS_VERSION = 5  # 3: a workflow's latest launch with its tool-use id and status; 4: the
-# session's backgrounded shell commands and their native ends (4.14.4); 5: early ends kept per
-# tool-use id and a timeout-moved command aged from its start (4 was only on unreleased builds)
+MAIN_FACTS_VERSION = 10  # 10: when this tool last ran here; 9: the workers it launched, its
+# Monitors' task ids, quiet commands; 3: a workflow's latest launch with its tool-use id and status;
+# 4: the session's backgrounded shell commands and their native ends (4.14.4); 5: early ends kept
+# per tool-use id and a timeout-moved command aged from its start (4 never released); 6: each
+# command's output files, the session's last turn end and activity, its armed wakes; 7, 8: the same
+# with crons by id and the output rules of review rounds 1 to 4 (6, 7 never released)
 # the same for a subagent transcript's facts (2: its Agent/Task launches and their synchronous
 # results, 0.4; 3: a present agent id that is not one is no result); a stored entry of another
 # version, or none, is read again from byte 0
 SUB_FACTS_VERSION = 3
 # the rule a session's first-look baseline was taken under (2: nested returns count, 0.4); a
 # baseline of another rule is extended once, over a complete read (4.14.3)
-BASELINE_RULE = 2
+BASELINE_RULE = 3
+# What a native task id looks like. It is printed as is in hook lines and local rows, on the ground
+# that it is no path or name, so anything else is not taken for one (0.5.0 review)
+TASK_ID_RE = re.compile(r"[a-z0-9]{1,32}")
 _META_LIMIT = 65536
 _WORKFLOW_END_WORDS = {
     "completed": "completed", "failed": "failed", "killed": "killed", "stopped": "stopped",
@@ -457,6 +463,32 @@ class MainFacts:
     early_ends: dict[str, dict] = field(default_factory=dict)
     trailing_cost_states: int = 0
     entrypoint: str | None = None
+    # field report 2026-11-03 (4.14.4): where each Bash call writes, kept from its tool_use
+    # until its result names a background task ({outputs, unknown, ts} by tool-use id, the
+    # newest _PENDING_BASH_KEPT); when the session's last turn ended (a system turn_duration
+    # entry) and when it last did anything; until when a wake it armed can still come
+    # (ScheduleWakeup, Monitor), and how many crons it created and did not delete
+    pending_bash: dict[str, dict] = field(default_factory=dict)
+    turn_end: float | None = None
+    activity: float | None = None
+    wake_until: float | None = None
+    # wake calls waiting for their result ({name, ts, input} by tool-use id), and the crons a
+    # successful CronCreate armed and no successful CronDelete removed ({recurring, next} by id)
+    pending_wakes: dict[str, dict] = field(default_factory=dict)
+    crons: dict[str, dict] = field(default_factory=dict)
+    # field report 2026-11-04: the background sessions this session launched ({ts, end, name} by
+    # short id: the launching call's own time window, which the job's createdAt must fall in),
+    # and the task ids of its Monitors, which Claude Code can list as shell tasks
+    workers: dict[str, dict] = field(default_factory=dict)
+    monitors: dict[str, float] = field(default_factory=dict)
+    # when this session last ran `status`, `scan`, `run` or `watch` of this tool (field report
+    # 2026-11-04: the reminder at Stop)
+    status_ran: float | None = None
+    pending_looks: dict[str, dict] = field(default_factory=dict)  # until its result, as a rejected
+    # call ran nothing (review round 2)
+    # `claude --bg` calls whose result named no id: under `run_in_background` the id goes to the
+    # task's output file, so that worker cannot be told from another session's
+    unlinked_launches: int = 0
 
     def update(self, entries: list[dict]) -> None:
         for entry in entries:
@@ -470,6 +502,11 @@ class MainFacts:
             if isinstance(entrypoint, str):
                 self.entrypoint = entrypoint
             ts = _ts(entry.get("timestamp"))
+            if ts is not None:
+                if kind == "system" and entry.get("subtype") == "turn_duration":
+                    self.turn_end = ts if self.turn_end is None else max(self.turn_end, ts)
+                elif kind in ("user", "assistant", "attachment", "queue-operation"):
+                    self.activity = ts if self.activity is None else max(self.activity, ts)
             if kind in ("queue-operation", "user", "attachment"):
                 self._notice(entry, ts)
             if kind == "assistant":
@@ -478,6 +515,11 @@ class MainFacts:
                         continue
                     name = block.get("name")
                     tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
+                    if name in ("Bash", "Monitor") and ts is not None \
+                            and isinstance(block.get("id"), str) \
+                            and isinstance(tool_input.get("command"), str) \
+                            and commands.runs_this_tool(tool_input["command"]):
+                        self._keep(self.pending_looks, block["id"], {"ts": ts})
                     if name in ("Agent", "Task") and isinstance(block.get("id"), str):
                         self.launches[block["id"]] = {
                             "type": tool_input.get("subagent_type"),
@@ -489,6 +531,13 @@ class MainFacts:
                         self.task_stops.append((ts, ids))
                     elif name == "Workflow" and isinstance(block.get("id"), str):
                         self.launches.setdefault("wf:" + block["id"], {"ts": ts})
+                    elif name == "Bash" and isinstance(block.get("id"), str):
+                        self._bash_call(block["id"], tool_input, entry.get("cwd"), ts)
+                    elif name in _WAKE_TOOLS and isinstance(block.get("id"), str):
+                        self._keep(self.pending_wakes, block["id"],
+                                   {"name": name, "ts": ts, "input": {
+                                       k: tool_input.get(k) for k in _WAKE_INPUT_KEYS
+                                       if isinstance(tool_input.get(k), (str, int, float))}})
             if kind == "user":
                 text = _user_text(entry)
                 if text.startswith(markers.KILL_SENTINEL_PREFIX) and ts is not None:
@@ -503,6 +552,13 @@ class MainFacts:
                         continue
                     if tool_id in self.launches:
                         self._agent_result(tool_id, block, result, ts)
+                    if tool_id in self.pending_wakes:
+                        self._wake(self.pending_wakes.pop(tool_id), block, result, ts, tool_id)
+                    self._worker_launch(tool_id, block, result, ts)
+                    look = self.pending_looks.pop(tool_id, None)
+                    if isinstance(look, dict) and block.get("is_error") is not True \
+                            and isinstance(look.get("ts"), (int, float)):
+                        self.status_ran = max(look["ts"], self.status_ran or look["ts"])
                     if not isinstance(result, dict):
                         continue
                     self._shell_result(tool_id, block, result, ts)
@@ -517,6 +573,7 @@ class MainFacts:
                             "task": task_id if isinstance(task_id, str) and task_id else None,
                             "tool": tool_id,
                             "status": status if isinstance(status, str) else None,
+                            "ts": ts,
                         }
 
     def workflow_end(self, run_id: str) -> str | None:
@@ -556,13 +613,27 @@ class MainFacts:
         task is a `taskId`), or a TaskStop result naming one: stopped, unless its own notice
         already said how it ended (a later notice still replaces this)."""
         task_id = result.get("backgroundTaskId")
-        if isinstance(task_id, str) and task_id and task_id not in self.shells:
+        if isinstance(task_id, str) and TASK_ID_RE.fullmatch(task_id) \
+                and task_id not in self.shells:
             started = ts
             waited = result.get("timedOutAfterMs")  # moved to the background by the timeout
             if ts is not None and isinstance(waited, (int, float)) \
                     and not isinstance(waited, bool) and waited > 0:
                 started = ts - waited / 1000
             self.shells[task_id] = {"tool": tool_id, "ts": started, "end": None}
+            pending = self.pending_bash.pop(tool_id, None)
+            outputs = list(pending.get("outputs") or []) if isinstance(pending, dict) else []
+            task_output = _TASK_OUTPUT_RE.search(_block_text(block))
+            if task_output:
+                outputs.insert(0, task_output.group(1))
+            self.shells[task_id]["outputs"] = outputs
+            if isinstance(pending, dict) and pending.get("quiet"):
+                self.shells[task_id]["quiet"] = True
+            # what is not redirected goes to the task output file: with none named (an older
+            # Claude Code), that part of the output cannot be watched (review round 1); with the
+            # call itself no longer kept, its redirects are unknown (review round 3)
+            if not task_output or not isinstance(pending, dict) or pending.get("unknown"):
+                self.shells[task_id]["unknown_outputs"] = True
             early = self.early_ends.pop(task_id, None)
             ends = early.get("ends") if isinstance(early, dict) else None
             if isinstance(ends, dict):
@@ -588,6 +659,13 @@ class MainFacts:
         for task_id in task_ids:
             shell = self.shells.get(task_id)
             if not isinstance(shell, dict):
+                monitor = self.crons.get(f"monitor:{task_id}")
+                if status and isinstance(monitor, dict) and (
+                        not tool or monitor.get("tool") in (None, "", tool)):
+                    # a persistent Monitor's own end, by its launch's own tool-use id when the
+                    # notice names one: it arms nothing more (review rounds 2 and 3)
+                    del self.crons[f"monitor:{task_id}"]
+                    continue
                 if not disclosure.is_canonical_id("agent", task_id):
                     self._early_end(task_id, tool, status)
                 continue
@@ -621,7 +699,13 @@ class MainFacts:
                 "kill_ts": self.kill_ts, "workflows": self.workflows,
                 "workflow_tasks": self.workflow_tasks, "shells": self.shells,
                 "early_ends": self.early_ends,
-                "trailing_cost_states": self.trailing_cost_states, "entrypoint": self.entrypoint}
+                "trailing_cost_states": self.trailing_cost_states, "entrypoint": self.entrypoint,
+                "pending_bash": self.pending_bash, "turn_end": self.turn_end,
+                "activity": self.activity, "wake_until": self.wake_until, "crons": self.crons,
+                "pending_wakes": self.pending_wakes, "workers": self.workers,
+                "monitors": self.monitors, "status_ran": self.status_ran,
+                "pending_looks": self.pending_looks,
+                "unlinked_launches": self.unlinked_launches}
 
     @classmethod
     def from_dict(cls, data: object) -> "MainFacts":
@@ -629,10 +713,12 @@ class MainFacts:
         if not isinstance(data, dict):
             return facts
         for name in ("launches", "agents", "notices", "workflows", "workflow_tasks", "shells",
-                     "early_ends"):
+                     "early_ends", "pending_bash", "pending_wakes", "crons", "workers",
+                     "monitors", "pending_looks"):
             value = data.get(name)
             if isinstance(value, dict):
                 setattr(facts, name, {k: v for k, v in value.items() if isinstance(k, str)})
+        facts.shells = {k: v for k, v in facts.shells.items() if TASK_ID_RE.fullmatch(k)}
         stops = data.get("task_stops")
         if isinstance(stops, list):
             facts.task_stops = [
@@ -644,11 +730,158 @@ class MainFacts:
         kills = data.get("kill_ts")
         if isinstance(kills, list):
             facts.kill_ts = [t for t in kills if isinstance(t, (int, float))]
+        unlinked = data.get("unlinked_launches")
+        facts.unlinked_launches = unlinked if isinstance(unlinked, int) else 0
         trailing = data.get("trailing_cost_states")
         facts.trailing_cost_states = trailing if isinstance(trailing, int) else 0
         entrypoint = data.get("entrypoint")
         facts.entrypoint = entrypoint if isinstance(entrypoint, str) else None
+        for name in ("turn_end", "activity", "wake_until", "status_ran"):
+            value = data.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                setattr(facts, name, float(value))
         return facts
+
+    def _bash_call(self, tool_id: str, tool_input: dict, cwd: object, ts: float | None) -> None:
+        """Where a Bash call writes (field report 2026-11-03), kept until its result: a
+        background task's result takes them, every other call's entry ages out."""
+        command = tool_input.get("command")
+        if not isinstance(command, str):
+            return
+        cwd = cwd if isinstance(cwd, str) else None
+        outputs, unknown = command_outputs(command, cwd)
+        call = {"outputs": outputs, "unknown": unknown, "ts": ts}
+        if commands.quiet_by_design(command, cwd):
+            call["quiet"] = True  # field report 2026-11-04: silence is its normal state
+        launches = workers.count_launches(command)
+        if launches:
+            call["launch"] = launches
+        out_before = sum(1 for held in self.pending_bash.values()
+                         if isinstance(held, dict) and held.get("launch"))
+        self._keep(self.pending_bash, tool_id, call)
+        out_after = sum(1 for held in self.pending_bash.values()
+                        if isinstance(held, dict) and held.get("launch"))
+        if out_after < out_before + (1 if launches else 0):
+            self.unlinked_launches += 1  # its result can no longer be tied to it (review round 2)
+
+    def _worker_launch(self, tool_id: str, block: dict, result: object, ts: float | None) -> None:
+        """docs/DESIGN.md 4.14.5: a `claude --bg` call's result names the worker it started. Its
+        job's createdAt is checked against this window when the job is read, so a printed old
+        id links nothing."""
+        call = self.pending_bash.get(tool_id)
+        if not isinstance(call, dict) or not call.get("launch"):
+            return
+        text = _block_text(block)  # the call stays: a background launch's redirects are read next
+        if isinstance(result, dict) and isinstance(result.get("stdout"), str):
+            text = f"{result['stdout']}\n{text}"
+        launched = workers.launched_ids(text)
+        if len(launched) < call.get("launch"):  # a redirect or a `tail` can hide one of several
+            self.unlinked_launches += 1
+        call.pop("launch", None)  # answered: evicting it later is no unlinked launch (0.5.0 review)
+        for short, name in launched.items():
+            self.workers[short] = {"ts": call.get("ts"), "end": ts, "name": name}
+        while len(self.workers) > workers.WORKERS_KEPT:
+            def age(short: str) -> float:
+                when = self.workers[short].get("ts") if isinstance(self.workers[short], dict) \
+                    else None
+                return when if isinstance(when, (int, float)) else float("-inf")
+            del self.workers[min(self.workers, key=age)]
+
+    @staticmethod
+    def _keep(table: dict, key: str, value: dict) -> None:
+        """Keep a call until its result, the newest _PENDING_KEPT by their own time (the live
+        store is written with sorted keys, so dict order does not survive a restore)."""
+        table[key] = value
+        if len(table) > _PENDING_KEPT:
+            def age(name: str) -> float:
+                item = table[name].get("ts") if isinstance(table[name], dict) else None
+                return item if isinstance(item, (int, float)) else float("-inf")
+            for name in sorted(table, key=age)[:-_PENDING_KEPT]:
+                del table[name]
+
+    def _wake(self, call: dict, block: dict, result: object, ts: float | None,
+              tool_id: str = "") -> None:
+        """A wake the session armed for itself (field report 2026-11-03), taken from the call's
+        own successful result only (review round 1: a failed CronCreate armed nothing, a failed
+        CronDelete removed nothing): a ScheduleWakeup fires at most an hour out, a Monitor tells
+        its end or its expiry, a cron fires until a CronDelete names it (a one-shot one until
+        its `nextFireAt`)."""
+        if block.get("is_error") is True or not isinstance(call, dict):
+            return
+        result = result if isinstance(result, dict) else {}
+        name = call.get("name")
+        tool_input = call.get("input") if isinstance(call.get("input"), dict) else {}
+        started = call.get("ts") if isinstance(call.get("ts"), (int, float)) else ts
+        if name == "CronCreate":
+            cron_id = result.get("id")
+            if isinstance(cron_id, str) and cron_id:
+                fire = result.get("nextFireAt")
+                fire = float(fire) / 1000 if isinstance(fire, (int, float)) \
+                    and not isinstance(fire, bool) else None
+                recurring = result.get("recurring", tool_input.get("recurring", True))
+                self.crons[cron_id] = {"recurring": recurring is not False, "next": fire}
+                while len(self.crons) > _PENDING_KEPT:
+                    del self.crons[min(self.crons)]
+            return
+        if name == "CronDelete":
+            cron_id = result.get("id") or tool_input.get("id")
+            if isinstance(cron_id, str):
+                self.crons.pop(cron_id, None)
+            return
+        if not isinstance(started, (int, float)):
+            return
+        if name == "ScheduleWakeup":
+            delay = tool_input.get("delaySeconds")
+            seconds = min(max(float(delay), 60.0), 3600.0) if isinstance(delay, (int, float)) \
+                and not isinstance(delay, bool) else 3600.0
+        else:  # Monitor
+            monitor_task = result.get("taskId")
+            if isinstance(monitor_task, str) and monitor_task:
+                self.monitors[monitor_task] = started
+                while len(self.monitors) > _PENDING_KEPT:
+                    del self.monitors[min(self.monitors, key=lambda t: self.monitors[t])]
+            if result.get("persistent") is True:
+                task = result.get("taskId")
+                # its own end, written before this result, retires it at once (review round 3)
+                early = self.early_ends.get(task) if isinstance(task, str) else None
+                ends = early.get("ends") if isinstance(early, dict) else None
+                if isinstance(ends, dict) and (ends.get(tool_id) or ends.get("")):
+                    self.early_ends.pop(task, None)
+                    return
+                self.crons[f"monitor:{task}"] = {"recurring": True, "next": None, "tool": tool_id}
+                return
+            limit = result.get("timeoutMs", tool_input.get("timeout_ms"))
+            seconds = min(float(limit), 3_600_000.0) / 1000 if isinstance(limit, (int, float)) \
+                and not isinstance(limit, bool) and limit > 0 else 300.0
+        until = started + seconds
+        self.wake_until = until if self.wake_until is None else max(self.wake_until, until)
+
+    def last_ending(self) -> float | None:
+        """When the last subagent or workflow of this session was last known to end."""
+        times = [notice.get("ts") for notice in self.notices.values() if isinstance(notice, dict)]
+        times += [facts.get("foreground_done") for facts in self.agents.values()
+                  if isinstance(facts, dict)]
+        for run_id in self.workflows:
+            if self.workflow_end(run_id) is not None:
+                binding = self.workflow_tasks.get(run_id)  # the latest launch: a resume is new
+                times.append(binding.get("ts") if isinstance(binding, dict) else None)
+        times = [when for when in times if isinstance(when, (int, float))]
+        return max(times) if times else None
+
+    def wake_pending(self, now: float) -> bool:
+        """Whether something the session armed can still wake it."""
+        for cron in self.crons.values():
+            if not isinstance(cron, dict) or cron.get("recurring") is not False:
+                return True
+            fire = cron.get("next")
+            if not isinstance(fire, (int, float)) or fire > now:
+                return True
+        return self.wake_until is not None and self.wake_until > now
+
+    def running_shells(self) -> dict[str, dict]:
+        """The background commands with no end known, by task id."""
+        return {task: shell for task, shell in self.shells.items()
+                if isinstance(shell, dict) and not shell.get("end")}
 
     def _agent_result(self, tool_id: str, block: dict, result: object, ts: float | None) -> None:
         """An Agent/Task launch's result, by returns.py's T2 rule: the agent id from the entry's
@@ -706,7 +939,11 @@ class MainFacts:
         command = _command_envelope(text)
         if command is not None and self._command_end(*command):
             return  # a background command's end, in any of its envelope shapes
-        if reader._parse_envelope(text) is None:
+        if reader._parse_envelope(text) is None and not (
+                command is not None and not command[1] and len(command[0]) == 1
+                and command[0][0] in self.agents):
+            # field report 2026-11-04: a subagent resumed by a message ends with a notice naming
+            # no tool-use id; only for one this session launched, since nothing else ties it here
             return
         values = {}
         for name, pattern in _ENVELOPE_RE.items():
@@ -725,15 +962,131 @@ class MainFacts:
             return
         kind, detail = _notice_kind(values["summary"])
         previous = self.notices.get(task_id)
+        # the user entry is the queue entry's copy, delivered when the session got to it: the end
+        # is when it was queued, or a resumed subagent would read as ended (review round 3)
+        queued = entry.get("type") == "queue-operation"
+        if not queued and isinstance(previous, dict) and previous.get("queued") == text:
+            previous.pop("queued")
+            return
         if previous is not None and previous.get("status") == values["status"] \
                 and previous.get("kind") == kind and (ts is None or previous.get("ts") == ts) \
                 and previous.get("tool") == (values["tool"] or None):
             return  # the queue-operation and the user entry of one notice
         self.notices[task_id] = {"status": values["status"], "kind": kind, "detail": detail,
-                                 "ts": ts, "tool": values["tool"] or None}
+                                 "ts": ts, "tool": values["tool"] or None,
+                                 **({"queued": text} if queued else {})}
 
 
 _EARLY_ENDS_KEPT = 100
+_PENDING_KEPT = 64
+_WAKE_TOOLS = frozenset({"ScheduleWakeup", "Monitor", "CronCreate", "CronDelete"})
+_WAKE_INPUT_KEYS = ("delaySeconds", "timeout_ms", "recurring", "id")
+# the launch result's own sentence for a background command: "Output is being written to: <path>"
+_TASK_OUTPUT_RE = re.compile(r"Output is being written to: (/\S+?)(?:\.(?=\s|$)|(?=\s|$))")
+_OUTPUT_OPS = frozenset({">", ">>", ">|", "&>", "&>>"})
+_DIRECTORY_CHANGES = frozenset({"cd", "pushd", "popd"})
+_DESCRIPTOR_RE = re.compile(r"[0-9]*-?")
+
+
+def _opens_group(raw: str) -> bool:
+    """Whether a word as written holds an unquoted `(` that opens a subshell or group, not a
+    substitution (`$(`, `<(`, `>(`): `(cd x && ...)` and an unspaced `time(cd x && ...)` both do
+    (review rounds 3 and 4)."""
+    single = double = False
+    previous = ""
+    i = 0
+    while i < len(raw):
+        ch = raw[i]
+        if single:
+            single = ch != "'"
+        elif ch == "\\":
+            i += 2
+            previous = ""
+            continue
+        elif ch == "'" and not double:
+            single = True
+        elif ch == '"':
+            double = not double
+        elif ch == "(" and not double and previous not in ("$", "<", ">"):
+            return True
+        previous = ch
+        i += 1
+    return False
+_SHELL_FLOW = frozenset({"{", "}", "if", "then", "elif", "else", "fi", "for", "while", "until",
+                         "do", "done", "case", "esac", "select", "function"})
+_UNPLACEABLE_RE = re.compile(r"[$`*?\[]")
+
+
+def _block_text(block: dict) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(item.get("text", "") for item in content
+                         if isinstance(item, dict) and isinstance(item.get("text"), str))
+    return ""
+
+
+def _resolve_path(target: str, base: str | None) -> str | None:
+    if target.startswith("~"):
+        expanded = os.path.expanduser(target)
+        return os.path.normpath(expanded) if expanded.startswith("/") else None
+    if target.startswith("/"):
+        return os.path.normpath(target)
+    return os.path.normpath(os.path.join(base, target)) if base else None
+
+
+def command_outputs(command: str, cwd: str | None) -> tuple[list[str], bool]:
+    """docs/DESIGN.md 4.14.4 (field report 2026-11-03): the files a shell command's own
+    redirects write (`>`, `>>`, `>|`, `&>`, `&>>` of stdout or stderr), each resolved against
+    the call's cwd as moved by a `cd DIR` segment before it, and whether some output cannot be
+    watched: thrown away (`/dev/null`), or named by an expansion, a glob or a directory change
+    that cannot be followed. Read for their sizes and times only, never their contents beyond
+    a last line (stalls.py)."""
+    base = cwd if isinstance(cwd, str) and cwd.startswith("/") else None
+    outputs: list[str] = []
+    unknown = False
+    lexed = commands.lex(command)
+    if any(seg.words and (seg.words[0].text in _SHELL_FLOW
+                          or any(_opens_group(word.raw) for word in seg.words))
+           for seg in lexed.segments):
+        # a subshell, a group or control flow (`if ...; then cd x; fi`, a loop) moves
+        # directories or runs segments this reading cannot follow (review rounds 1 and 2)
+        return [], True
+    for index, seg in enumerate(lexed.segments):
+        words = [word.text for word in seg.words]
+        if words[:1] == ["cd"] and index == 0 and seg.sep_after in ("&&", ";", "\n"):
+            # only a leading `cd DIR &&` or `cd DIR;` is followed (review round 1)
+            if len(words) == 1:
+                base = os.path.expanduser("~")
+            elif len(words) == 2 and words[1] != "-" and not _UNPLACEABLE_RE.search(words[1]):
+                base = _resolve_path(words[1], base)
+            else:
+                base = None
+        elif any(word in _DIRECTORY_CHANGES for word in words):
+            # any other directory change, also wrapped (`builtin cd x`, `command cd x`), after
+            # another segment, or in a pipe: relative outputs from here on cannot be placed
+            base = None
+        for redirect in seg.redirects:
+            target = redirect.target
+            # `>& file` is bash's other spelling of `&> file`; `2>&1` and `>&-` only duplicate
+            # or close a descriptor (review round 3)
+            to_file = redirect.op == ">&" and redirect.fd is None and isinstance(target, str) \
+                and not _DESCRIPTOR_RE.fullmatch(target)  # `2>&1`, `>&-`, `>&1-` (round 4)
+            if not to_file and (redirect.op not in _OUTPUT_OPS
+                                or redirect.fd not in (None, "1", "2")):
+                continue
+            if target in ("/dev/stdout", "/dev/stderr"):
+                continue  # into the task's own output file
+            if not target or _UNPLACEABLE_RE.search(target) or target.startswith("/dev/"):
+                unknown = True
+                continue
+            path = _resolve_path(target, base)
+            if path is None:
+                unknown = True
+            elif path not in outputs:
+                outputs.append(path)
+    return outputs, unknown
 
 
 def _command_envelope(text: str) -> tuple[list[str], str, str] | None:
@@ -755,9 +1108,10 @@ def _command_envelope(text: str) -> tuple[list[str], str, str] | None:
 
 
 _ENTRY_TYPE_MARKS = tuple(
-    f'"type"{sep}"{kind}"'.encode() for kind in ("user", "assistant", "system")
+    f'"type"{sep}"{kind}"'.encode()
+    for kind in ("user", "assistant", "system", "attachment", "queue-operation")
     for sep in (":", ": ")
-)
+)  # attachments and queue entries mark a session's activity (review round 1)
 
 
 def _main_want(raw: bytes) -> bool:
@@ -956,7 +1310,7 @@ def _read_job_state(job_dir: Path) -> tuple[str | None, str | None]:
         return None, None
     if not isinstance(data, dict):
         return None, None
-    state_word = data.get("state")
+    state_word = workers.effective_state(data)  # field report 2026-11-04: `tempo` is the live one
     session_id = data.get("sessionId")
     return (state_word if isinstance(state_word, str) and state_word.isascii()
             and state_word.replace("_", "").isalpha() else None,
@@ -1608,27 +1962,50 @@ def delivered_keys(main_path: Path, store_path: Path | None = None) -> set[str]:
 
 
 def claim_deliveries(main_path: Path, keys: list[str], store_path: Path | None = None, *,
-                     then=None) -> tuple[list[str], object]:
+                     then=None, unclaim=None, strict: bool = False, before=None,
+                     after=None) -> tuple[list[str], object]:
     """The delivery gate the live channels share (4.14.6 rule 3): (the keys, in order, this
     caller is the first to claim for this session, `then(those keys)` or None). Every claim is
     recorded in one write under the store lock, and `then` runs inside it before that write, so
-    a caller killed or failing anywhere before the write has claimed none of them. A store that
-    cannot be used lets the caller deliver every key (a repeat beats a lost line)."""
+    a caller killed or failing anywhere before the write has claimed none of them. `unclaim()`,
+    read after `then` inside the same lock, names won keys the caller did not show after all
+    (review round 2 of item 2): they are not recorded. A store that cannot be used lets the
+    caller deliver every key (a repeat beats a lost line), except under `strict`, for a wake
+    (4.14.5), where a line that cannot be recorded could repeat for good: no claim, no `then`.
+    `before(record)` and `after(record)` run inside the lock, around `then`, for what a caller
+    keeps in the session's record itself; with no usable store they see an empty record."""
     try:
         with state.cache_transaction(store_path or state.live_store_path()) as data:
             record = _store_session(data, session_key(main_path))
+            if before is not None:
+                before(record)
             reported = key_set(record.get("reported"))
             claimed = []
             for key in keys:
                 if key not in reported:
                     reported.add(key)
                     claimed.append(key)
+            result = then(claimed) if then is not None else None
+            back = [key for key in (unclaim() if unclaim is not None else ()) if key in claimed]
+            if back:
+                reported.difference_update(back)
+                claimed = [key for key in claimed if key not in back]
             if claimed:
                 record["reported"] = sorted(reported)
                 record["seen"] = time.time()
-            return claimed, (then(claimed) if then is not None else None)
+            if after is not None:
+                after(record)
+            return claimed, result
     except state.StateError:
-        return list(keys), (then(list(keys)) if then is not None else None)
+        if strict:
+            return [], None
+        scratch: dict = {}
+        if before is not None:
+            before(scratch)
+        result = then(list(keys)) if then is not None else None
+        if after is not None:
+            after(scratch)
+        return list(keys), result
 
 
 def claim_delivery(main_path: Path, key: str, store_path: Path | None = None) -> bool:

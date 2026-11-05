@@ -53,6 +53,8 @@ exit codes (the first condition that applies wins):
 WATCH = """\
 exit codes (the first condition that applies wins):
   exit 1  usage error
+  exit 141  the reader of stdout closed the pipe (128 + SIGPIPE, as a shell
+          reports it): watch stops at the line it could not deliver
   exit 2  no journal appeared within 60 seconds (with --session: no such session)
   exit 3  DONE with verdict FAILED
   exit 4  LIMIT (--max-hours, or a malformed journal), or DONE with the lifecycle
@@ -106,7 +108,8 @@ def test_p11_the_codes_match_the_contract_for_each_command():
     assert re.findall(r"exit (\d)", RUN) == ["0", "1", "2", "3", "4"]
     assert re.findall(r"exit (\d)", RESCUE_PLAN) == ["1", "2", "4", "0"]
     assert re.findall(r"exit (\d)", RESCUE_STATUS) == ["1", "2", "3", "4", "0"]
-    assert re.findall(r"exit (\d)", WATCH) == ["1", "2", "3", "4", "0"]
+    # 141 (field report 2026-11-03, review round 2): the reader of stdout closed the pipe
+    assert re.findall(r"exit (\d+)", WATCH) == ["1", "141", "2", "3", "4", "0"]
 
 
 def test_p11_help_text_of_the_other_options_is_still_there(capsys):

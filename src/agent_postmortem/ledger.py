@@ -194,8 +194,10 @@ def call_entries(call: ToolCall, transcript_name: str) -> CallLedger:
                 # One entry per call (C3). A call with commit segments takes the
                 # single distinct candidate repository of those segments, or
                 # null when they name more than one; else the call's candidate.
+                # Segments of a command the lexer does not place have no known
+                # repository and leave the call's candidate (field report 2026-11-03).
                 repo = classified.repo
-                if classified.commit.segments:
+                if classified.commit.segments and classified.commit.placed:
                     distinct = {seg.repo for seg in classified.commit.segments}
                     repo = next(iter(distinct)) if len(distinct) == 1 else None
                 entries.append(LedgerEntry(

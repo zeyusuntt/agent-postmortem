@@ -46,6 +46,7 @@ from . import (
     statusline,
     trend,
     watch,
+    workers,
 )
 from .detectors import claim_contradiction
 from .disclosure import FIRST_LINE, DisclosureContext
@@ -351,6 +352,8 @@ exit codes:
 _WATCH_EXIT_CODES = """\
 exit codes (the first condition that applies wins):
   exit 1  usage error
+  exit 141  the reader of stdout closed the pipe (128 + SIGPIPE, as a shell
+          reports it): watch stops at the line it could not deliver
   exit 2  no journal appeared within 60 seconds (with --session: no such session)
   exit 3  DONE with verdict FAILED
   exit 4  LIMIT (--max-hours, or a malformed journal), or DONE with the lifecycle
@@ -694,8 +697,10 @@ def _build_parser(tokens: list[str] | None = None) -> argparse.ArgumentParser:
     watch_cmd = sub.add_parser(
         "watch",
         help=(
-            "Read-only follower for one running workflow: prints START, then KILL/FAILED/OK/QUIET "
-            "as they happen, then DONE or LIMIT. Designed to be a Claude Code Monitor command."
+            "Read-only follower for one running workflow (RUN_ID) or one session (--session), "
+            "including a background worker's blocked or needs-input state: prints START, then "
+            "KILL/FAILED/OK/QUIET as they happen, then DONE or LIMIT. Designed to be a Claude "
+            "Code Monitor command."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_WATCH_EXIT_CODES,
@@ -787,9 +792,9 @@ def _build_parser(tokens: list[str] | None = None) -> argparse.ArgumentParser:
     hook.add_argument(
         "hook_command",
         choices=("check", "session-start", "session-end", "workflow-launched", "agent-launched",
-                 "post-tool", "prompt-submit", "capabilities"),
+                 "post-tool", "prompt-submit", "pre-bash", "stop-watch", "capabilities"),
         metavar="{check,session-start,session-end,workflow-launched,agent-launched,post-tool,"
-                "prompt-submit,capabilities}",
+                "prompt-submit,pre-bash,stop-watch,capabilities}",
         help="Which hook event this invocation is for.",
     )
 
@@ -1558,7 +1563,102 @@ def _accumulate_scan_totals(totals: dict, run: Run, findings: list[Finding]) -> 
                 )
 
 
-def _scan_payload(rows: list[dict], totals: dict, redactor: Redactor) -> dict:
+def _attention_sessions(root: Path, now_ts: float, kind: str | None,
+                        here_caller: str | None) -> list[dict]:
+    """docs/DESIGN.md 4.7 (field reports 2026-11-04): the background sessions in trouble now:
+    STALLED (above) and those blocked on a person or failed, by the job's own class, whoever
+    launched them and regardless of --since. One that delivered waits on a decision, no trouble,
+    and is not listed. The caller's own workers are marked, from its own transcript."""
+    if kind == "workflow":
+        return []
+    def want(cwd: str | None) -> bool:  # --here, applied before any job is read (round 2)
+        return here_caller is None or (
+            isinstance(cwd, str) and (cwd == here_caller or cwd.startswith(here_caller + "/")))
+
+    caller = _caller_session_id()
+    main_path = status._job_transcript(root, caller) if caller else None
+    mine = status.own_workers(main_path) if main_path is not None else {}
+    background = status._background(root.parent / "jobs", root, now_ts, max_reads=None, want=want,
+                                    mine=mine)
+    return [entry for entry in background["sessions"]
+            if entry.get("session") and want(entry.get("cwd")) and (
+                entry.get("state") == "stalled" or entry.get("class") in workers.TROUBLE)]
+
+
+def _fold_blocked(blocked: list[dict], candidates: list[dict], live_now: list[dict],
+                  row_ids: set[str], level: str) -> tuple[int, int]:
+    """Each blocked or failed background session in NEEDS ATTENTION, the caller's own first, then
+    the rest after the stalled ones, replacing that session's own candidate (whose reason it keeps
+    after "also:") and its LIVE NOW entry. Another session's older than 3 days is only counted.
+    Returns (how many are no scanned run, for the header's run count; how many were counted)."""
+    named = level in ("local", "raw")
+    older = sum(1 for entry in blocked if status._old_blocked(entry))
+    shown = [entry for entry in blocked if not status._old_blocked(entry)]
+    for entry in shown:
+        public = entry["session"]
+        failed = entry.get("state") == "failed"
+        reason = "this background session failed" if failed else workers.reason_words(
+            entry["class"], entry.get("label") if named else None)
+        for existing in [c for c in candidates if c["run"].run_id == public]:
+            reason += f" (also: {existing['reason']})"
+            candidates.remove(existing)
+        live_now[:] = [e for e in live_now if e["run"].run_id != public]
+        age = float(entry.get("age_seconds") or 0)
+        candidates.append({
+            "run": SimpleNamespace(run_id=public), "age": f"for {status._age(age)}",
+            "verdict": "FAILED" if failed else "BLOCKED", "reason": reason,
+            "command": status.next_action(entry) if named
+            else "agent-postmortem status --local",
+            "mark": "dispatched by this session" if entry.get("mine") else None,
+            "sort_key": (-2 if entry.get("mine") else -1, 1, 0, 0, -age, 0.0),
+        })
+    return sum(1 for entry in shown if entry["session"] not in row_ids), older
+
+
+def _stall_reason(stall: dict) -> str:
+    count = stall.get("commands", 1)
+    what = f"{count} {_plural_word(count, 'background command')} silent"
+    if stall.get("silent_seconds") is not None:
+        what += f" {status._age(stall['silent_seconds'])}"
+    if stall.get("waiting_on_stdin"):
+        what += ", waiting on stdin"
+    # field report 2026-11-04: only a command's own files are seen, and it may end yet
+    return what + ("; nothing will wake it" if stall.get("waiting_on_stdin")
+                   else "; may be hung or writing elsewhere, and only its end would wake it")
+
+
+def _fold_stalled(stalled: list[dict], candidates: list[dict], live_now: list[dict],
+                  row_ids: set[str]) -> int:
+    """Each STALLED session first in NEEDS ATTENTION, replacing that session's own candidate
+    (whose reason it keeps after "also:") and its LIVE NOW entry; the number of them that are
+    no scanned run, for the header's run count."""
+    for entry in stalled:
+        public = entry["session"]
+        stall = entry.get("stall") or {}
+        reason = _stall_reason(stall)
+        # the caller's marker survives the fold (review round 2), else it comes from the id
+        mark = next((c.get("mark") for c in [*candidates, *live_now]
+                     if c["run"].run_id == public and c.get("mark")), None)
+        caller = _caller_session_id()
+        if mark is None and caller and str(entry.get("session_id", "")).lower() == caller:
+            mark = "this session"
+        if mark is None and entry.get("mine"):
+            mark = "dispatched by this session"  # as for a blocked one (0.5.0 review)
+        for existing in [c for c in candidates if c["run"].run_id == public]:
+            reason += f" (also: {existing['reason']})"
+            candidates.remove(existing)
+        live_now[:] = [e for e in live_now if e["run"].run_id != public]
+        idle = float(entry.get("age_seconds") or 0)
+        candidates.append({
+            "run": SimpleNamespace(run_id=public), "age": f"idle {status._age(idle)}",
+            "verdict": "STALLED", "reason": reason, "command": f"agent-postmortem status {public}",
+            "mark": mark, "sort_key": (-2 if entry.get("mine") else -1, 0, 0, 0, -idle, 0.0),
+        })
+    return sum(1 for entry in stalled if entry["session"] not in row_ids)
+
+
+def _scan_payload(rows: list[dict], totals: dict, redactor: Redactor,
+                  stalled: list[dict] | None = None, blocked: list[dict] | None = None) -> dict:
     """docs/DESIGN.md 5.3b `scan --json`: every field structurally redacted as
     before, except `project`, which is the identity form of 4.13.5 (the alias
     at share, the directory name at local and raw)."""
@@ -1571,12 +1671,34 @@ def _scan_payload(rows: list[dict], totals: dict, redactor: Redactor) -> dict:
             else:
                 shown[key] = report.redact_value(value, redactor)
         shown_rows.append(shown)
-    return {
+    payload = {
         "schema": report.SCHEMA_VERSION,
         "disclosure": redactor.level,
         "rows": shown_rows,
         "totals": report.redact_value(totals, redactor),
     }
+    if stalled:
+        # field report 2026-11-03: background sessions idle on a command that will not end; the
+        # key is present only then, so every other scan document keeps its shape
+        payload["stalled"] = [
+            {"session": entry["session"], "idle_seconds": entry.get("age_seconds"),
+             **{key: (entry.get("stall") or {}).get(key)
+                for key in ("commands", "waiting_on_stdin", "silent_seconds")},
+             "next_command": f"agent-postmortem status {entry['session']}"}
+            for entry in stalled
+        ]
+    if blocked:
+        # field reports 2026-11-04: present only then, as `stalled` above; ids from --local
+        named = redactor.level in ("local", "raw")
+        payload["blocked"] = [
+            {"session": entry["session"], "state": entry["state"], "class": entry["class"],
+             "age_seconds": entry.get("age_seconds"), "mine": bool(entry.get("mine")),
+             **({"short": entry.get("short"), "label": entry.get("label"),
+                 "next_command": status.next_action(entry)} if named
+                else {"next_command": "agent-postmortem status --local"})}
+            for entry in blocked
+        ]
+    return payload
 
 
 def _plural_word(n: int, word: str) -> str:
@@ -2315,7 +2437,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             state.transcript_cache_dir(), (now - _TRANSCRIPT_CACHE_KEEP).timestamp()
         )
     progress.finish()
-    if not rows:
+    # docs/DESIGN.md 4.7 (field report 2026-11-03): background sessions idle on a command that
+    # will not end, read now and outside the scan cache and --since, since they are stuck now
+    attention = _attention_sessions(root, now.timestamp(), args.kind, here_caller)
+    stalled = [entry for entry in attention if entry.get("state") == "stalled"]
+    blocked = [entry for entry in attention if entry.get("state") != "stalled"]
+    if not rows and not attention:
         kind = "scan_here_no_match" if args.here else "no_runs"
         print(
             _run_error(
@@ -2338,7 +2465,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                 level=_level_of(args),
                 identities=report.collect_project_identities(row["project"] for row in rows),
                 repo_root=None, command="scan",
-                build=lambda r: _scan_payload(rows, totals, r),
+                build=lambda r: _scan_payload(rows, totals, r, stalled, blocked),
             ),
             end="",
         )
@@ -2357,6 +2484,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             end="",
         )
     else:
+        row_ids = {row["run_id"] for row in rows}
+        extra_runs = _fold_stalled(stalled, candidates, live_now, row_ids)
+        more_runs, older_blocked = _fold_blocked(blocked, candidates, live_now, row_ids,
+                                                 _level_of(args))
+        extra_runs += more_runs
         candidates.sort(key=lambda candidate: candidate["sort_key"])
         shown_candidates = candidates[: args.limit]
         live_now.sort(key=lambda entry: entry["sort_key"], reverse=True)
@@ -2364,11 +2496,13 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             _render_guarded(
                 level=_level_of(args), identities=[], repo_root=None, command="scan",
                 render=lambda r: report.render_scan_triage_text(
-                    shown_candidates, len(candidates), len(rows), totals_7d, totals, r,
+                    shown_candidates, len(candidates), len(rows) + extra_runs, totals_7d,
+                    totals, r,
                     silenced_detectors=cfg.detectors_off,
                     live_now=live_now[: args.limit], total_live_now=len(live_now),
                     both_kinds=args.kind is None,
                     all_label=f"SINCE {args.since}" if since_date is not None else "ALL TIME",
+                    older_blocked=older_blocked,
                 ),
             ),
             end="",
@@ -2837,7 +2971,33 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+# docs/DESIGN.md 4.12 (field report 2026-11-03, review round 2): watch flushes every line, so a
+# reader that closed the pipe stops it at the next line; 128 + SIGPIPE, as a shell reports it.
+_WATCH_READER_GONE = 141
+
+
 def _cmd_watch(args: argparse.Namespace) -> int:
+    try:
+        return _watch(args)
+    except BrokenPipeError:
+        _silence_closed_stdout()
+        return _WATCH_READER_GONE
+
+
+def _silence_closed_stdout() -> None:
+    """Point stdout's descriptor at the null device, so the interpreter's own flush at exit does
+    not fail a second time on the closed pipe (and print "Exception ignored")."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, sys.stdout.fileno())
+        finally:
+            os.close(devnull)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def _watch(args: argparse.Namespace) -> int:
     root = args.root.expanduser()
     if args.session is not None:
         if args.run_id is not None:

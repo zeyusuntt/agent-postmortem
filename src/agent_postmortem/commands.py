@@ -1,5 +1,6 @@
 """Pure command-text classifier for Bash and Monitor calls (docs/DESIGN.md
-4.13.1, N4a). Standard library only: no filesystem access, no subprocess.
+4.13.1, N4a). Standard library only, no subprocess, and no filesystem access
+except the stat that `is_bounded` makes of an output redirect's target.
 
 The transcript records a command's text, never the shell it ran in, so
 nothing here can prove a command did not write. The grammars decide one
@@ -11,6 +12,7 @@ from __future__ import annotations
 import functools
 import os
 import re
+import stat as _stat
 from dataclasses import dataclass, field
 
 
@@ -1208,6 +1210,10 @@ class CommitSegment:
 @dataclass(frozen=True)
 class CommitFacts:
     segments: tuple[CommitSegment, ...]
+    # Field report 2026-11-03: False when the segments come from a command the lexer does not
+    # place as a whole (judged segment by segment, DESIGN 4.13.1). Their repo is unknown, and
+    # the ledger keeps the call's own candidate repository for such a call.
+    placed: bool = True
 
     @property
     def is_commit(self) -> bool:
@@ -1274,12 +1280,50 @@ def _commit_segments(
     the text is not placed, a wrapper is deeper than one level or holds text
     that is not placed, or a commit segment carries a dry-run or quiet flag
     (poisoning: such a call counts no id at all)."""
-    if not lexed.placed:
+    # Field report 2026-11-03: every segment is judged on its own, the way FA6 judges presence,
+    # so an assignment or an expansion in another segment no longer hides a literal commit. A
+    # command the lexer does not place is judged only at the top level (a wrapper's STRING must
+    # be placed). Any word that assigns a git variable makes the call count no id: git reads its
+    # repository, work tree and index from those.
+    if not lexed.placed and depth >= 1:
         return None
+    if any(_GIT_ASSIGN_RE.match(word.text) for seg in lexed.segments for word in seg.words):
+        return None
+    own_reasons: dict[int, set[str]] = {}
+    for reason, index in lexed.reason_at:
+        own_reasons.setdefault(index, set()).add(reason)
     found: list[tuple[CommitSegment, bool]] = []
     background = _backgrounded_lists(lexed)
-    for seg, base, bg in zip(lexed.segments, segment_bases(lexed, cwd), background):
-        words = [w.text for w in seg.words]
+    for index, (seg, base, bg) in enumerate(
+        zip(lexed.segments, segment_bases(lexed, cwd), background)
+    ):
+        reasons = own_reasons.get(index, set())
+        if _heredoc_runs_a_commit_spelling(seg):
+            return None
+        spells = _COMMIT_SPELLING_RE.search(" ".join(w.raw for w in seg.words)) is not None
+        first = seg.words[0].raw if seg.words else ""
+        if reasons - {"first_word"}:
+            # Not literal: only an ordinary program's arguments or redirects may be opaque, and
+            # no substitution in them may spell `commit` (review round 2: `echo "$(git commit
+            # -q)"` runs a commit whatever program the substitution is an argument of).
+            if _substitution_spells_commit(seg, reasons) or (
+                spells and not _ordinary_program(first)
+            ):
+                return None
+            continue
+        words = _run_as_is_command(seg.words)
+        if words is None:
+            # Literal assignments alone run nothing (a value with `$` is opaque above); a prefix
+            # that takes an option or has no `--` may hide a commit.
+            if spells and not all(_ASSIGN_RE.match(word.raw) for word in seg.words):
+                return None
+            continue
+        if not _is_commit_or_wrapper(words):
+            # An opaque first word (eval, time, ...), also one a prefix exposed (review round 1:
+            # `mise exec -- time git commit -q`), may hide a commit no id can be matched to.
+            if spells and words[0] in _FIRST_WORD_OPAQUE:
+                return None
+            continue
         if (
             len(words) == 3
             and not seg.redirects
@@ -1302,6 +1346,99 @@ def _commit_segments(
             return None
         found.append((CommitSegment(git_repo(base, prefix)), bg))
     return found
+
+
+# Field report 2026-11-03: an assignment word that names a git variable (GIT_DIR, GIT_WORK_TREE,
+# GIT_INDEX_FILE, ...), as a prefix, a segment of its own, or an export/env argument, matched on
+# the word with its quotes removed (`export "GIT_DIR=..."`).
+_GIT_ASSIGN_RE = re.compile(r"GIT_[A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
+
+
+_SUBSTITUTION_REASONS = frozenset({"command_substitution", "process_substitution", "paren"})
+
+
+def _opens_substitution(raw: str) -> bool:
+    """Whether a word as written opens a substitution: `$(` or a backtick outside single quotes
+    and not escaped (double quotes do not stop either), `<(` or `>(` outside any quotes. Text in
+    single quotes is data (review round 3). An ANSI-C quote `$'...'` counts as an opener: the
+    lexer does not model it (it ends `$'can\\'t'` at the escaped quote, where bash does not), so
+    nothing after it can be judged (review round 4)."""
+    single = double = False
+    i, n = 0, len(raw)
+    while i < n:
+        ch = raw[i]
+        if single:
+            single = ch != "'"
+        elif ch == "\\":
+            i += 2
+            continue
+        elif ch == "$" and raw[i + 1:i + 2] == "'" and not double:
+            return True
+        elif ch == "'" and not double:
+            single = True
+        elif ch == '"':
+            double = not double
+        elif ch == "`" or (ch == "$" and raw[i + 1:i + 2] == "("):
+            return True
+        elif ch in "<>" and raw[i + 1:i + 2] == "(" and not double:
+            return True
+        i += 1
+    return False
+
+
+def _heredoc_runs_a_commit_spelling(seg: Segment) -> bool:
+    """Whether a heredoc of this segment with an unquoted delimiter has a `$(` or a backtick in
+    its body (quotes there are plain characters, so they stop neither) and spells `commit`.
+    Checked on every segment: the lexer gives the body's reason to the segment it is building
+    when the body is read, which is the next one in `cat <<EOF | cat` (review round 3)."""
+    for redirect in seg.redirects:
+        body = redirect.body
+        if body is not None and not redirect.target_quoted and ("$(" in body or "`" in body):
+            if _COMMIT_SPELLING_RE.search(body) is not None:
+                return True
+    return False
+
+
+def _substitution_spells_commit(seg: Segment, reasons: set[str]) -> bool:
+    """Whether a segment the lexer raised a reason for holds a substitution in its words or
+    redirect targets (an opener there, or a reason the lexer raised for one whose opener it
+    drops, such as `<(`) and that text spells `commit`. A target is kept with its quotes
+    removed, so a `$(` in it counts even when it was single-quoted (counting no id is the
+    cautious side)."""
+    targets = [r.target for r in seg.redirects if r.target is not None]
+    opened = (
+        bool(reasons & _SUBSTITUTION_REASONS)
+        or any(_opens_substitution(word.raw) for word in seg.words)
+        or any("$(" in target or "`" in target for target in targets)
+    )
+    text = "\n".join([word.raw for word in seg.words] + targets)
+    return opened and _COMMIT_SPELLING_RE.search(text) is not None
+
+
+_PLAIN_PROGRAM_RE = re.compile(
+    r"[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_.+-]+)*/?|/[A-Za-z0-9_./+-]+")
+
+
+def _ordinary_program(word: str) -> bool:
+    """Whether a segment's first word is a literal program name whose arguments cannot make it a
+    git commit A1 reads: not git, not a shell wrapper, not an opaque word, not a run-as-is
+    prefix, and free of quotes, expansions and assignments. Its arguments and redirects may then
+    be opaque without hiding a commit (a script that commits is outside the grammar, as for a
+    placed command)."""
+    if _PLAIN_PROGRAM_RE.fullmatch(word) is None:
+        return False
+    name = word.rsplit("/", 1)[-1]
+    return name not in ("git", "mise", "env", *_SHELL_WRAPPERS) and name not in _FIRST_WORD_OPAQUE
+
+
+def _is_commit_or_wrapper(words: list[str]) -> bool:
+    """Whether a segment's words (after a run-as-is prefix) are a git commit segment or the
+    `bash -c STRING` wrapper A1 searches: the two shapes an unplaced segment with a
+    first-word reason may still be judged as."""
+    if len(words) == 3 and words[0] in _SHELL_WRAPPERS and words[1] in ("-c", "-lc"):
+        return True
+    prefix = git_prefix(words)
+    return prefix is not None and prefix.subcommand == "commit"
 
 
 def commit_command_ran(words: list[str] | tuple[str, ...]) -> bool:
@@ -1415,9 +1552,14 @@ def commit_facts(command: str, cwd: str | None = None) -> CommitFacts:
     quiet flag, and no commit segment is backgrounded in the text."""
     if not isinstance(command, str) or _COMMIT_SPELLING_RE.search(command) is None:
         return CommitFacts(())
-    found = _commit_segments(lex(command, commit_message_form=True), cwd, 0)
+    lexed = lex(command, commit_message_form=True)
+    found = _commit_segments(lexed, cwd, 0)
     if found is None or any(background for _, background in found):
         return CommitFacts(())
+    if not lexed.placed:
+        # no segment of such a command has a known repository, not even behind an absolute -C
+        # or a cd inside a wrapper (review round 1)
+        return CommitFacts(tuple(CommitSegment(None) for _ in found), False)
     return CommitFacts(tuple(commit for commit, _ in found))
 
 
@@ -1585,3 +1727,391 @@ def _classify_call(
                 5, "claimed_target", "command_grammar", match.targets, commit, repo, present,
             )
     return CallClass(6, "possible", "opaque_command", (), commit, repo, present)
+
+
+# --- what ends on its own (field reports 2026-11-03, 2026-11-04) ----------------------------------
+
+_DURATION_RE = re.compile(r"(\d+(?:\.\d+)?)([smhd]?)")
+
+
+def positive_duration(word: str) -> bool:
+    match = _DURATION_RE.fullmatch(word)
+    return match is not None and float(match.group(1)) > 0
+
+
+# signals whose default action ends nothing: a timeout sending one needs a kill-after
+_NONTERMINATING = frozenset({"CONT", "STOP", "TSTP", "TTIN", "TTOU", "CHLD", "CLD", "URG",
+                             "WINCH", "INFO", "PWR"})
+
+
+def _ends_by_signal(signal_name: str | None, kill_after: str | None) -> bool:
+    if kill_after is not None and positive_duration(kill_after):
+        return True
+    if signal_name is None:
+        return True  # TERM
+    name = signal_name.upper().removeprefix("SIG")
+    return not name.isdigit() and name not in _NONTERMINATING
+
+
+_TIMEOUT_FLAGS = ("--foreground", "--preserve-status", "--verbose")
+
+
+def _long_option(name: str, full: str) -> bool:
+    """`--sig` is `--signal`: GNU getopt takes an unambiguous prefix (review round 3)."""
+    return len(name) >= 4 and full.startswith(name)
+
+
+def _opens_without_blocking(target: str | None, cwd: str | None) -> bool:
+    """Whether opening an output redirect's target cannot block before the command starts: not
+    a FIFO or a device (`/dev/null` aside), as far as a stat now shows (review round 3)."""
+    if not target:
+        return False
+    if target == "/dev/null":
+        return True
+    if target.startswith("/dev/"):
+        return False
+    path = target if target.startswith("/") else (os.path.join(cwd, target) if cwd else None)
+    if path is None:
+        return True  # cannot be placed; a FIFO there is the rare case
+    try:
+        info = os.stat(path)
+    except FileNotFoundError:
+        return True  # created as a regular file
+    except OSError:
+        return False
+    return _stat.S_ISREG(info.st_mode)
+
+
+def _redirects_cannot_block(segment: Segment, cwd: str | None) -> bool:
+    """Stdin only from /dev/null, output only to files that open without blocking: a FIFO with no
+    reader holds the shell before the command even starts (review round 3 of `is_bounded`)."""
+    for redirect in segment.redirects:
+        if redirect.op in ("<", "<>") and redirect.target != "/dev/null":
+            return False
+        if redirect.op == ">&" and isinstance(redirect.target, str) \
+                and re.fullmatch(r"[0-9]*-?", redirect.target):
+            continue  # a descriptor copy or close
+        if redirect.op in (">", ">>", ">|", "&>", "&>>", ">&") \
+                and not _opens_without_blocking(redirect.target, cwd):
+            return False
+    return True
+
+
+def is_bounded(command: str, cwd: str | None = None) -> bool:
+    """One command wholly under `timeout`/`gtimeout` with a positive duration and a signal that
+    ends it (or a positive kill-after), with nothing that can block before timeout starts: no
+    expansion or substitution, stdin only from /dev/null, a heredoc or a literal here-string,
+    output only to files that open without blocking, and only options timeout is known to take
+    (review rounds 1 to 3: `timeout 1 true; tail -f x`, `timeout 0 x`, `timeout 1 true "$(sleep
+    9)"`, `timeout -s CONT 1 x`, `timeout -sCONT 1 x` and `timeout 1 true > fifo` do not end)."""
+    lexed = lex(command)
+    if set(lexed.reasons) - {"here_string"} or len(lexed.segments) != 1:
+        return False
+    segment = lexed.segments[0]
+    if not _redirects_cannot_block(segment, cwd):
+        return False
+    words = [word.text for word in segment.words]
+    i = 0
+    while i < len(words) and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[i]):
+        i += 1
+    if i >= len(words) or words[i] not in ("timeout", "gtimeout"):
+        return False
+    i += 1
+    signal_name = kill_after = None
+    while i < len(words) and words[i].startswith("-") and words[i] != "-":
+        option = words[i]
+        i += 1
+        if option == "--":
+            break
+        if option.startswith("--"):
+            name, eq, value = option.partition("=")
+            takes = "signal" if _long_option(name, "--signal") else (
+                "kill" if _long_option(name, "--kill-after") else None)
+            if takes is None:
+                if any(_long_option(name, flag) for flag in _TIMEOUT_FLAGS) and not eq:
+                    continue
+                return False  # an option timeout is not known to take
+            if not eq:
+                value = words[i] if i < len(words) else ""
+                i += 1
+        else:
+            letter, value = option[1:2], option[2:]
+            if letter == "v" and not value:
+                continue
+            if letter not in ("s", "k"):
+                return False
+            takes = "signal" if letter == "s" else "kill"
+            if not value:
+                value = words[i] if i < len(words) else ""
+                i += 1
+        if takes == "signal":
+            signal_name = value
+        else:
+            kill_after = value
+    return i + 1 < len(words) and positive_duration(words[i]) \
+        and _ends_by_signal(signal_name, kill_after)
+
+
+_SILENT_WAIT_RE = re.compile(r"(?:^|\s)#\s*postmortem:\s*silent-wait\b", re.M)
+_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+_ALARM_THEN_EXEC_RE = re.compile(r"\s*alarm\s+([1-9]\d*)\s*;\s*exec\s+@ARGV\s*;?\s*")
+_ALARM_MAX = 2**31 - 1  # past what perl keeps it wraps, and 2**32 reads as 0: no alarm at all
+_ALARM_SHIFT_THEN_EXEC_RE = re.compile(r"\s*alarm\s+shift\s*;\s*exec\s+@ARGV\s*;?\s*")
+_NOT_LITERAL_RE = re.compile(r"[$*?\[\]`~]")
+_COUNT_RE = re.compile(r"[0-9]+")
+_DASH_COUNT_RE = re.compile(r"-[0-9]+")
+_VARIABLE_RE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+_DATE_ONLY_RE = re.compile(r"date(?:\s+[-+\w%:.]+)*")
+_CAT_FILE_RE = re.compile(r"cat\s+(/[-\w./]+)")
+_SAYS_AND_ENDS = frozenset({"echo", "printf", "date", "true", ":", "ls", "exit"})
+_TOOL_NAMES = frozenset({"agent-postmortem", "postmortem"})
+_TOOL_MODULES = frozenset({"agent_postmortem", "agent_postmortem.cli"})
+_TOOL_LOOKS = frozenset({"status", "scan", "run", "watch"})
+
+
+def _is_perl_alarm(words: list[str]) -> bool:
+    """Exactly `[caffeinate -flags] perl -e 'alarm N; exec @ARGV' command ...`, N positive, or
+    `'alarm shift; exec @ARGV' N command ...`: the forms that prove an alarm is set before what it
+    bounds starts. Any other script can leave no alarm (`alarm $t` with `$t` unset)."""
+    i = 0
+    if words and words[0].rsplit("/", 1)[-1] == "caffeinate":
+        i = 1
+        while i < len(words) and words[i].startswith("-"):
+            i += 1
+    if len(words) < i + 4 or words[i].rsplit("/", 1)[-1] != "perl" or words[i + 1] != "-e":
+        return False
+    script, rest = words[i + 2], words[i + 3:]
+    literal = _ALARM_THEN_EXEC_RE.fullmatch(script)
+    if literal is not None:
+        # an option after the script is perl's: -n and -p read input before the alarm is ever set
+        return int(literal.group(1)) <= _ALARM_MAX and not rest[0].startswith("-")
+    return bool(_ALARM_SHIFT_THEN_EXEC_RE.fullmatch(script)) and len(rest) > 1 \
+        and _COUNT_RE.fullmatch(rest[0]) is not None and 0 < int(rest[0]) <= _ALARM_MAX \
+        and not rest[1].startswith("-")
+
+
+def _expand(word: str, known: dict[str, str]) -> str:
+    """`$NAME` and `${NAME}` of a literal assignment earlier in this command; anything else stays
+    as written, and so reads as not literal."""
+    return _VARIABLE_RE.sub(lambda m: known.get(m.group(1) or m.group(2), m.group(0)), word)
+
+
+def _file_opens_at_once(word: str, base: "str | None | tuple") -> bool:
+    """A file named literally that is a regular one, or not there yet, where the base is known. With
+    several bases (a `cd X;` that may have failed), in each of them."""
+    if _NOT_LITERAL_RE.search(word) or word.startswith("-") or not word:
+        return False
+    bases = base if isinstance(base, tuple) else (base,)
+    if not word.startswith("/") and (not bases or any(item is None for item in bases)):
+        return False
+    return all(_opens_without_blocking(word, item) for item in bases)
+
+
+def _is_quick_step(words: list[str], piped: bool, base: "tuple", known: dict[str, str]) -> bool:
+    """A step beside a long run that surely ends at once: a short list by exact shape. A wrong False
+    costs one line told. Everything else, however harmless it looks, is False: readers can wait on
+    stdin or `/dev/zero`, `sed` and `awk` can loop, `rm` can prompt, `source` can do anything."""
+    if not words:
+        return True  # only a redirect
+    name = words[0]
+    if name in _SAYS_AND_ENDS or _ASSIGNMENT_RE.match(name):
+        # what they print or assign cannot wait: every substitution was checked before this
+        return name in _SAYS_AND_ENDS or all(_ASSIGNMENT_RE.match(word) for word in words)
+    if name == "export":
+        return all(_ASSIGNMENT_RE.match(word) for word in words[1:])
+    words = [_expand(word, known) for word in words]
+    if name == "cd":
+        return len(words) == 2 and not _NOT_LITERAL_RE.search(words[1])
+    if name == "mkdir":
+        return len(words) == 3 and words[1] == "-p" and not _NOT_LITERAL_RE.search(words[2])
+    if name == "wc" and words[1:2] in (["-l"], ["-c"]):
+        args = words[2:]
+    elif name in ("tail", "head") and words[1:2] == ["-n"] and len(words) > 2 \
+            and _COUNT_RE.fullmatch(words[2]):
+        args = words[3:]
+    elif name in ("tail", "head") and len(words) > 1 and _DASH_COUNT_RE.fullmatch(words[1]):
+        args = words[2:]
+    elif name == "cut" and len(words) == 2 and words[1].startswith(("-c", "-f")):
+        args = []
+    elif name == "tee" and len(words) == 2:
+        return piped and _file_opens_at_once(words[1], base)
+    else:
+        return False
+    if not args:
+        return piped
+    return len(args) == 1 and _file_opens_at_once(args[0], base)
+
+
+def _redirects_end_at_once(segment: Segment, base: "tuple", known: dict[str, str]) -> bool:
+    for redirect in segment.redirects:
+        if redirect.op == ">&" and isinstance(redirect.target, str) \
+                and re.fullmatch(r"[0-9]*-?", redirect.target):
+            continue
+        target = _expand(redirect.target, known) if isinstance(redirect.target, str) else None
+        if redirect.op == "<" and target == "/dev/null":
+            continue
+        if redirect.op not in (">", ">>", ">|", "&>", "&>>", ">&") or target is None \
+                or not _file_opens_at_once(target, base):
+            return False
+    return True
+
+
+def _substitutions_are_only_date(command: str) -> bool:
+    """`S=$(date +%s)` and `$(cat /a/regular/file)`, which real wrappers use for a start time and
+    a prompt, and nothing else: a substitution runs before anything around it, so one that waits
+    holds everything."""
+    from .pre_bash import _substitution_end
+
+    i, n = 0, len(command)
+    single = double = False
+    while i < n:
+        ch = command[i]
+        if single:
+            single = ch != "'"
+        elif ch == "\\":
+            i += 2
+            continue
+        elif ch == "'" and not double:
+            single = True
+        elif ch == '"':
+            double = not double
+        elif ch == "`" or (ch == "$" and command[i + 1:i + 2] == "("):
+            end = _substitution_end(command, i)
+            inner = (command[i + 1:end - 1] if ch == "`" else command[i + 2:end - 1]).strip()
+            read = _CAT_FILE_RE.fullmatch(inner)
+            if not _DATE_ONLY_RE.fullmatch(inner) \
+                    and not (read and _file_opens_at_once(read.group(1), None)):
+                return False
+            i = end
+            continue
+        i += 1
+    return True
+
+
+def under_its_own_alarm(command: str, cwd: str | None = None) -> bool:
+    """A long run under `perl -e 'alarm N; exec @ARGV'`, the same bound as `timeout` where there is
+    none (macOS), with only steps around it that surely end at once. The field report 2026-11-04
+    had 15 such wrappers. This reads the plain ones as bounded and tells the rest once, on purpose:
+    a wrong False costs one line, which says it may be fine; a wrong True silences the only alarm
+    for a real hang (review rounds 1 and 2 of this rule found a dozen ways a looser rule did). So:
+    every step and redirect by exact shape, with paths literal or from a literal assignment."""
+    if "perl" not in command or "alarm" not in command or not _substitutions_are_only_date(command):
+        return False
+    from .pre_bash import _without_substitutions  # no import at module level: it imports this
+
+    # where the command can be now: a `cd X;` that fails leaves it where it was (review round 3)
+    bases: tuple = (cwd if isinstance(cwd, str) and cwd.startswith("/") else None,)
+    # a `cd X &&` that fails skips only its own list: the next one runs where it was (0.5.0 review)
+    resume: tuple = ()
+    known: dict[str, str] = {}
+    found = False
+    previous = None
+    lexed = lex(_without_substitutions(command))
+    # what runs in the background outlives the alarm, and a list in it is a subshell (0.5.0 review)
+    if lexed.trailing_op == "&" or any(seg.sep_after == "&" for seg in lexed.segments):
+        return False
+    for segment in lexed.segments:
+        words = [word.text for word in segment.words]
+        if not _redirects_end_at_once(segment, bases, known):
+            return False
+        if _is_perl_alarm(words):
+            found = True
+        elif not _is_quick_step(words, previous in ("|", "|&"), bases, known):
+            return False
+        if words[:1] == ["cd"]:
+            target = _expand(words[1], known) if len(words) == 2 else ""
+            moved = tuple(
+                normalize_path(target) if target.startswith("/")
+                else (normalize_path(os.path.join(item, target)) if item and target else None)
+                for item in bases)
+            if segment.sep_after == "&&":
+                resume = (*resume, *bases)
+                bases = moved
+            else:
+                bases = (*moved, *bases)
+        if words[:1] == ["printf"] and any(word.startswith("-v") for word in words[1:]):
+            return False  # it sets a variable of this shell (0.5.0 review)
+        # only what persists in this shell: `export`, or a segment of nothing but assignments. A
+        # prefix or a child's argument changes nothing here (0.5.0 review)
+        persists = words[1:] if words[:1] == ["export"] else (
+            words if all(_ASSIGNMENT_RE.match(word) for word in words) else [])
+        # and only if it surely ran here: not skipped by a `&&` or `||` before it, and not in the
+        # subshell a pipe gives it (0.5.0 review, round 2)
+        surely = previous in (None, ";", "\n") and segment.sep_after not in ("|", "|&")
+        for word in persists:
+            if not _ASSIGNMENT_RE.match(word):
+                continue
+            name, _eq, value = word.partition("=")
+            if name.endswith("+") or not surely:
+                known.pop(name.rstrip("+"), None)  # what it now holds is not worked out here
+                continue
+            value = _expand(value, known)
+            # one that an unquoted `$NAME` would split or glob is not one operand (0.5.0 review)
+            if _NOT_LITERAL_RE.search(value) or "SUBSTITUTION" in value \
+                    or any(char.isspace() or char in "*?[" for char in value):
+                known.pop(name, None)
+            else:
+                known[name] = value
+        if resume and segment.sep_after not in ("&&", "|", "|&"):
+            bases, resume = (*bases, *resume), ()
+        previous = segment.sep_after
+    return found
+
+
+def _names_a_look(words: list[str]) -> bool:
+    head = words[0].rsplit("/", 1)[-1] if words else ""
+    if "--help" in words or "-h" in words:
+        return False  # it prints usage and looks at nothing
+    if head in _TOOL_NAMES:
+        return len(words) > 1 and words[1] in _TOOL_LOOKS
+    if head in ("uv", "uvx"):
+        rest = words[2:] if head == "uv" and words[1:2] == ["run"] else words[1:]
+        if head == "uv" and words[1:2] != ["run"]:
+            return False
+        while rest and rest[0].startswith("-"):
+            rest = rest[1:]
+        return _names_a_look(rest)
+    if head in ("python", "python3") and words[1:2] == ["-m"]:
+        return len(words) > 3 and words[2] in _TOOL_MODULES and words[3] in _TOOL_LOOKS
+    return False
+
+
+def runs_this_tool(command: str) -> bool:
+    """Whether a segment of this command runs `status`, `scan`, `run` or `watch` of this tool, by
+    its command word, directly or through `uv run`, `uvx` or `python -m`: an `echo` or a `grep`
+    naming it does not (review rounds 1 and 2)."""
+    if "postmortem" not in command:
+        return False
+    from .pre_bash import _command_words, _without_substitutions
+
+    return any(_names_a_look(_command_words([word.text for word in segment.words]) or [])
+               for segment in lex(_without_substitutions(command)).segments)
+
+
+def is_timer(command: str) -> bool:
+    """A shell task that only waits, and so arms a deadline: `sleep N` (N > 0) by any path, then at
+    most one literal `echo`, `printf`, `true` or `:` joined by `;` or `&&`, with no redirect,
+    expansion or substitution anywhere (review round 1: `sleep 1; echo "$(tail -f x)"` never
+    ends)."""
+    lexed = lex(command)
+    segments = lexed.segments
+    if not lexed.placed or lexed.trailing_op or not 1 <= len(segments) <= 2:
+        return False
+    first = [word.text for word in segments[0].words]
+    if len(first) != 2 or first[0].rsplit("/", 1)[-1] not in ("sleep", "gsleep") \
+            or not positive_duration(first[1]) or segments[0].redirects:
+        return False
+    if len(segments) == 2:
+        second = [word.text for word in segments[1].words]
+        if segments[0].sep_after not in (";", "&&", "\n") or segments[1].redirects or not second \
+                or second[0].rsplit("/", 1)[-1] not in ("echo", "printf", "true", ":"):
+            return False
+    return True
+
+
+def quiet_by_design(command: str, cwd: str | None = None) -> bool:
+    """A background command whose silence is its normal state (field reports 2026-11-04): wholly
+    under a real timeout (`is_bounded`) or a perl alarm, a timer, or carrying the marker `#
+    postmortem: silent-wait`. An unbounded wait loop with none of them is still told once."""
+    return bool(_SILENT_WAIT_RE.search(command)) or is_timer(command) \
+        or under_its_own_alarm(command, cwd) or is_bounded(command, cwd)

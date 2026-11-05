@@ -155,10 +155,12 @@ def test_e36_a_run_as_is_prefix_leaves_a_commit_command(command, expected):
     assert _ran(command) is expected
 
 
-def test_e36_the_id_grammar_still_reads_no_id_behind_a_prefix():
-    # an assignment can redirect the repository (GIT_DIR=...), so A1's ids stay unplaced
-    facts = commands.commit_facts("SKIP=mypy git commit -m x", CWD)
-    assert facts.is_commit is False
+def test_e36_the_id_grammar_reads_no_id_behind_a_git_variable_assignment():
+    # an assignment can redirect the repository (GIT_DIR=...), so such a call counts no id.
+    # E48 (field report 2026-11-03): any other run-as-is prefix now gives its id
+    # (tests/test_e48_commit_ids_behind_a_prefix.py).
+    assert commands.commit_facts("GIT_DIR=/tmp/o/.git git commit -m x", CWD).is_commit is False
+    assert commands.commit_facts("SKIP=mypy git commit -m x", CWD).is_commit is True
 
 
 def test_fa6_run_in_background_is_not_a_ran_commit():

@@ -31,6 +31,7 @@ import io
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -207,6 +208,61 @@ def _hook_live(command: str, event: str):
     return runner
 
 
+def _hook_pre_bash(env: Env, flags: list[str]):
+    """docs/DESIGN.md 4.14.5 (field report 2026-11-03, item 5): the PreToolUse warning for a
+    background codex exec whose command names the planted session's own paths; it prints fixed
+    words only."""
+    session = env.planted.root / env.planted.slug / f"{env.planted.session}.jsonl"
+    body = {"hook_event_name": "PreToolUse", "session_id": env.planted.session,
+            "transcript_path": str(session), "tool_name": "Bash",
+            "tool_input": {"command": f"cd {env.planted.root} && codex exec \"$(cat "
+                                      f"{session})\" > {session}.review.md",
+                           "run_in_background": True}}
+    env.monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(body)))
+    return h.cli(env.capsys, "hook", "pre-bash")
+
+
+def _hook_worker(env: Env, flags: list[str]):
+    """docs/DESIGN.md 4.14.5 (field reports 2026-11-04): the session launched a worker whose job
+    file holds the planted strings in `needs` (past the tool, which is all that is printed),
+    `detail` and `output.result`."""
+    session = env.planted.root / env.planted.slug / f"{env.planted.session}.jsonl"
+    short = "7a7a7a7a"
+    now = datetime.now(timezone.utc)
+    stamp = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    stdout = f"backgrounded · {short} · zz-worker\n  claude attach {short}    open\n"
+    with session.open("a", encoding="utf-8") as handle:
+        for entry in (
+            {"type": "assistant", "timestamp": stamp, "sessionId": env.planted.session,
+             "message": {"role": "assistant", "content": [
+                 {"type": "tool_use", "id": "toolu_w1", "name": "Bash",
+                  "input": {"command": "claude --bg -n zz-worker brief"}}]}},
+            {"type": "user", "timestamp": stamp, "sessionId": env.planted.session,
+             "toolUseResult": {"stdout": stdout}, "message": {"role": "user", "content": [
+                 {"type": "tool_result", "tool_use_id": "toolu_w1", "content": stdout}]}},
+        ):
+            handle.write(json.dumps(entry) + "\n")
+    job = env.planted.root.parent / "jobs" / short
+    job.mkdir(parents=True, exist_ok=True)
+    (job / "state.json").write_text(json.dumps({
+        "state": "blocked", "name": "zz-worker", "createdAt": stamp, "sessionId": "x",
+        "needs": f"approve Bash: {env.planted.excerpt} {env.planted.repo_file}",
+        "detail": f"{env.planted.label} {env.planted.repo}",
+        "output": {"result": str(env.planted.repo_file)},
+    }), encoding="utf-8")
+    body = {"transcript_path": str(session), "session_id": env.planted.session,
+            "hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "ls"}, "tool_response": {"stdout": ""}}
+    env.monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(body)))
+    return h.cli(env.capsys, "hook", "post-tool")
+
+
+def _hook_stop_watch(env: Env, flags: list[str]):
+    """With nothing to watch it leaves at once and says nothing; what it says when it does wake
+    is the same line as `_hook_worker`'s, on stderr (tests/test_stop_watch.py)."""
+    return _hook(env, "stop-watch", hook_event_name="Stop", background_tasks=[])
+
+
 def _planted_subagent(env: Env) -> None:
     """docs/DESIGN.md 4.14: a session subagent of the planted session whose transcript carries
     the planted excerpt and label and ends on an API error, so status and the statusline have
@@ -357,6 +413,14 @@ SINKS = [
          _hook_live("prompt-submit", "UserPromptSubmit"),
          ("UserPromptSubmit", "returned, but its own last entry says:",
           "a server error occurred"), levels=SHARE_ONLY, json_lines=True),
+    Sink("hook pre-bash", ("hook", "pre-bash"), _hook_pre_bash,
+         ("PreToolUse", "STDIN this background `codex exec` has no stdin redirect"),
+         levels=SHARE_ONLY, json_lines=True),
+    Sink("hook post-tool worker", ("hook", "post-tool"), _hook_worker,
+         ("WORKER zz-worker (7a7a7a7a) blocked", "(approve Bash)"), levels=SHARE_ONLY,
+         json_lines=True),
+    Sink("hook stop-watch", ("hook", "stop-watch"), _hook_stop_watch, (), levels=SHARE_ONLY,
+         silent=True),
     Sink("status", ("status",), _status(),
          ("STATUS  session s_", "returned, but its own last entry says: a server error occurred")),
     Sink("statusline subagents", ("statusline", "subagents"), _statusline,
@@ -442,7 +506,7 @@ def test_hook_capabilities_is_static(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "x"})))
     _code, out, err = h.cli(capsys, "hook", "capabilities")
     assert err == ""
-    assert set(json.loads(out)) == {"protocol", "version"}
+    assert set(json.loads(out)) == {"protocol", "version", "hooks"}
 
 
 # --- the parser-coverage meta-test -------------------------------------------

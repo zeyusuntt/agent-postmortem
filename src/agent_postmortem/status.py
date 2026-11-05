@@ -13,7 +13,7 @@ import re
 import time
 from pathlib import Path
 
-from . import live, state
+from . import live, stalls, state, workers
 from .redact import Redactor
 
 # Claude Code's own tool names: the only tool names status prints (a plugin or MCP tool name can
@@ -167,13 +167,37 @@ def _explained(follower: live.SessionFollower, agent_id: str, sub: live._Sub) ->
     return None
 
 
-def _background(jobs_root: Path, projects_root: Path, now: float) -> dict:
+def _job_word(jobs_root: Path, session_id: str) -> str | None:
+    job_dir = live.find_job(jobs_root, session_id)
+    return live._read_job_state(job_dir)[0] if job_dir is not None else None
+
+
+# review round 1: BACKGROUND reads at most this many jobs' own sessions per call
+_JOB_STALL_READS = 5
+
+
+# field reports 2026-11-04: a blocked row of another session older than this folds into one line
+OLD_BLOCKED_SECONDS = 72 * 3600.0
+
+
+def _background(jobs_root: Path, projects_root: Path, now: float, *,
+                max_reads: int | None = _JOB_STALL_READS, want=None, mine=None) -> dict:
+    """BACKGROUND (4.14.4): every job changed in the last day, and every working or blocked one,
+    by native state, except that a working one idle on a command that will not end counts as
+    stalled. Only a job whose own state and transcript have not changed for IDLE_SECONDS, whose
+    process is a live background session and that `want(cwd)` keeps is read for that; `status`
+    reads at most `max_reads` per call, starting at a place that moves every minute so every
+    such job is reached (review round 2), and `scan` reads them all (max_reads None). A blocked
+    or failed job says why, by class and never in its own words (workers.classify), and a blocked
+    one that delivered counts as `delivered`; `mine` holds the launches of the session asking, by
+    short id (MainFacts.workers), checked against each job's own createdAt."""
     counts: dict[str, int] = {}
     listed: list[dict] = []
     try:
-        job_dirs = [p for p in jobs_root.iterdir() if p.is_dir()]
+        job_dirs = sorted(p for p in jobs_root.iterdir() if p.is_dir())
     except OSError:
         job_dirs = []
+    jobs = []
     for job_dir in job_dirs:
         word, session_id = live._read_job_state(job_dir)
         if word is None:
@@ -184,14 +208,100 @@ def _background(jobs_root: Path, projects_root: Path, now: float) -> dict:
             continue
         if word not in ("working", "blocked") and now - mtime > _BACKGROUND_RECENT_SECONDS:
             continue
+        jobs.append((job_dir, word, session_id, mtime))
+    eligible = [(job_dir, session_id) for job_dir, word, session_id, mtime in jobs
+                if word == "working" and session_id and now - mtime >= stalls.IDLE_SECONDS
+                and (want is None or want(_job_name_and_cwd(job_dir)[1]))]
+    stalled: dict[Path, dict] = {}
+    if eligible:
+        kinds = stalls.live_sessions(projects_root.parent / "sessions")
+        candidates = []
+        for job_dir, session_id in eligible:
+            main = _job_transcript(projects_root, session_id)
+            if main is not None and kinds.get(session_id) == "bg" \
+                    and now - _mtime(main) >= stalls.IDLE_SECONDS:
+                candidates.append((job_dir, main))
+        if max_reads is not None and len(candidates) > max_reads:
+            start = int(now // 60) % len(candidates)
+            candidates = (candidates[start:] + candidates[:start])[:max_reads]
+        for job_dir, main in candidates:
+            stall = _job_stall(main, now, kinds)
+            if stall is not None:
+                stalled[job_dir] = stall
+    for job_dir, word, session_id, mtime in jobs:
+        stall = stalled.get(job_dir)
+        if stall is not None:
+            word = "stalled"
         counts[word] = counts.get(word, 0) + 1
-        if word in ("blocked", "failed") and session_id:
+        if stall is not None:
+            matches = sorted(projects_root.glob(f"*/{session_id}.jsonl"))
+            name, cwd = _job_name_and_cwd(job_dir)
+            launch = (mine or {}).get(job_dir.name)
+            listed.append({"session": live.session_public_id(matches[0]) if matches else None,
+                           "state": "stalled", "age_seconds": stall["idle_seconds"],
+                           "session_id": session_id, "name": name, "cwd": cwd,
+                           "stall": stall,
+                           "mine": isinstance(launch, dict) and workers.created_during(
+                               workers.read_job(str(job_dir / "state.json")) or {},
+                               launch.get("ts"), launch.get("end"))})
+        elif word in ("blocked", "failed") and session_id:
             matches = sorted(projects_root.glob(f"*/{session_id}.jsonl"))
             public = live.session_public_id(matches[0]) if matches else None
             name, cwd = _job_name_and_cwd(job_dir)
-            listed.append({"session": public, "state": word, "age_seconds": round(now - mtime),
-                           "session_id": session_id, "name": name, "cwd": cwd})
+            data = workers.read_job(str(job_dir / "state.json")) or {}
+            cls, label = workers.classify(data)
+            launch = (mine or {}).get(job_dir.name)
+            shown = "delivered" if cls == workers.DELIVERED_WAITING else word
+            counts[word] -= 1
+            counts[shown] = counts.get(shown, 0) + 1
+            if not counts[word]:
+                del counts[word]
+            listed.append({"session": public, "state": shown, "age_seconds": round(now - mtime),
+                           "session_id": session_id, "name": name, "cwd": cwd,
+                           "class": cls or workers.UNKNOWN, "label": label,
+                           "short": job_dir.name,
+                           "mine": isinstance(launch, dict) and workers.created_during(
+                               data, launch.get("ts"), launch.get("end"))})
     return {"counts": counts, "sessions": listed}
+
+
+def own_workers(main_path: Path) -> dict[str, dict]:
+    """The workers a session launched, from its transcript (for `scan`, which reads the caller's
+    session only for this)."""
+    follower = live.SessionFollower(main_path, caller_session=None)
+    _restore(follower, state.read_cache(follower.store_path))
+    follower._read()
+    _save(follower, {}, time.time())
+    return follower.main.workers
+
+
+def _job_transcript(projects_root: Path, session_id: str) -> Path | None:
+    matches = sorted(projects_root.glob(f"*/{session_id}.jsonl"))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return float("inf")
+
+
+STALL_UNKNOWN = object()  # a read cut short: neither a stall nor the end of one
+
+
+def _job_stall(main: Path, now: float, kinds: dict[str, str],
+               deadline: float | None = None) -> object:
+    """docs/DESIGN.md 4.14.4 (field report 2026-11-03): the STALLED reading of a background
+    job's own session, from its own snapshot (without a BACKGROUND list of its own), or None. With
+    a `deadline` (time.monotonic), a read cut short keeps its place and returns STALL_UNKNOWN."""
+    read: dict = {}
+    try:
+        found = snapshot(main, now=lambda: now, background=False, live_kinds=kinds,
+                         read_deadline=deadline, read_state=read).get("stalled")
+    except OSError:
+        return None if deadline is None else STALL_UNKNOWN
+    return STALL_UNKNOWN if deadline is not None and not read.get("complete") else found
 
 
 def _job_name_and_cwd(job_dir: Path) -> tuple[str | None, str | None]:
@@ -230,19 +340,29 @@ def _workflow(main: live.MainFacts, run_id: str) -> dict:
 def _commands(main: live.MainFacts, stamp: float) -> dict:
     """docs/DESIGN.md 4.14.4 (0.4): the session's background shell commands by native end; no
     end notice is "running" only as far as the transcript knows, so the oldest one's launch age
-    goes beside the count."""
+    goes beside the count, and (field report 2026-11-03) each running one says how long its
+    files have been unchanged and whether it waits on stdin."""
     counts, oldest = main.commands()
     return {"counts": counts,
-            "oldest_running_seconds": round(stamp - oldest) if oldest is not None else None}
+            "oldest_running_seconds": round(stamp - oldest) if oldest is not None else None,
+            "running": stalls.running_commands(main, stamp)}
 
 
-def snapshot(main_path: Path, *, now=time.time, jobs_root: Path | None = None) -> dict:
+def snapshot(main_path: Path, *, now=time.time, jobs_root: Path | None = None,
+             background: bool = True, live_kinds: dict[str, str] | None = None,
+             read_deadline: float | None = None, read_state: dict | None = None) -> dict:
     """docs/DESIGN.md 4.14.4: the status of one session, as a dict (`--json` prints it)."""
     stamp = now()
     follower = live.SessionFollower(main_path, jobs_root=jobs_root, now=now, caller_session=None)
     data = state.read_cache(follower.store_path)
     _restore(follower, data)
-    follower._read()
+    read_complete = follower._read(deadline=read_deadline) and not follower.read_failed
+    try:  # a line still being written may be the session acting again (review round 3)
+        read_complete = read_complete and follower.main_tail.offset >= main_path.stat().st_size
+    except OSError:
+        read_complete = False
+    if read_state is not None:
+        read_state["complete"] = read_complete
     checks = data.get("checks") if isinstance(data.get("checks"), dict) else {}
     cached: dict = {}
     rows: list[dict] = []
@@ -300,6 +420,16 @@ def snapshot(main_path: Path, *, now=time.time, jobs_root: Path | None = None) -
         rows.append(row)
     _save(follower, cached, stamp)
     projects_root = follower.main_path.parent.parent
+    background_rows = {"counts": {}, "sessions": []}
+    if background:
+        background_rows = _background(follower.jobs_root, projects_root, stamp,
+                                      mine=follower.main.workers)
+        # field report 2026-11-04: a background worker owns none of the machine's other sessions
+        kinds = stalls.live_sessions(stalls.default_sessions_root(follower.main_path))
+        # with a launch whose id it never saw, or past the facts' bound, any row may be its own
+        if kinds.get(follower.main_path.stem) == "bg" and not follower.main.unlinked_launches \
+                and len(follower.main.workers) < workers.WORKERS_KEPT:
+            background_rows["launched"] = len(follower.main.workers)
     return {
         "session": follower.public_id, "counts": counts,
         "subagents": rows,
@@ -307,7 +437,15 @@ def snapshot(main_path: Path, *, now=time.time, jobs_root: Path | None = None) -
             _workflow(follower.main, run_id) for run_id in sorted(follower.main.workflows)
         ],
         "commands": _commands(follower.main, stamp),
-        "background": _background(follower.jobs_root, projects_root, stamp),
+        # review round 2: never from cached facts alone when this read failed or stopped short
+        "stalled": None if not read_complete else stalls.session_stall(
+            follower.main, session_id=follower.main_path.stem,
+            sessions_root=stalls.default_sessions_root(follower.main_path), now=stamp,
+            job_state=_job_word(follower.jobs_root, follower.main_path.stem), live=live_kinds,
+            waiting_on_agents=bool(counts["running"] or counts["waiting"]) or any(
+                "ended" not in _workflow(follower.main, run_id)
+                for run_id in follower.main.workflows)),
+        "background": background_rows,
         "names_unavailable": follower.names.unavailable,
     }
 
@@ -338,6 +476,7 @@ def render_text(snap: dict, redactor: Redactor, now: float | None = None) -> str
     now = time.time() if now is None else now
     counts = snap["counts"]
     total = sum(counts.values())
+    fixed: set[int] = set()  # indices of lines the redactor must not see (fixed text)
     lines = [
         f"STATUS  session {snap['session']}: {_plural(total, 'subagent')} "
         f"({counts['running']} running, {counts['returned']} returned, "
@@ -414,18 +553,60 @@ def render_text(snap: dict, redactor: Redactor, now: float | None = None) -> str
             part = f"{n} {word}"
             age = commands.get("oldest_running_seconds")
             if word == "running" and isinstance(age, (int, float)):
-                part += f" ({'the oldest ' if n > 1 else ''}launched {_age(age)} ago)"
+                part += f" ({'the oldest ' if n > 1 else ''}launched {_age(age)} ago"
+                part += _silence_words(commands.get("running") or [], n) + ")"
             parts.append(part)
         lines.append(_row("COMMANDS", f"{sum(command_counts.values())} in the background: "
-                                      f"{', '.join(parts)}; status does not check their output"))
+                                      f"{', '.join(parts)}; status checks only whether they "
+                                      f"still write"))
+    stall = snap.get("stalled")
+    if stall:
+        # field report 2026-11-03: idle on a command that will not end; nothing native says so
+        what = (f"{_plural(stall['commands'], 'background command')} "
+                f"{'has' if stall['commands'] == 1 else 'have'} written nothing")
+        if stall.get("silent_seconds") is not None:
+            what += f" for {_age(stall['silent_seconds'])}"
+        if stall.get("waiting_on_stdin"):
+            what += ", waiting on stdin" if stall["commands"] == 1 else \
+                f", {stall['waiting_on_stdin']} waiting on stdin"
+        # field report 2026-11-04: only a command's own files are seen, and it may end yet
+        lines.append(_row("STALLED", f"idle {_age(stall['idle_seconds'])}; {what}; "
+                          + ("nothing will wake this session" if stall.get("waiting_on_stdin")
+                             else "it may be hung or writing elsewhere, and only its end would "
+                                  "wake this session")))
+        tasks = stall.get("task_ids") or []
+        stop = (f"TaskStop {', '.join(tasks)}" if named and tasks
+                else "stop it (TaskStop; --local names the task)")
+        if not stall.get("waiting_on_stdin"):
+            stop = f"if it is stuck, {stop}"
+        # fixed words and native task ids only, so the line skips the redactor, which would
+        # hide `/dev/null` as a path
+        fixed.add(len(lines))
+        lines.append(" " * (_ROW_WIDTH + 2) + f"-> {stop}, then rerun it with </dev/null and a "
+                                              f"deadline")
     background = snap["background"]
     if background["counts"]:
         total_bg = sum(background["counts"].values())
-        order = {"working": 0, "blocked": 1, "done": 2, "stopped": 3, "failed": 4}
+        order = {"working": 0, "stalled": 1, "blocked": 2, "delivered": 3, "done": 4, "stopped": 5,
+                 "failed": 6}
         breakdown = ", ".join(f"{n} {word}" for word, n in sorted(
             background["counts"].items(), key=lambda kv: (order.get(kv[0], 9), kv[0])))
-        lines.append(f"BACKGROUND {_plural(total_bg, 'session')} on this machine: {breakdown}")
-        for entry in background["sessions"]:
+        launched = background.get("launched")
+        scope = ""
+        if isinstance(launched, int):  # the session is itself a background worker
+            scope = (f"; this session launched {launched}, scan lists the rest" if launched
+                     else "; this session launched none, scan lists them")
+        lines.append(f"BACKGROUND {_plural(total_bg, 'session')} on this machine: {breakdown}"
+                     f"{scope}")
+        # field reports 2026-11-04: its own workers first; another session's old blocked row is
+        # one more on a line of its own, so the one that matters is not skimmed past
+        rows = background["sessions"]
+        if isinstance(launched, int):
+            rows = [entry for entry in rows
+                    if entry.get("mine") or entry.get("session") == snap["session"]]
+        old = [e for e in rows if _old_blocked(e)]
+        for entry in sorted((e for e in rows if not _old_blocked(e)),
+                            key=lambda e: not e.get("mine")):
             session = entry.get("session_id") if redactor.level == "raw" else entry["session"]
             if not session:
                 continue
@@ -436,16 +617,73 @@ def render_text(snap: dict, redactor: Redactor, now: float | None = None) -> str
                     label += f"  {entry['name']}"
                 if cwd:
                     label += f"  ({cwd})" if not label else f" ({cwd})"
-            lines.append(_row(entry["state"].upper(),
-                              f"{session}{label}  for {_age(entry['age_seconds'])}"))
+            if entry["state"] == "stalled":
+                stall = entry.get("stall") or {}
+                what = f"{_plural(stall.get('commands', 1), 'background command')} silent"
+                if stall.get("silent_seconds") is not None:
+                    what += f" {_age(stall['silent_seconds'])}"
+                if stall.get("waiting_on_stdin"):
+                    what += ", waiting on stdin"
+                lines.append(_row("STALLED", f"{session}{label}  idle {_age(entry['age_seconds'])}"
+                                             f"; {what}  -> agent-postmortem status "
+                                             f"{entry['session']}"))
+            else:
+                lines.append(_row(entry["state"].upper(), f"{session}{label}  for "
+                                                          f"{_age(entry['age_seconds'])}"
+                                                          f"{_why(entry, named)}"))
             listed += 1
+        if old:
+            lines.append(_row("BLOCKED", f"{len(old)} more in other sessions, for over 3 days "
+                                         f"(--json lists them)"))
     if snap.get("names_unavailable"):
         lines.append("  (stable aliases unavailable)")
     if listed and not named:
         lines.append(f"({HINT})")
     if redactor.level == "raw":
         return "\n".join(lines) + "\n"
-    return "\n".join(redactor(line) for line in lines) + "\n"
+    return "\n".join(line if index in fixed else redactor(line)
+                     for index, line in enumerate(lines)) + "\n"
+
+
+def _old_blocked(entry: dict) -> bool:
+    return entry.get("state") == "blocked" and not entry.get("mine") \
+        and (entry.get("age_seconds") or 0) > OLD_BLOCKED_SECONDS
+
+
+def next_action(entry: dict) -> str:
+    """The command that helps a blocked, delivered or failed background session."""
+    short = entry.get("short")
+    if entry.get("class") in (workers.ERROR, workers.FAILED, workers.DELIVERED_WAITING):
+        return f"claude logs {short}"
+    return f"claude attach {short}"
+
+
+def _why(entry: dict, named: bool) -> str:
+    """After a row's age: what it waits for, whose it is, and from `--local`, where a tool's
+    label and the short id are shown, what helps (field reports 2026-11-04)."""
+    cls = entry.get("class")
+    if cls is None:
+        return ""
+    parts = [] if cls == workers.FAILED else [
+        workers.reason_words(cls, entry.get("label") if named else None)]
+    if entry.get("mine"):
+        parts.append("dispatched by this session")
+    text = f"  {', '.join(parts)}" if parts else ""
+    return f"{text}  -> {next_action(entry)}" if named and entry.get("short") else text
+
+
+def _silence_words(running: list[dict], n: int) -> str:
+    """field report 2026-11-03: after a running count, how long the commands' files have been
+    unchanged, when that is past the silence mark, and how many wait on stdin."""
+    silent = [c for c in running if c.get("silent")]
+    stdin = sum(1 for c in silent if c.get("waiting_on_stdin"))
+    if not silent:
+        return ""
+    if n == 1 and len(silent) == 1:
+        quiet = silent[0].get("silent_seconds")
+        words = f", silent {_age(quiet)}" if quiet is not None else ", silent"
+        return words + (", waiting on stdin" if stdin else "")
+    return f", {len(silent)} silent" + (f", {stdin} waiting on stdin" if stdin else "")
 
 
 def render_json(snap: dict, redactor: Redactor) -> str:
@@ -454,10 +692,18 @@ def render_json(snap: dict, redactor: Redactor) -> str:
     shown["schema"] = 3
     shown["disclosure"] = redactor.level
     shown["document"] = "status"
+    shown["background"].pop("launched", None)  # text only: `mine` on each row says the same
     named = redactor.level in ("local", "raw")
     for entry in shown["background"]["sessions"]:
         if redactor.level != "raw":
             entry.pop("session_id", None)
+        if not named and isinstance(entry.get("stall"), dict):
+            entry["stall"].pop("task_ids", None)
+        if not named:  # a tool's label and the short id are shown from --local
+            entry.pop("label", None)
+            entry.pop("short", None)
+        elif redactor.level == "local" and isinstance(entry.get("label"), str):
+            entry["label"] = redactor(entry["label"])
         if named:
             entry["cwd"] = _shown_cwd(entry.get("cwd"), redactor.level)
             if redactor.level == "local":
@@ -468,6 +714,12 @@ def render_json(snap: dict, redactor: Redactor) -> str:
         else:
             entry.pop("name", None)
             entry.pop("cwd", None)
+    if not named:
+        # a native task id is shown from --local, like an agent id
+        for command in (shown.get("commands") or {}).get("running") or []:
+            command.pop("task_id", None)
+        if isinstance(shown.get("stalled"), dict):
+            shown["stalled"].pop("task_ids", None)
     for row in shown["subagents"]:
         if named and row.get("agent_id"):
             row["agent"] = row["agent_id"]

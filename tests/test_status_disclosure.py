@@ -92,7 +92,7 @@ def test_background_json_follows_the_same_levels(tmp_path, capsys):
     main_path, _ids = _busy_session(tmp_path)
     _with_blocked_job(tmp_path)
     share = json.loads(_status(capsys, main_path, "--json"))["background"]["sessions"]
-    assert share and set(share[0]) == {"session", "state", "age_seconds"}
+    assert share and set(share[0]) == {"session", "state", "age_seconds", "class", "mine"}
     local = json.loads(_status(capsys, main_path, "--json", "--local"))["background"]["sessions"]
     assert (local[0]["name"], local[0]["cwd"]) == (BG_NAME, "zz-bg-repo")
     assert "session_id" not in local[0]

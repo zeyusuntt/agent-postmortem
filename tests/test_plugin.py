@@ -110,17 +110,17 @@ def test_plugin_version_equals_package_version():
     assert plugin["version"] == package_version
 
 
-def test_pyproject_plugin_and_package_versions_are_all_0_4_0():
+def test_pyproject_plugin_and_package_versions_are_all_0_5_0():
     """docs/DESIGN.md 7.1's D1: the literal, not just mutual equality --
     a version bump that only kept two of the three in sync would still
     pass a pure-equality check."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert pyproject["project"]["version"] == "0.4.0"
+    assert pyproject["project"]["version"] == "0.5.0"
     plugin = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
-    assert plugin["version"] == "0.4.0"
+    assert plugin["version"] == "0.5.0"
     import agent_postmortem
 
-    assert agent_postmortem.__version__ == "0.4.0"
+    assert agent_postmortem.__version__ == "0.5.0"
 
 
 def test_pyproject_declares_agent_postmortem_as_primary_and_postmortem_as_alias():
@@ -141,9 +141,12 @@ def test_pyproject_declares_agent_postmortem_as_primary_and_postmortem_as_alias(
 # event -> (matcher or None, run.sh subcommand, timeout)
 _EXPECTED_HOOKS = {
     "SessionStart": [(None, "session-start", 90)],
-    "Stop": [(None, "check", 10)],
+    # 4.14.5 (field reports 2026-11-04): the idle watcher, in the background; its exit 2 wakes
+    "Stop": [(None, "check", 10), (None, "stop-watch", 1209600)],
     "StopFailure": [(None, "check", 10)],
     "SessionEnd": [(None, "session-end", 20)],
+    # 4.14.5 (field report 2026-11-03, item 5): a background codex exec with no stdin redirect
+    "PreToolUse": [("^Bash$", "pre-bash", 5)],
     # docs/DESIGN.md 7.1 and 4.14.5: the Workflow launch hint, then the Agent/Task one
     "PostToolUse": [("^Workflow$", "workflow-launched", 10),
                     ("^(Agent|Task)$", "agent-launched", 10),
@@ -162,6 +165,19 @@ def test_hooks_json_matches_the_design_table():
         assert len(entries) == len(expected), f"{event}: expected {len(expected)} hook groups"
         for entry, (matcher, subcommand, timeout) in zip(entries, expected):
             _check_hook_entry(event, entry, matcher, subcommand, timeout)
+
+
+def test_only_the_idle_watcher_runs_in_the_background():
+    hooks = _load_json(PLUGIN_ROOT / "hooks" / "hooks.json")["hooks"]
+    background = [(event, command) for event, entries in hooks.items() for entry in entries
+                  for command in entry["hooks"]
+                  if command.get("async") or command.get("asyncRewake")]
+    assert len(background) == 1
+    (event, command), = background
+    assert event == "Stop" and command["command"].endswith(" stop-watch")
+    assert command["async"] is True and command["asyncRewake"] is True
+    # Claude Code enforces it, and past 2^31 ms a timer fires at once
+    assert command["timeout"] * 1000 < 2 ** 31
 
 
 def _check_hook_entry(event, entry, matcher, subcommand, timeout):

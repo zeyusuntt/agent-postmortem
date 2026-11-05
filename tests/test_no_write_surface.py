@@ -164,7 +164,7 @@ def _write_and_exec_sink_calls() -> list[tuple[str, int, str, ast.Call]]:
 # is_on_the_explicit_allowlist below; any key here the sweep no longer finds
 # fails it too.
 _ALLOWED_SINK_CALLS = {
-    ("hooks_cli.py", 266, "path.open"):
+    ("hooks_cli.py", 278, "path.open"):
         "_iter_json_lines: read a unit's own journal/transcript line by line, mode 'r'",
     ("observe.py", 277, "subprocess.run"):
         "observe.py's one documented git invocation point (docs/DESIGN.md 4.9 rule 4): "
@@ -276,16 +276,32 @@ _ALLOWED_SINK_CALLS = {
     ("live.py", 119, "self.path.open"):
         "Tail.read: read appended transcript bytes from the last offset, mode 'rb', never "
         "written (docs/DESIGN.md 4.14.3)",
-    ("live.py", 1148, "path.open"):
+    ("stalls.py", 51, "<expr>.open"):
+        "_last_line: read the last 1 KB of a background command's output file for codex's "
+        "stdin line, mode 'rb', never written (docs/DESIGN.md 4.14.4)",
+    ("live.py", 1502, "path.open"):
         "SessionFollower._nested_link: read a nested child's .meta.json (at most 64 KB) for its "
         "launcher and launch id, mode 'rb', never written (docs/DESIGN.md 4.14.3)",
-    ("cli.py", 1706, "path.open"):
+    ("cli.py", 2991, "os.open"):
+        "_silence_closed_stdout: open the null device write-only and duplicate it onto stdout's "
+        "descriptor after watch's reader closed the pipe, so the exit flush has somewhere to go; "
+        "writes nothing else (docs/DESIGN.md 4.12)",
+    ("cli.py", 1828, "path.open"):
         "_has_a_timestamp: read a run file's first 64 KB for a timestamp before the --since "
         "pre-filter skips it, mode 'rb', never written (docs/DESIGN.md 4.14.9)",
-    ("hook_gate.py", 87, "<expr>.open"):
+    ("workers.py", 181, "<expr>.open"):
+        "read_job: read a background session's job file, at most 1 MB, mode 'rb', never written "
+        "(docs/DESIGN.md 4.14.5)",
+    ("watcher.py", 66, "<expr>.open"):
+        "_version_ok: read the main transcript's last 64 KB for the Claude Code version, mode "
+        "'rb', never written (docs/DESIGN.md 4.14.5)",
+    ("watcher.py", 152, "self.main_path.open"):
+        "active_again: read the main transcript's bytes appended since the watcher's last look, "
+        "mode 'rb', never written (docs/DESIGN.md 4.14.5)",
+    ("hook_gate.py", 98, "<expr>.open"):
         "_read_range: read the main transcript's bytes appended since the gate's offset (or its "
         "last 64 KB) to look for a mark, mode 'rb', never written (docs/DESIGN.md 4.14.5)",
-    ("watch.py", 179, "path.open"):
+    ("watch.py", 197, "path.open"):
         "_read_new_journal_lines: read appended journal bytes, mode 'rb', never written",
     ("reader.py", 3867, "self.path.open"):
         "ParentIndex._hash_prefix: re-read already-parsed prefix bytes to validate the "
@@ -317,7 +333,15 @@ def test_no_write_sink_call_outside_state_py_writes_anywhere():
     for module, line, sink, node in _write_and_exec_sink_calls():
         if module == "state.py":
             continue
-        if sink.endswith(".open"):
+        if sink == "os.open":
+            # cli.py's closed-stdout redirect (docs/DESIGN.md 4.12) is the one os.open outside
+            # state.py, and it may only open the null device; _path_open_mode would read its
+            # flag argument as the default mode "r" and pass any path
+            target = node.args[0] if node.args else None
+            assert (isinstance(target, ast.Attribute) and target.attr == "devnull"
+                    and isinstance(target.value, ast.Name) and target.value.id == "os"), (
+                f"{module}:{line} os.open of something other than os.devnull")
+        elif sink.endswith(".open"):
             mode = _path_open_mode(node)
             assert set(mode) <= set("rb"), f"{module}:{line} opens in a writing mode: {mode!r}"
         elif sink in ("subprocess.run", "shutil.which"):

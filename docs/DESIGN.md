@@ -117,7 +117,7 @@ Three verbs, in order of value: diagnose (`scan`, `run`, hooks), solve
   including a hook message; nothing in the user config (4.10) can widen it
   (4.13.5).
 
-## 3. Data formats (observed on Claude Code 2.1.251 to 2.1.312)
+## 3. Data formats (observed on Claude Code 2.1.251 to 2.1.318)
 
 `journal.jsonl` (workflow runs): one JSON object per line. Observed `type`
 values: `launched`, `started`, `result`, `failed`. A `started` event carries
@@ -1659,6 +1659,39 @@ killed or failed attempt is known to have written a path and the run ended
 within 72 hours (or its end time is unknown); it never names an
 instruction file or `apply`.
 
+**Stalled background sessions (field reports 2026-11-03, item 3 of "no silent failures").** A
+worker that never reports is the blind spot of "check a worker when it says done", so NEEDS
+ATTENTION also lists every background session `status`'s BACKGROUND list reads as `stalled`
+(4.14.4, the same rule and the same jobs list, beside the projects root `--root` names), first:
+`<sid>  idle <age>  STALLED  <k> background command(s) silent <q>, waiting on stdin; nothing will
+wake it` or, with no wait on stdin, `... silent <q>; may be hung or writing elsewhere, and only its
+end would wake it` (field report 2026-11-04: a healthy run writing to a folder of its own read as
+"writes nothing"), next command `agent-postmortem status <sid>`. It is read at scan time, never from
+the scan cache, and regardless of `--since`, since the session is stuck now; `--here` keeps only
+a job whose `cwd` is the caller's directory or under it, and `--kind workflow` lists none. A
+stalled session that is already a candidate is listed once, as STALLED, its own reason kept
+after `(also: ...)` and its caller marker kept (or taken from its session id, review round 2),
+and leaves LIVE NOW; the header's `N` counts it when it is no scanned run
+(a worker with no subagent and no workflow is none). `scan --json` gains `stalled`, present only when a
+session is stalled (every other scan document keeps its shape): `{session, idle_seconds,
+commands, waiting_on_stdin, silent_seconds, next_command}` per session. The exit
+code is unchanged (`tests/test_stalls.py`).
+
+**Blocked and failed background sessions (field reports 2026-11-04: "NEEDS ATTENTION (0 of 14
+runs) nothing needs attention" with a worker blocked all night).** NEEDS ATTENTION also lists every
+background session whose job is blocked on a person (`permission`, `question`, `waiting-prompt`,
+`error`, `unknown`, 4.14.5) or `failed` within the last day: `<sid>[ (dispatched by this session)]
+for <age>  BLOCKED  <why>` or `... FAILED  this background session failed`, next command `claude
+attach <short>` or `claude logs <short>` from `--local` and `agent-postmortem status --local` below
+it. The caller's own workers come first of everything (`CLAUDE_CODE_SESSION_ID` names the caller,
+whose transcript holds its launches), the others after the stalled ones, and another session's
+blocked for over 3 days is one line: `<n> more blocked in other sessions for over 3 days:
+agent-postmortem status`. One that delivered waits on a decision and is not listed. It is read at
+scan time, regardless of `--since`, with the same `--here`, `--kind workflow`, `(also: ...)` and
+header rules as STALLED above. `scan --json` gains `blocked`, present only when one is listed:
+`{session, state, class, age_seconds, mine, next_command}` per session, and `short` and `label` from
+`--local`. The exit code is unchanged (`tests/test_worker_rows.py`).
+
 **Empty groups (field milestone F, P12).** When NEEDS ATTENTION has no candidate its
 header is followed by the one line `  nothing needs attention`, so the group is never
 a bare header; with no LIVE NOW run the LIVE NOW group is omitted entirely, header
@@ -1905,6 +1938,8 @@ exit codes (the first condition that applies wins):
 watch:
 exit codes (the first condition that applies wins):
   exit 1  usage error
+  exit 141  the reader of stdout closed the pipe (128 + SIGPIPE, as a shell
+          reports it): watch stops at the line it could not deliver
   exit 2  no journal appeared within 60 seconds (with --session: no such session)
   exit 3  DONE with verdict FAILED
   exit 4  LIMIT (--max-hours, or a malformed journal), or DONE with the lifecycle
@@ -2627,7 +2662,15 @@ workflow run, designed to be the command a Claude Code Monitor runs: it
 prints one line per event a person would act on and nothing otherwise, then
 a terminal DONE or LIMIT line, and exits. Since v0.3 (N8b) it also prints one `START` line
 first and one `OK` line per returned result, so a quiet run is distinguishable from a dead
-watcher. It never writes inside the run
+watcher. **(field report 2026-11-03)** Every line is flushed as it is printed: a Monitor reads
+stdout through a pipe, where Python buffers by block, so an unflushed START, KILL or OK reached
+it only when watch exited at the end of the run (`tests/test_watch_pipe.py` reads START and OK
+through a pipe while the run is open). `watch --session` (4.14.3) flushes the same way. A reader
+that closes the pipe therefore stops watch at the next line (review round 2): both forms exit
+141 (128 + SIGPIPE, as a shell reports it) with nothing on stderr, stdout pointed at the null
+device first so the interpreter's own exit flush cannot fail a second time. A reader that stays
+open without reading blocks watch once the pipe is full, as it blocks any writer (the earlier
+block-buffered output blocked the same way, a buffer later). It never writes inside the run
 directory, arms nothing on its own, and holds no state across invocations.
 The run id on a KILL or FAILED line (text and JSON) is the directory name
 only when it matches the run id grammar; otherwise it is the replacement
@@ -2991,7 +3034,9 @@ classification, except that a shell call containing commit segments (the commit
 grammar below) takes the `repo` of its one entry from the commit segments
 instead of from the call's own candidate: the single distinct candidate (C-10:
 the segment's candidate base with its `-C` options applied) when every commit
-segment yields the same one, else null. A targetless call (rows 2, 3, 6) gives
+segment yields the same one, else null. Commit segments of a command the lexer does not
+place (`CommitFacts.placed` false, field report 2026-11-03 below) have no known base, so
+such a call keeps its own candidate. A targetless call (rows 2, 3, 6) gives
 exactly one `possible` entry, never one per repository. The ledger's `reasons` are the closed codes below, each when
 its producer fired, deduplicated, in the fixed order of that list; a ledger
 with no reason is `complete`. Run-level producers (`unassignable_attempt`,
@@ -3561,6 +3606,50 @@ call counts no id at all, even when another commit segment qualifies.
 Everything else is an ordinary segment. No substring fallback: `commit_ids` is
 empty for every call that is not a commit call.
 
+**(field report 2026-11-03, "watch under Monitor delivers nothing until the run ends", its
+COMMITS part)** The call-level placement requirement above is replaced by a judgment of each
+segment, the way FA6 (below) judges presence, because an assignment or an expansion in another
+segment hid a literal commit: the field commit ended `L=logs/x && ... > $L/a.log && SKIP=mypy
+mise exec -- git commit -m '...'`, git printed its summary line, and the agent read `COMMITS
+?`. The rules (`commands._commit_segments`): (1) a command in which any word, with its quotes
+removed, assigns a `GIT_` variable (`GIT_DIR=`, `GIT_WORK_TREE=`, `GIT_INDEX_FILE=`, as a
+prefix, a segment of its own, or an `export` or `env` operand, quoted or not) counts no id,
+since git reads its repository, work tree and index from those; (2) a segment the lexer raised a reason for, other than `first_word`, is
+skipped, and makes the call count no id when its words spell `commit` and its first word is
+not an ordinary program (a literal name other than `git`, `mise`, `env`, `bash`, `sh` and
+the opaque first words: `echo commit > $L/note` is skipped, `git commit -m "$MSG"` and `$GIT
+commit` poison), or when it holds a substitution, whatever its first word, and that text
+spells `commit` (review round 2: `echo "$(git commit -q -m b)"` poisons). A substitution is a
+`$(` or backtick in a word outside single quotes and not escaped, a `<(` or `>(` outside any
+quotes, a `$(` or backtick in a redirect target (kept without its quotes, so counted even when
+single-quoted), or the lexer's `command_substitution`, `process_substitution` or `paren`
+reason; `echo '$(git commit -q)'` is data (review round 3). An ANSI-C quote `$'...'` counts
+as an opener, since the lexer does not model it (it ends `$'can\'t'` at the escaped quote,
+where bash does not) and nothing after it can be judged (review round 4). A heredoc with an unquoted
+delimiter whose body has a `$(` or backtick and spells `commit` poisons the call from every
+segment, reason or none, since the lexer gives the body's reason to the segment it is building
+when the body is read (the next one in `cat <<EOF | cat`), and quotes in the body stop
+nothing; (3) every other segment is read through its run-as-is prefix (FA6's
+`_run_as_is_command`: leading `NAME=VALUE`, `env` with assignments only, `mise exec|x
+[tool@version ...] --`); a segment of literal assignments alone runs nothing and is skipped;
+a prefix that takes an option or lacks `--`, or an opaque first word (`eval`, `time`, also one
+the prefix exposed: `mise exec -- time git commit -q`), before words that spell `commit`,
+poisons the call; a git subcommand other than `commit` (`git log --grep=commit`) does not;
+(4) what remains is judged by the rules above (commit segment, one `bash -c` level whose
+STRING must itself be placed, poisoning, background). A placed command reads as before except
+for (1) and a segment led by `mise`: `mise exec|x ... --` is looked through, and a `mise`
+prefix that takes an option or lacks `--` poisons the call when its words spell `commit`
+(`git commit -m x && mise exec node@20 echo commit` counted its id before and counts none
+now). Every segment of a command the lexer does not place carries `repo` null, even behind an
+absolute `-C` or a `cd` inside a wrapper (the lexer places no base there), and
+`CommitFacts.placed` false; the ledger keeps the call's own candidate (above). A commit hidden in an opaque segment that does
+not spell `commit` (`$CMD`, a script) is not counted, as a script's commit is not for a placed
+command: the count stays a lower bound. On this machine's 30 days of transcripts (5,838 calls
+that spell `commit`) 79 calls gain their ids, none loses one, and the calls whose output has a
+summary line but read no id go from 97 to 18 (an expansion in the commit itself, a quiet flag,
+no literal commit segment). `tests/test_e48_commit_ids_behind_a_prefix.py`; the E48 rows of
+`tests/test_n4a_commit_grammar.py`.
+
 Background: the call counts no id when a commit segment is backgrounded in
 the text, that is, when the commit segment, the pipeline (segments joined by
 `|` or `|&`) that contains it, or the whole `&&`/`||` list that contains it,
@@ -3617,8 +3706,9 @@ DIR`, `mise exec -C DIR`, which could change the directory), `mise exec` without
 and every other opaque first word (`eval`, `time`, `nohup`) still read as no commit. The
 field commit was `SKIP=mypy mise exec -- git commit -m ...` followed by `git log -1
 --format='%h %s'`, so it printed no summary line: its agent read `COMMITS 0` and now
-reads `?`. A1's id grammar is unchanged: such a segment stays unplaced there, since an
-assignment can name another repository (`GIT_DIR=...`). The attempt fact is
+reads `?`. A1's id grammar was left unchanged then (such a segment stayed unplaced, since an
+assignment can name another repository); since the field report of 2026-11-03 it reads the id
+behind any run-as-is prefix and counts none when a word assigns a `GIT_` variable (above). The attempt fact is
 `commit_commands_without_id` (4.1, 4.2): the count of shell CALLS, never
 segments, with completion `completed_ok` that contain at least one such segment and
 whose `commit_ids` is empty (two quiet segments in one call count one; a
@@ -3626,8 +3716,9 @@ whose `commit_ids` is empty (two quiet segments in one call count one; a
 counts none).
 
 What an id means: a commit id in `AttemptFacts.commits` is an **unverified,
-summary-shaped output line** selected from a completed result whose placed
-command text contains a qualifying commit segment. It is not attributed to
+summary-shaped output line** selected from a completed result whose command
+text contains a qualifying commit segment (judged per segment since the field report of
+2026-11-03, above). It is not attributed to
 git, and nothing more is claimed: not that the commit segment ran, not that
 it succeeded. An id can be false in every way text-only evidence allows: the
 commit segment may never have run (short-circuited by `&&` or `||`, or
@@ -4786,7 +4877,7 @@ line names no evidence location of its own: its next step is the read-only comma
 | R4 `output_missing_at_return` | same | `missing_artifact`'s path from the subagent's first prompt does not exist at return. (v0.4) The shared path rule requires the path to start a token and skips templates (`<case>`, `{id}`, `*`, `$VAR`): on the corpus, 130 of 165 matches were a slash inside a relative path or a placeholder. A period that ends the sentence right after the path no longer hides it (the rule had missed "write findings to /tmp/x/review.md."); the `codex_write_denied` fixture's prompt is such a sentence, so its run gains one info `missing_artifact` finding in the goldens | `CLAIM` |
 | R5 `unexplained_kill` | a session subagent's transcript ends in the kill marker and nothing in the session explains it | 4.4's `parent_stop` and `human` rules both fail (no TaskStop, no session interrupt within 30 s); the native notice and the marker both read as a user stop (#84346) | `KILL` |
 | R6 `left_changes` | a killed, stalled or failed attempt, any kind, whose ledger (4.13.1) names written paths or commits | the attempt's own ledger, counted, never listed in share | second line of `KILL` / `FAILED` |
-| R7 (not built) | `Stop` in a headless session while `background_tasks` lists running work | measured, not needed: on 2.1.314 a `claude -p` run whose main agent ends its turn right after launching a background subagent stays alive and receives that subagent's notification on its own (fault injection, `.reviews/live/RESULTS.md`), so a sentence telling it to wait repeats native behavior (4.14.6 rule 1) | none |
+| R7 (not built as a wait notice) | `Stop` in a headless session while `background_tasks` lists running work | measured, not needed: on 2.1.314 a `claude -p` run whose main agent ends its turn right after launching a background subagent stays alive and receives that subagent's notification on its own (fault injection, `.reviews/live/RESULTS.md`), so a sentence telling it to wait repeats native behavior (4.14.6 rule 1). Work that never ends gets no notification at all: the Stop-time deadline request (4.14.5, field report 2026-11-03) covers a running shell command | none (`DEADLINE` from 4.14.5) |
 
 Not built, with the measurement that decided it: a free-text claim check on a subagent's report
 ("tests pass", "committed", "wrote X") held on hand review in at most 2 of 52 regex hits over
@@ -4936,10 +5027,44 @@ STATUS  session <sid>: <n> subagents (<r> running, <k> returned, <x> interrupted
   WORKFLOW     <run id>  -> agent-postmortem watch <run id>
   WORKFLOW     <run id>  <failed|killed|stopped>  -> agent-postmortem run <run id>
   WORKFLOWS    <c> completed  -> agent-postmortem status <sid> --json lists them
-  COMMANDS     <n> in the background: <r> running ([the oldest ]launched <age> ago), <c> completed, <f> failed, ...; status does not check their output
-BACKGROUND <m> sessions on this machine: <n> working, <n> blocked, <n> done, ...
-  BLOCKED      <sid>  for <age>
+  COMMANDS     <n> in the background: <r> running ([the oldest ]launched <age> ago[, silent <q> | , <k> silent][, waiting on stdin | , <j> waiting on stdin]), <c> completed, <f> failed, ...; status checks only whether they still write
+  STALLED      idle <age>; <k> background command(s) has/have written nothing for <q>, waiting on stdin; nothing will wake this session
+               -> stop it (TaskStop; --local names the task), then rerun it with </dev/null and a deadline
+  STALLED      idle <age>; <k> background command(s) has/have written nothing for <q>; it may be hung or writing elsewhere, and only its end would wake this session
+               -> if it is stuck, stop it (TaskStop; --local names the task), then rerun it with </dev/null and a deadline
+BACKGROUND <m> sessions on this machine: <n> working, <n> stalled, <n> blocked, <n> delivered, <n> done, ...
+  STALLED      <sid>  idle <age>; <k> background command(s) silent <q>[, waiting on stdin]  -> agent-postmortem status <sid>
+  BLOCKED      <sid>  for <age>  <why>[, dispatched by this session][  -> claude attach <short>]
+  DELIVERED    <sid>  for <age>  delivered, waiting on a decision[, dispatched by this session][  -> claude logs <short>]
+  FAILED       <sid>  for <age>[  dispatched by this session][  -> claude logs <short>]
+  BLOCKED      <n> more in other sessions, for over 3 days (--json lists them)
 ```
+
+Blocked rows (field reports 2026-11-04). `<why>` is the class's words (4.14.5): `waiting for a
+permission approval[ (approve <tool>)]`, `waiting for an answer`, `waits for its first prompt`,
+`stopped on an API error`, `the reason is not recorded`. A blocked job that delivered counts as
+`delivered` in the BACKGROUND line and has its own row, since a finished worker waiting on a
+decision read the same as one stuck all night. `dispatched by this session` comes from the
+session's own launches (`MainFacts.workers`, by the job's `createdAt`), and those rows come first.
+Another session's blocked row older than 72 h folds into the count. In a session that is itself a
+background worker (field report 2026-11-04: "BACKGROUND 25 sessions" in a worker that owns none of
+them) the text lists only the rows it launched and the count line ends `; this session launched
+<n>, scan lists the rest`, unless a `claude --bg` call's result named fewer ids than it launched, its
+call aged out unanswered, or it is past the 128-launch bound, when any row may be its own and all
+stay; `--json` keeps every row, with `mine`.
+The tool's label and the short
+id, with the `claude attach` or `claude logs` that helps, are shown from `--local`; the worker's
+own words are shown at no level. `--json` adds `class` and `mine` to each listed entry, and `label`
+and `short` from `--local`.
+
+Subagent notices (field report 2026-11-04: a subagent read RUNNING after the harness said it
+finished). A subagent resumed by a message ends with a notice naming only its task, no tool-use id,
+and the live read now takes that as its latest end when the task is a subagent this session launched
+(a queue or `task-notification` entry whose whole text is the one envelope, as ever). A user entry
+repeating the queue entry's text is its delivery copy and keeps the queue's time. Baseline rule 3
+takes such an ending from before the upgrade into the baseline. Without it the
+first notice stood, which the transcript had grown past, so it read as resumed and running. `run`'s
+evidence model keeps its own rule (4.13.3): a notice with no tool-use id is not accepted there.
 
 Workflows (0.4, field report 2026-10-30 "status lists every workflow with a watch hint and no
 verdict": 27 lines for one session, ended ones included). A workflow's end is read from its
@@ -4981,11 +5106,87 @@ its own (4.14.3). With no end known a
 command is `running`: a session that closed with one still out never gets a notice (1 of
 1,730 commands over 14 days here), so the line gives the oldest running one's launch age (for a call the
 timeout moved to the background, its result time less the result's `timedOutAfterMs`). One
-count line, only when the session has any; it says status does not check their output, because
-nothing here reads what a command did. `--json` carries `commands`: `{counts: {running,
-completed, failed, killed, stopped[, ended]}, oldest_running_seconds}`. Hook messages and the
-resume sentence never mention commands: Claude Code tells the agent each end itself (4.14.6
-rule 1) (`tests/test_status_commands.py`).
+count line, only when the session has any; it says status checks only whether they still write
+(below), because nothing here reads what a command did. `--json` carries `commands`: `{counts: {running,
+completed, failed, killed, stopped[, ended]}, oldest_running_seconds}`. Hook messages and the resume sentence never mention a command's end: Claude Code tells the agent each end itself (4.14.6
+rule 1); the per-call hook tells a command that stopped writing (4.14.5, field report 2026-11-03)
+(`tests/test_status_commands.py`).
+
+Silent commands and stalled sessions (field reports 2026-11-03 "a background codex exec hung
+23h on stdin and nothing flagged it" and "no silent failures"). A worker launched `codex exec
+... "$(cat prompt)" > review.md 2> review.log` in the background with no stdin redirect, ended
+its turn two minutes later ("waiting on the Codex review") and sat idle 26 h: codex had printed
+"Reading additional input from stdin..." (the log's one line) and waited on a stdin nobody
+closed, the job state read `working` throughout, and status printed "1 running (launched 23h
+ago)". The facts (main facts version 8; 6 and 7 were never released): each background command keeps the files it writes, its
+task output file (the launch result's "Output is being written to: <path>") and its own
+redirects of stdout or stderr (`>`, `>>`, `>|`, `&>`, `&>>`), resolved against the call's cwd,
+or against the directory of a leading `cd DIR &&` or `cd DIR;` (`live.command_outputs`). An
+output thrown away (`/dev/null`) or named by an expansion or a glob, a relative one after any
+other `cd`, `pushd` or `popd` word (one after another segment may not run, one in a pipe runs in
+a subshell, `builtin cd` is one too), every output of a command with a subshell anywhere in a
+segment (an unquoted `(` that is no `$(`, `<(` or `>(`: `time (cd x && ...)`, `time(cd x
+...)`), a `{ ...; }` group or shell control flow (`if`, `for`,
+`while`, `case`, ...), a launch result that names no task output file (an older Claude Code),
+and a launch whose call is no longer kept (only the newest 64 calls wait for their result) mark
+the command's outputs as not watchable (review rounds 1 to 3). `>& file` is read as `&> file`;
+`2>&1`, `>&-` and `>&1-` are no outputs (review round 4). The session keeps the time of its last `system/turn_duration` entry
+(the turn's end) and of its last user, assistant, attachment or queue entry (the live reads'
+byte prefilter keeps attachments and queue entries for it), and what it armed to wake itself,
+each from the call's own successful result (a failed CronCreate arms nothing, a failed
+CronDelete removes nothing): a ScheduleWakeup (its delay, 60 s to 1 h), a Monitor (its
+`timeoutMs`, at most 1 h; a persistent one until its own end notice, by its launch's tool-use
+id when the notice names one, also when that notice came before the launch result) or a cron (by its id until a
+CronDelete names it, a one-shot one until its `nextFireAt`). Read at status time, read-only
+(`stalls.py`): a running command is **silent** when none of its files changed for 30 min, and
+**waits on stdin** when a file's last line is codex's stdin line and nothing changed for 2 min.
+Over 30 days here, `codex exec` with no stdin redirect usually finished (276 in the foreground,
+51 of 60 in the background), and 3 of the 4 background commands whose log still held the stdin
+line had finished, so the line counts only as the last one. A command whose outputs are not
+watchable, or one of whose files is gone, not a regular file or cannot be inspected now, is never
+judged silent (`silent_seconds` null); its stdin line still counts. A command wholly under a real
+timeout (`commands.is_bounded`: the rule `DEADLINE` uses), a timer (`commands.is_timer`, by any
+path to `sleep`), `[caffeinate -flags] perl -e 'alarm N; exec @ARGV' ...` or `'alarm shift; exec
+@ARGV' N ...`, N positive and within 2^31 and no perl option after the script, with only exact, literal steps around it (`commands.under_its_own_alarm`, which
+`DEADLINE` reads too: `cd`, `mkdir -p`, assignments, `echo`, `printf`, `date`, `true`, `ls`, `exit`,
+and `wc -l|-c`, `tail -n N|-N`, `head -n N|-N`, `cut` of a regular file or a pipe, `tee` of a pipe; no
+substitution but `$(date ...)`, and every path literal or from a literal assignment in the command
+that surely ran in this shell (a whole segment, not after `&&` or `||`, not piped, holding no space
+or glob an unquoted `$NAME` would expand; `+=` and `printf -v` leave the variable unknown), and
+nothing backgrounded anywhere in the command,
+in a known directory and not a FIFO. Anything else is False, a forking wrapper too: a wrong False costs one line told, which says it may be fine, and a
+wrong True silences the only alarm for a real hang), or carrying the marker `# postmortem: silent-wait` is quiet by design (field report 2026-11-04: following the advice would have killed
+a deliberate wait): only its stdin line can make it silent. A session is **STALLED** when this read of its transcript completed without a failure and
+reached the end of the file (never from cached facts alone, nor past a line still being written,
+review rounds 2 and 3), its turn ended at least 30 min ago with
+nothing since, no subagent of its own is running or waiting and no workflow of its own
+is open, nothing it armed can still wake it, at least one command is silent or waits on stdin,
+and it is a live background session: `~/.claude/sessions/<pid>.json` names it with `kind`
+`bg`, its pid exists (signal 0, which sends nothing), and its job's own `state.json` still reads
+`working`. Signal 0 shows only that a pid exists, not whose it is (the standard library cannot
+read another process's start time on macOS), so a session file left by a crash whose pid was
+reused would read as live; the job state, which the daemon settles when a background session
+dies, is the second, independent witness. When both are stale (a crashed worker whose job still
+reads `working` and whose pid now belongs to another process), the session reads STALLED: it is
+then a dead worker that will never report, which is what the reading is for, and its next step
+(`status <sid>`) shows it (review round 3, declined as a defect; to the manager). An interactive session's idle turn is
+the person's, and a server it runs is silent by design, so it is never STALLED. `--json`
+`commands.running` lists `{launched_seconds, silent_seconds, silent, waiting_on_stdin}` per
+running command and `stalled` is null or `{idle_seconds, commands, waiting_on_stdin,
+silent_seconds}`; the native task id (`task_id`, `task_ids`) appears from `--local`. The STALLED
+row's next step is fixed text and skips redaction, which would hide `/dev/null` as a path
+(`tests/test_stalls.py`). `BACKGROUND` (item 4 of the second report) counts such a job
+`stalled`, not `working`, and lists it with its idle time, its silent commands and `status
+<sid>` as the next step; only a `working` job whose own `state.json` has not changed for 30 min
+is read for it, and only when its transcript too is 30 min old and its process is a live
+background session (the live sessions read once per call), each through its own snapshot without
+a BACKGROUND list of its own. `status` reads at most 5 per call, starting at a place that moves
+every minute so that every such job is reached; `scan` reads them all, after `--here` has kept
+only the jobs in the caller's directory (review rounds 1 and 2). Over 30 days here, 62 background sessions had 46 idle periods of 30 min or more with a
+command still running: 23 ended with that command's own end notice, 23 with something else (a
+message, a prompt), none never; so STALLED can fire at most about 1.5 times a day across all
+workers, and at most the first 23 could be wrong, and only had their command's files also stood
+still, which no transcript records.
 
 A clean returned subagent and a `waiting` one (the native notice says it is waiting on its own
 background work) are counted, not listed. The subagent type is never printed, and a tool name
@@ -4997,7 +5198,7 @@ the missing file (`display_path`, raw); `--json` prints `{"schema": 3, "disclosu
 returned subagent is parsed in full only when its final entry is the kill marker or an assistant
 text starting with a runtime error marker, and each such result is kept in the live store by file
 signature. `BACKGROUND` counts job files changed in the last 24 h, and every `working` or
-`blocked` one; the job's `detail` text is never printed.
+`blocked` one; the job's `detail` text, `needs` free text and `output.result` are never printed.
 
 Disclosure (0.4, field reports 2026-10-30 "redacted agent ids cannot be traced back" and
 "status shows a blocked background session that cannot be identified"): at the default level
@@ -5027,7 +5228,11 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
 - `PostToolUse` matcher `*` → `run.sh post-tool`, timeout 5: every tool call of the main agent;
 - `UserPromptSubmit` → `run.sh prompt-submit`, timeout 5: the fallback for an ending that
   happened while the agent sat idle waiting for the person;
-- `PostToolUse` matcher `^(Agent|Task)$` → `run.sh agent-launched` (below).
+- `PostToolUse` matcher `^(Agent|Task)$` → `run.sh agent-launched` (below);
+- `PreToolUse` matcher `^Bash$` → `run.sh pre-bash`, timeout 5 (below; field report
+  2026-11-03). run.sh gives it the per-call budget: 1 s for the PATH probe, 3 s for the call.
+- `Stop` → `run.sh stop-watch`, `async: true`, `asyncRewake: true`, timeout 1209600 (below; field
+  reports 2026-11-04). Its exit 2 wakes an idle session.
 
 `hook post-tool` and `hook prompt-submit`:
 - Speak only for a new `KILL`, `FAILED` or `CLAIM` ending of one of the session's own
@@ -5045,12 +5250,22 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   again whole; each scan starts 64 bytes early, for a mark cut across two writes. While a line
   after that offset is unfinished the gate opens at every call, since its marks may lie before
   the scan (a line longer than 64 KB on a first call). A session with no `subagents/`
-  directory is silent and writes nothing; a subagent's own call (`agent_id` in the payload) is
+  directory is silent and writes nothing until its transcript's last 64 KB name a background
+  command (below); a subagent's own call (`agent_id` in the payload) is
   silent. The gate file
   is read and written only through state.py's verified private-file calls (4.14.9 item 4, mode
   0600 in a 0700 directory), and a session's first one prunes those untouched for 7 days.
 - Budget: a call with nothing new takes under 150 ms through run.sh, prints nothing and imports
-  neither `live` nor `cli` (`tests/test_live_post_tool.py`). Measured at load 3 to 6: 58 to
+  neither `live` nor `cli` (`tests/test_live_post_tool.py`). CI does not check the 150 ms: a
+  wall-clock budget on a shared runner is noise (a correct build read 152 ms on macos-latest,
+  samples 126 to 521 ms). There the test times rounds of three, interleaved: the call through
+  run.sh, the same interpreter exiting at once through the same run.sh (a bare start), and that
+  bare CLI started without run.sh. Each check takes the median of the per-round ratios, so a
+  change of load during the test falls on both sides of every ratio. The call must take under 2
+  bare starts (1.35 on the reference machine at rest, 1.15 under three busy processes per core,
+  2.44 when the console entry also imports `cli`), and run.sh's bare start under 8 direct ones
+  (2.6 at rest, about 4 under that load; 200 ms more in run.sh reads 13). The 150 ms test is
+  skipped when `CI` is set to anything but empty, `0`, `false` or `no`. Measured at load 3 to 6: 58 to
   59 ms median through run.sh, 31 ms for the CLI alone, 58 to 62 ms through run.sh on real
   sessions of 43 to 57 MB with up to 453 subagents; 132 ms median (151 ms max) for a CLI found
   on PATH, which run.sh probes at every call (20 ms for `hook capabilities`, 17 ms for its JSON
@@ -5096,6 +5311,31 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   the resume sentence included, and never stops a check; Stop's own claims can fail without
   holding back its notification.
 - Workflows are not read here; `watch <run>` and Stop keep them (4.14.10).
+- **Silent background commands (field report 2026-11-03, item 2 of "no silent failures").** The
+  same check tells a background command of the session that is silent or waits on stdin
+  (4.14.4's rules), once per command (delivery key `cmd:<task id>:silent`, claimed with the
+  endings in one write), as `COMMAND <task id> (launched <age> ago) has written nothing for <q>.
+  Claude Code tells you when it ends, never that it hangs: if it is stuck, stop it (TaskStop
+  <task id>) and rerun it with </dev/null and a timeout.`, or for a wait on stdin `COMMAND <task
+  id> (launched <age> ago) waits on stdin, which nothing will close: ...`. The line is fixed
+  words, the native task id (which the agent needs for TaskStop and already holds from its
+  launch result) and two ages, so it skips the redactor, which would hide `/dev/null` as a
+  path. The gate opens for it on a background launch (`"backgroundTaskId"` joins the marks) and
+  at the time the last check stored (`recheck_at` in the gate file): the earliest moment a
+  running, untold command can turn silent by its files' own clock, and in its first 10 minutes
+  also at the 2-minute mark, since codex writes its stdin line within seconds of starting, and
+  60 s on while one of its files cannot be inspected (stat'd or read). Endings and command lines share the
+  400-character budget: with commands to tell, the endings leave 45 characters for a closing
+  `... and <n> more: agent-postmortem status`, and only the commands whose lines fit are claimed,
+  so the rest are told at the next call, which the gate opens for (review round 1 of item 2). The
+  fit is decided again inside the claim's lock, after another channel may have won an ending:
+  a command whose line no longer fits is handed back (`claim_deliveries(unclaim=...)`), never
+  recorded as told (review round 2). A
+  session with no subagent, which the gate answered at once before, now pays one read of its
+  transcript's last 64 KB per call and writes no gate state until that tail names a background
+  command (the field worker had no subagent). An idle session makes no call, so this reaches a
+  session only while it is still working; a session idle on such a command is STALLED (4.14.4),
+  for scan (4.7) and for item 1's deadline (below) (`tests/test_stall_hook.py`).
 
 `hook agent-launched`:
 - `hook agent-launched` keeps its message within 400 characters: when a CLAIM and the first-
@@ -5111,8 +5351,52 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   of that session is running, `AGENT_POSTMORTEM_WATCH_HINT=0` disables it. For a foreground Agent
   call (the `tool_response` carries the child's result) the hook also runs R3 and R4 at once and
   appends the CLAIM sentence when one holds.
-- `hook check` (Stop, StopFailure) adds nothing for running background work (R7 is not built,
-  4.14.2).
+- `hook check` at Stop reminds a background session once (field report 2026-11-04: two of three
+  workers with subagents never ran `status` before reporting, since the rule lives only in a
+  CLAUDE.md): when its subagents and workflows have all ended and no `status`, `scan`, `run` or
+  `watch` of this tool ran since the last ending, "<n> subagents [and <m> workflows] finished and
+  agent-postmortem status has not run since. Run it before reporting done: it says which results
+  can be trusted." Key `hint:status`, once per session (4.14.6 rule 4), only at a Stop with nothing
+  else to say, `AGENT_POSTMORTEM_WATCH_HINT=0` turns it off, and a session with no subagent directory
+  reads nothing for it. An interactive session has a person reading and gets none.
+- `hook check` at Stop asks for a deadline, unless the session is a background session on a
+  Claude Code that can run the watcher above with waking on: the watcher then tells it when a
+  command goes silent, and this request would ask an agent to arm by hand what the plugin does
+  (field report 2026-11-04). It also says nothing for a command under its own perl alarm or when
+  one of the listed tasks is a Monitor of this
+  session (the payload can list a Monitor as a plain `shell` task, so `MainFacts.monitors` knows
+  them from the session's own Monitor calls) or a wake it armed can still fire. Otherwise (field
+  report 2026-11-03, item 1 of "no silent
+  failures"): when the payload's `background_tasks` lists a running `shell` task, the session
+  is ending its turn with a command out, and Claude Code will wake it when the command ends and
+  never when it hangs (the field worker ended its turn two minutes after launching a `codex
+  exec` that never ended, and sat idle 26 h). Once per task (key `cmd:<task id>:stop`, claimed
+  through the live gate), `additionalContext`: "DEADLINE <task ids>: still running as this turn
+  ends. Claude Code wakes you when a command ends, never when it hangs. Before stopping, arm a
+  deadline that wakes you (a Monitor with timeout_ms, or a background `sleep 1800`); when it
+  fires and the output has not moved, TaskStop it and rerun with </dev/null and a timeout. A
+  server or watcher needs none." (at most three task ids, only of the tasks this request asks
+  about, then `and <n> more`; under 400 characters). Nothing when `stop_hook_active` is set (the
+  turn already continues from a Stop hook, and with once per task the request cannot loop), when
+  `session_crons` is not empty, a `monitor` task is running, or a running shell task is itself a
+  timer: `sleep N` (N > 0), then at most one literal `echo`, `printf`, `true` or `:` joined by
+  `;` or `&&`, with no redirect, expansion or substitution (`sleep 1; echo "$(tail -f x)"`
+  never ends). A command that is one segment wholly under `timeout`/`gtimeout` with a positive
+  duration and a signal that ends it (TERM by default; `-s CONT` and the other signals whose
+  default ends nothing need a positive `-k`), with no expansion or substitution, stdin only
+  from `/dev/null`, a heredoc or a literal here-string, output only to files that open without
+  blocking (an existing FIFO or a device other than `/dev/null`, as a stat at Stop shows, does
+  not), and only options timeout is known to take (attached `-sCONT` and the abbreviation
+  `--sig=CONT` are parsed; an unknown option is not bounded), ends on its own and is not asked
+  about (`timeout 1 true; tail -f x`, `timeout 0 x`, `timeout 1 true "$(sleep 9)"`, `timeout
+  -s CONT 1 x` and `timeout 1 true > fifo` are; review rounds 1 to 3); a subagent task notifies by itself. It runs for a session with no subagent too (the
+  field worker), before the 7.2 check of the session's units, and joins that check's
+  `additionalContext` within the 400 characters, in full or in a short form ("DEADLINE <ids>:
+  still running; before stopping, arm a deadline that wakes you ..."); when neither fits nothing
+  is claimed and the next Stop asks. The request is rendered inside the claim from the keys this
+  call won, so it never names a task another call asked about; and when the unit check cannot
+  run (a locked or unreadable store) the request still goes out on its own (review rounds 1 and 2 of item 1;
+  `tests/test_stop_deadline.py`).
 - `hook session-start` with `source` `resume` adds `hookSpecificOutput.additionalContext` (beside
   the 7.2 digest `systemMessage`) when this session's own subagents never returned or were
   interrupted and no live channel said so yet: "<n> subagent(s) of this session never returned
@@ -5122,7 +5406,190 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   claims each ending's own key (`<agent>@<final entry ms>:end`, the watch's) through the locked
   gate, so it neither repeats an ending the watch reported nor hides a later one. The first-
   launch hint is claimed through the same gate (key `hint`). `source` `startup` adds nothing.
-- Every other rule of 7.2 holds: silent on `agent_id`, share only, never fails a turn.
+- `hook pre-bash` (PreToolUse, matcher `^Bash$`, timeout 5; field report 2026-11-03, item 5):
+  before a Bash call with `run_in_background` runs, a `codex exec` (or `codex e`) segment that
+  is the segment's command (after assignments, `env`, `nohup`, `nice`, `time`, `command`,
+  `exec`, `builtin`, `timeout`/`gtimeout` with their own options, clustered or not, their
+  arguments and `--`, `env -S STRING` read as STRING's words by its own quoting rules and parsed again, and
+  `mise exec ... --`; after
+  codex's own options and their values; `echo codex exec` and `command -v codex exec` are none;
+  `co"dex"` and a line continuation inside the word are codex) with no stdin redirect (`<`, a
+  heredoc, a here-string, `<&`, any form naming fd 0 such as `0>&-`, or a commandless `exec
+  </dev/null` earlier in the command that surely runs in this shell: at the start of a list, not
+  piped, backgrounded or after `&&`/`||`; every `$(...)` and backtick span is blanked out first,
+  so a redirect inside one is never the outer command's, while a literal `)` stays; review
+  rounds 1 to 3) and not fed by a pipe gets `additionalContext` "STDIN this background `codex
+  exec` has no stdin redirect. ..." beside the call, never a deny or an ask: over 30 days here
+  276 foreground and 51 of 60 background runs with no redirect finished, so the call runs and
+  the agent, which sees the warning with its launch result, can stop and rerun it. A foreground
+  call gets nothing: the Bash tool's stdin ends at once there (276 of 276). A command with a `{ ...; }` group or a subshell is not judged: its stdin may come from the
+  group, and a false warning would tell the agent to stop a run that is fine (the later checks,
+  4.14.4 and item 2, still cover it). A newer plugin in front of an older CLI on PATH that has no
+  `hook pre-bash` stays silent, as for every hook a release adds (4.14.11; review round 1, to the
+  release). Unlike every other live hook it speaks to a subagent too, since the warning is about
+  the caller's own call. The
+  console entry answers it without importing the CLI, and a command that does not contain
+  `codex` without importing anything past `json` (`tests/test_pre_bash.py`).
+- Workers a session launched (field reports 2026-11-04; the owner's direction: "agent可以主动查看。
+  而不是被动的", and "为什么agent没有自主调用这个插件？"). Claude Code records a background session's
+  state in `~/.claude/jobs/<short id>/state.json` and tells nobody: a worker sat 8.5 h on a
+  permission prompt, `ListAgents` showed it idle, `claude agents` needs a person at a terminal,
+  and `notify_when_idle` covers idle or exit, not blocked. The test for this feature: a manager
+  session that does nothing special is told within one tool call that its worker waits on
+  "approve ...", and a worker that delivered is not reported as a problem
+  (`tests/test_worker_notice.py`).
+  - The link. No job file names the session that launched it (`children` holds PRs), so the link
+    is the launch (`workers.py`): a Bash call with a segment whose command word is `claude`
+    (after `cd`, assignments, `timeout`, `env`, `nohup`, `do`, `(`; no subcommand such as `logs`)
+    with an unquoted `--bg` or `--background`, whose result names an id at a line start
+    (`backgrounded · X · name`, else `claude attach|logs|stop X`: a `| tail -1` leaves only the
+    last, as in 33 of 85 real launches over 14 days), and whose job's `createdAt` falls inside
+    that call's own time window (tool_use to tool_result, 5 s of slack; on the launch's own
+    PostToolUse, which reads `tool_response.stdout` since the transcript can lag, the last
+    5 minutes). So a grep or a printed log links nothing, and on the real launches 38 of 38 jobs
+    fell inside the window. `MainFacts.workers` keeps the newest 128 (facts version 9). Not
+    linked: a launch under `run_in_background` (no stdout to read), a subagent's own launch, and
+    one from another session; `status` and `scan` still list those.
+  - What a job says. `state` is set when a turn ends and can be stale, and `tempo` is live: a
+    worker on a permission prompt reads `state: working, tempo: blocked` (2.1.318, found by the
+    live test of this feature), the field worker read `state: blocked` from its earlier question
+    all night, and one given a new prompt after delivering reads `state: done, tempo: active`. So
+    `workers.effective_state`, which `status`, `scan` and `watch --session` read too: `stopped` and
+    `failed` stay, `tempo: blocked` is blocked, `tempo: active` is working, else `state`. On 65 job
+    files here the combinations were working/active, working/blocked, working/idle,
+    blocked/blocked, done/idle, failed/idle and stopped/idle.
+    `workers.classify`, by this precedence for a blocked job: a permission prompt, whose label is
+    the text before the first `:` when it is plain words of at most 40 characters and else
+    `approve`; `awaiting input` is `question`; `send a prompt to start` is `waiting-prompt`; an
+    `API Error` in `detail` is `error`; `output.result` set after a turn ended is
+    `delivered-waiting`; any other `needs` is `question`; nothing is `unknown`. A prompt is any
+    `approve ...` while `state` is not `blocked` (a live prompt). With `state: blocked` the text can
+    be the worker's own from its last turn (seen live: `approve Write for worker <id>: run ...`), so
+    only the forms Claude Code writes count: `approve plan`, `approve N new project MCP ...`,
+    `approve message from ...`, `approve a tool`, `approve mcp__...`, `approve <Capitalized display
+    name of at most two words>`, `... (MCP)`; a misreading says "waiting for an answer", whose next
+    step still helps. `done` is `delivered`, `failed`
+    is `failed`, `stopped` says nothing (someone chose it), `working` says nothing unless STALLED
+    (4.14.4). Age is the job file's mtime, which does not move while a worker sits blocked.
+  - Once per change. A worker's identity is `effective state/class/digest of needs`, so a second
+    prompt of one tool counts, a class change with the state word unchanged counts (the field
+    night), and a touch of the file or the state word catching up does not. The live store keeps per worker the last identity told
+    (`workers` in the session's record, read and written inside the claim's lock); a line is due
+    when the observed identity differs and means something. At the first look at a worker,
+    trouble older than 24 h and a delivery older than 10 minutes are recorded and not told. A
+    worker that wakes on its own cron goes `done` after every check, so the store also counts how
+    many times each was told delivering since its last trouble: the second finish says `finished
+    again <age> ago. It may wake on its own schedule, so its later finishes are not told`, and
+    later ones are recorded. Trouble always speaks and resets the count. A delivered worker waiting
+    on a decision is always told, since it asks for something. The `detail` is left off the line
+    (a field suggestion): it is the worker's own words, which no hook line prints.
+  - The line, within the 400 characters, trouble first, then endings, commands, deliveries, and
+    what does not fit stays due:
+    `WORKER <name> (<short>) blocked <age>: waiting for a permission approval (approve <tool>). A
+    person must approve it: claude attach <short>`; `... waiting for an answer. Reply with
+    SendMessage, or: claude attach <short>`; `... stopped on an API error: claude logs <short>`;
+    `WORKER <name> (<short>) failed <age> ago: claude logs <short>`; `WORKER <name> (<short>)
+    stalled: idle <age> on a background command that waits on stdin, and nothing will wake it:
+    claude attach <short>`; with no wait on stdin, since only the command's own files are seen,
+    `WORKER <name> (<short>) idle <age>: its background command's output has not changed. It may
+    be hung or writing elsewhere, and only its end would wake the worker. Check before stopping it:
+    claude attach <short>`, whose age is how long the worker has been idle (a field worker's run
+    wrote to a folder of its own every few minutes, under a perl alarm; looking for recent writes
+    under the worker's folder would hide a real hang wherever that folder is shared); and for a delivery, with no problem word, `WORKER <name> (<short>)
+    delivered <age> ago and waits for your reply: claude logs <short>` or `... finished <age>
+    ago: claude logs <short>`. Fixed words, the short id and name its own launch result printed
+    (the job's own `name` when a `| tail` cut that line; name cut at 40, control characters out, one that looks like a path reads `worker`) and a
+    permission's label; never the free text of `needs`, `detail` or `output.result`, at any level.
+  - The gate. hook_gate adds `--bg`, `--background` and `claude attach ` to its marks, reads the
+    launch from the payload, and keeps per worker `[mtime_ns, size, identity]`. Each call stats
+    those job files and parses only one that moved, the file read longest ago first and at most 8
+    per call, 1 MB each, so busy workers cannot hide another behind the limit; it opens the full
+    check only if the identity changed, so a working worker's every `updatedAt` costs one small
+    parse and no full check. What the gate parsed it passes on, and the full check, with the same
+    limit and order, goes on from there. A stat that fails keeps the row, a removed job says
+    nothing, a file that cannot be read gives up its place until it changes, and the row of a job
+    that appeared while the transcript lags behind its launch waits for the launch to show. The
+    table holds at most 128 rows, as the facts do. `recheck_at` also covers the 30-minute stall clock of a
+    working worker, and the full check reads at most one such session per call, under the call's
+    own time budget, and takes turns by a counter the gate keeps, so every idle worker gets one
+    whatever the cadence of the calls. A read with more than 32 MB left to do is not started there
+    (run.sh kills a call at 3 s and nothing is saved) and is left to the watcher and `status`; a read
+    cut short is neither a stall nor the end of one, so what was told stands. A change recorded with
+    no line keeps the gate open until its store write went through. Workers are
+    checked before the subagent baseline and told even when it is not ready. A gate file of
+    another version opens the gate once, for a launch from before this feature that its tail no
+    longer holds. A session with no gate state, whose launch is past its last 64 KB and that
+    launches nothing new, stays unlinked: a stated limit, for the upgrade only.
+- `hook stop-watch` (field reports 2026-11-04), the channel for a session that makes no call: the
+  field manager was idle all night, so the per-call line alone would have waited for morning.
+  With `asyncRewake: true` Claude Code runs the hook in the background and its exit 2 wakes an
+  idle session with its stderr as a system reminder ("Stop hook feedback"; 2.1.314 and later,
+  probed on 2.1.318: the job reads `done`/idle while it runs, the wake also fires
+  `UserPromptSubmit`, `claude stop` signals it and leaves no orphan). `watcher.py`:
+  - It leaves at once, importing nothing heavy, unless the gate file lists a worker or the payload
+    a running shell task. Then it polls every 20 s, stats only, with the same job files, claims
+    and words as the per-call hook, so the two never tell a thing twice.
+  - It wakes for a worker's trouble; a delivery only after 120 s, since the worker's own message
+    usually wakes the manager first, and an ordinary finish only the first time since that worker's
+    last trouble (a later one waits for the session's next call, so a worker on an hourly cron
+    cannot wake it every hour), while one waiting on a decision always counts;
+    a command's silence only in a
+    background session (a server in an interactive one is silent by design); a wait on stdin in
+    any session.
+  - What it tells it also writes to the gate file, with `pending`: the gate compares a job with
+    what the last check saw, and without this it would read `working` as nothing new after the
+    watcher told `blocked`, and a prompt coming back would be taken for the one already told.
+  - It leaves when a user or assistant entry newer than its start appears (a final message flushed
+    late carries its own earlier time; the next Stop starts the next watcher), its parent is
+    gone, a newer watcher owns the session (a token in the session's record, checked at every
+    poll and inside the claim; one that was slow to start never takes the place of a watcher that
+    started after it, 0.5.0 release review), or nothing is left to watch: no worker working or blocked (a
+    blocked one already told and older than 72 h does not count) and no untold command that can
+    still go silent.
+  - The worst failure is money, a session woken over and over, so the rule is the opposite of
+    this section's "a repeat beats a lost line": `claim_deliveries(strict=True)`, so a claim that
+    cannot be written wakes nothing and the line waits; at most one wake per session per 5 minutes
+    (`last_wake`, written with the claim), the line waiting and keeping the watcher alive; any
+    exception exits 0, never 2; `AGENT_POSTMORTEM_WAKE=0` turns it off; a Claude Code older than
+    2.1.314 or of unknown version (the top-level `version` of the transcript's last entry that
+    has one) exits at once, since one that ignores `asyncRewake` would run this as a blocking Stop
+    hook, and so does a watcher already orphaned at its start. stderr is written inside the
+    claim's transaction, before its commit, so a kill there repeats and loses nothing; a kill in
+    the instant after the commit can still lose a wake (the per-call line is claimed too). A commit
+    that fails after stderr went out exits 0: no record, so no wake, and the next Stop starts over.
+    Who is due is decided again inside the lock, since the per-call hook may have told it.
+  - After 14 days less an hour (`timeout` is enforced and must stay under 2^31 ms) with work still
+    out: one last wake saying so, under the same ownership and cooldown rules as any other and
+    claimed per watcher, and ending the turn starts the next one. A reboot loses it until
+    the next Stop; the per-call channel does not depend on it. It starts at about 28 MB and
+    held about 10 MB resident while polling, one per session with something to watch.
+  - run.sh gives this event its own branch: no `_run_with_deadline`, the real stderr kept on fd 3
+    for this event alone, its exit code passed on, and only for a CLI whose `hook capabilities`
+    lists `stop-watch`, since an older CLI's usage error exits 2 and would wake the session with
+    it. No missing-CLI hint here: a background hook has nowhere to show one
+    (`tests/test_stop_watch.py`, `tests/test_live_plugin.py`).
+  - The skew it closes for every hook a release adds (`pre-bash` too): an older CLI on PATH stays
+    silent for a hook it does not have, so at a SessionStart with nothing else to say, at most once
+    a day, run.sh says "agent-postmortem on PATH is older than this plugin, so its newer hooks stay
+    silent; run: uv tool upgrade agent-postmortem". A bundled CLI is upgraded instead (4.14.11).
+    A probe that printed nothing says nothing about its age, so it gets no hint.
+  - Where the Stop deadline request is retired (0.5.0 release review). Only where the watcher
+    would catch the hang: a background session on a Claude Code with `asyncRewake`, waking on, run
+    by a run.sh that sets `AGENT_POSTMORTEM_WATCHER_HOOK=1`, and only for a command whose output
+    the watcher can read. An older plugin's run.sh sets no mark, so a newer CLI behind it, or a
+    session still on an older plugin copy's hooks, keeps the request. So does a command whose
+    redirect is not literal (`> "$LOG"`), is no regular file, is relative after a `cd X;` that may
+    have failed, or names a directory that is not there, since its silence is never judged. A directory
+    marketplace reads run.sh live while a running session keeps its hooks.json, so there a session
+    started before the watcher existed has the mark and no watcher until it restarts.
+  - Known limit (0.5.0 release review, follow-up): a new `MAIN_FACTS_VERSION` makes every session
+    read its main transcript again from byte 0, and `_read`'s deadline bounds only the subagent
+    reads. On this machine that read costs about 0.03 s per MB, so a per-call hook passes its 3 s
+    near 110 MB, is killed before it saves, and says nothing at that call and the next. `status`
+    and the watcher have no deadline and save what they read, which ends it. A resumable main read
+    would close it.
+- Every other rule of 7.2 holds: silent on `agent_id` (except `pre-bash`, above), share only,
+  never fails a turn (`stop-watch`'s exit 2 only ever wakes an idle session).
 
 ### 4.14.6 Alert-fatigue rules (binding for every live channel)
 
@@ -5145,8 +5612,18 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
    delivered keys before it decides and claims after it tells, so a watch delivering in that
    window could still repeat it once; the hooks of one session never run beside its Stop.
 4. A hint at most once per session; none while the session is watched.
-5. Only checks with measured precision ship; quiet time is never an alert.
-6. Every line names one agent, what it left behind, and one next step, a read-only command.
+5. Only checks with measured precision ship; quiet time is never an alert, with one exception
+   (field report 2026-11-03, at the person's request: "no silent failures"): a background
+   shell command, which no native watchdog covers, whose files stopped changing (4.14.4's
+   silence and stdin rules) is told once by the per-call hook (4.14.5) and shown by `status`
+   and, for an idle background session, by `scan` (4.7), since a session idle on it is woken by
+   nothing. A command under a real timeout, or carrying `# postmortem: silent-wait`, is silent
+   by design: only the stdin rule speaks for it (field report 2026-11-04).
+6. Every line names one agent, what it left behind, and one next step, a read-only command. The
+   one exception is a worker's line (4.14.5), whose next step is `claude attach <short>`, since
+   approving a prompt is the only action that helps, and which the tool itself never runs.
+7. A worker's states are native facts, and rule 1 does not stop them: nothing native reaches the
+   session that launched it. Each is told once per change, by the same claim in both channels.
 
 ### 4.14.7 `subagentStatusLine`
 
@@ -5183,7 +5660,10 @@ for the main transcript, a
 the transcript: version 3 (0.4) keeps each workflow's latest launch, its task id, tool-use id
 and synchronous status; version 5 (0.4) keeps each background command's task id, launch
 tool-use id and start time, and native end, and the newest 100 notices no launch claimed yet,
-per tool-use id, 4.14.4; version 4 had an earlier shape of both, on unreleased builds only),
+per tool-use id, 4.14.4; version 4 had an earlier shape of both, on unreleased builds only;
+version 10 (0.5) also keeps each background command's output files and quiet mark, the session's
+last turn end, last activity and armed wakes, the workers it launched, its Monitors' task ids and
+when this tool last ran, 6 to 9 being unreleased shapes on the way there),
 and for a subagent transcript a bounded read (4.14.5) left unread,
 `deferred`, the time it was first left; a subagent entry also keeps its Agent and Task launch
 ids and their synchronous results (4.14.3, nested children) and a `sub_facts_version`,
@@ -6618,7 +7098,9 @@ N5.
   `os.system`, `os.exec*`/`os.spawn*`, `os.popen` -- with its module and
   line. The exact set found must equal an explicit, justified allowlist (a
   handful of `state.py` calls confined to the state directory, observe.py's
-  one documented `subprocess.run` plus its `shutil.which`, and read-only
+  one documented `subprocess.run` plus its `shutil.which`, cli.py's one write-only `os.open`
+  of the null device, duplicated onto stdout once watch's reader has closed the pipe (4.12),
+  and read-only
   (`'r'`/`'rb'`) `Path.open()` calls everywhere else); anything found that is
   not on the list fails the test, and an allowlist entry the sweep no longer
   finds fails it too, so the list can never silently go stale. A second test
@@ -6725,8 +7207,10 @@ hooks.json, every command quoted with `${CLAUDE_PLUGIN_ROOT}`:
 |---|---|---|---|
 | SessionStart | (none) | `"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" session-start` | 90 |
 | Stop | (none) | `"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" check` | 10 |
+| Stop | (none) | `"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" stop-watch`, `async`, `asyncRewake` (4.14.5) | 1209600 |
 | StopFailure | (none) | same as Stop | 10 |
 | SessionEnd | (none) | `"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" session-end` | 20 |
+| PreToolUse | `^Bash$` | `"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" pre-bash` (4.14.5) | 5 |
 | PostToolUse | `^Workflow$` | `"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" workflow-launched` | 10 |
 | PostToolUse | `^(Agent|Task)$` | `"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" agent-launched` (4.14.5) | 10 |
 | PostToolUse | `*` | `"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" post-tool` (4.14.5) | 5 |
@@ -6758,7 +7242,9 @@ captured into a shell variable along the way (D10):
    CLI costs at most one probe per call.
 Any non-zero exit, or output that is not exactly one well-formed JSON object
 (garbage, a stack trace, or two objects concatenated), from the CLI is
-swallowed into exit 0 with no output. The hook never fails a turn.
+swallowed into exit 0 with no output. The hook never fails a turn. The one exception is
+`stop-watch` (4.14.5): run.sh keeps the real stderr on fd 3 for that event and passes its exit
+code on, because its exit 2, on a background hook, wakes an idle session.
 
 JSON is validated with `python3 -c 'import json,sys; ...'` when a *working*
 python3 is available (D2) -- presence on PATH is not enough, since a
@@ -6771,9 +7257,9 @@ object, plus, for the capabilities probe specifically,
 
 The real hook call (and the 7.3 install) run under an internal deadline
 shorter than this event's own outer hook timeout from the table above (D3):
-check/workflow-launched 8 s, post-tool/prompt-submit 3 s (4.14.5, whose
+check/workflow-launched 8 s, post-tool/prompt-submit/pre-bash 3 s (4.14.5, whose
 PATH probe gets 1 s instead of 2 s, so probe and call fit 4 s of their 5 s
-timeout), session-end 18 s, session-start 80 s, install 60 s -- overridable to any value by setting
+timeout), stop-watch none (it lives while it watches), session-end 18 s, session-start 80 s, install 60 s -- overridable to any value by setting
 `AGENT_POSTMORTEM_HOOK_DEADLINE_SECONDS` (12's D-B), which nothing outside
 the test suite ever sets; this is what lets a test drive the real
 deadline-kill path against a fake CLI sleeping a couple of seconds past a
@@ -6791,7 +7277,7 @@ The once-a-day missing-CLI hint and the 24 h install gate each take an
 atomic, non-blocking `mkdir`-based lock under `$DATA_DIR` before
 re-checking freshness (D5): two hooks racing the same gate can never both
 see it as due, and a process that loses the race just skips acting this one
-time rather than blocking. `run.sh` never writes to stderr unless
+time rather than blocking. `run.sh` never writes to stderr, `stop-watch`'s message aside, unless
 `AGENT_POSTMORTEM_DEBUG` is set (`exec 2>/dev/null` near the top otherwise,
 before anything is written); every marker/log/install write is gated on
 `mkdir -p "$DATA_DIR"` succeeding first, and when `$DATA_DIR` cannot be
@@ -7074,7 +7560,9 @@ on `agent_id` in the payload, silent on a mismatched `hook_event_name` or
 `tool_name`, JSON validated the same way, never fails a turn, the same 8 s
 internal deadline as `check`.
 
-`hook capabilities`: print `{"protocol": 1, "version": "<package>"}`.
+`hook capabilities`: print `{"protocol": 1, "version": "<package>", "hooks": ["pre-bash",
+"stop-watch"]}`. `hooks` names what a release added since protocol 1: run.sh asks before starting
+`stop-watch`, whose exit 2 wakes a session (4.14.5).
 
 ### 7.3 One-time install
 
@@ -7410,7 +7898,7 @@ later events go positional).
 
 ### 8.1 Package
 
-`pyproject.toml`: name `agent-postmortem`, version `0.4.0`, console scripts
+`pyproject.toml`: name `agent-postmortem`, version `0.5.0`, console scripts
 `agent-postmortem` and `postmortem`, `requires-python >= 3.11`, no runtime
 dependencies, `[project.optional-dependencies].dev = ["pytest>=8",
 "ruff>=0.6"]`, classifiers, URLs (Homepage, Issues, Changelog). The wheel
@@ -7425,7 +7913,7 @@ checkout also ships `agent_postmortem/_build_info.json` (`branch`, short `commit
 printed, for a wheel built from the sdist (the release workflow's `uv build`, where there is no
 git), from the commit tagged `v<version>`, or for an editable install; a malformed stamp is
 ignored. The package version, the plugin manifest and `hook capabilities` stay the plain
-release version (`0.4.0`): run.sh compares `hook
+release version (`0.5.0`): run.sh compares `hook
 capabilities` with the manifest of the INSTALLED plugin copy and reinstalls a bundled CLI that
 differs (4.14.11), so a version that moved ahead of the cached manifest would have the bundled
 CLI replaced by the release from PyPI. `tests/test_build_identity.py`.

@@ -14,12 +14,15 @@ from __future__ import annotations
 import io
 import json
 import os
+import statistics
 import subprocess
 import sys
 import time
 from datetime import timedelta
 from pathlib import Path
+from typing import NamedTuple
 
+import pytest
 from live_helpers import (
     FAKE_UUID,
     KILL_SENTINEL_TOOL,
@@ -296,36 +299,215 @@ def test_a_first_check_too_big_for_one_call_reads_on_over_the_next_calls(
     assert told[0].count("was interrupted") == 1, told[0]  # the new kill, never the old one
 
 
-def test_run_sh_answers_a_call_with_nothing_new_silently_and_within_150_ms(tmp_path):
+# docs/DESIGN.md 4.14.5: a call with nothing new takes under 150 ms through run.sh. A wall-clock
+# budget on a shared CI runner is noise (inbox E47), so CI compares within rounds timed in the same
+# test: the call with a bare start of the same interpreter through the same run.sh (under 2 times;
+# 1.35 on the reference machine at rest, 1.15 under three busy processes per core), and that bare
+# start with the bare CLI started directly (under 8 times; 2.6 at rest, about 4 under that load).
+# The 150 ms is checked off CI, where it is meant.
+NOTHING_NEW_BUDGET_SECONDS = 0.150
+NOTHING_NEW_MAX_BARE_STARTS = 2.0
+RUN_SH_MAX_BARE_STARTS = 8.0
+
+
+def _on_ci() -> bool:
+    # GitHub Actions and most CI services set CI=true
+    return os.environ.get("CI", "").strip().lower() not in ("", "0", "false", "no")
+
+
+def _nothing_new_cli(plugin_data: Path, *, bare: bool = False, startup_delay: float = 0.0) -> Path:
+    """The CLI run.sh resolves first ($DATA_DIR/bin), started the way uv's script starts it: this
+    tree's console entry, or with `bare` the same interpreter exiting at once. `startup_delay`
+    stands in for a shared runner, where every process start costs more."""
+    from test_plugin import _write_fake_cli
+
+    code = "import sys; sys.exit(0)" if bare else (
+        "import sys; from agent_postmortem.entry import main; sys.exit(main(sys.argv[1:]))")
+    # each delayed start leaves a line in `delays`, so a test can tell the sleep ran
+    delay = f"sleep {startup_delay}\necho x >> '{plugin_data / 'delays'}'\n" if startup_delay else ""
+    return _write_fake_cli(plugin_data / "bin", "agent-postmortem", (
+        "#!/bin/sh\n" + delay
+        + f"PYTHONPATH='{REPO / 'src'}' exec '{sys.executable}' -c '{code}' \"$@\"\n"
+    ))
+
+
+class _Timings(NamedTuple):
+    hook: list[float]  # the call with nothing new, through run.sh
+    bare: list[float]  # the bare CLI through the same run.sh
+    direct: list[float]  # the bare CLI started without run.sh
+    hook_data: Path
+    bare_data: Path
+
+
+def _post_tool(command: list[str], plugin_data: Path, payload: str) -> subprocess.CompletedProcess:
+    # the environment test_plugin._run_run_sh gives run.sh
+    from test_plugin import SAFE_SYSTEM_PATH
+
+    env = {"PATH": SAFE_SYSTEM_PATH, "CLAUDE_PLUGIN_DATA": str(plugin_data),
+           "HOME": str(plugin_data)}
+    return subprocess.run(command, input=payload, env=env, capture_output=True, text=True,
+                          timeout=15)
+
+
+def _time_nothing_new_calls(tmp_path, main_path: Path, *, pairs: int, startup_delay: float = 0.0,
+                            hook_delay: float = 0.0, run_sh_delay: float = 0.0) -> _Timings:
+    """Interleaved timings of a post-tool call with nothing new, of a bare start through the same
+    run.sh and of the bare CLI started directly, so a burst of load falls on all three of a
+    round. `hook_delay` slows the hook's CLI alone, `run_sh_delay` a copy of run.sh alone."""
+    from test_plugin import RUN_SH
+
+    script = RUN_SH
+    if run_sh_delay:
+        text = RUN_SH.read_text(encoding="utf-8")
+        assert text.count("\nset -u\n") == 1
+        script = tmp_path / "plugin" / "hooks" / "run.sh"
+        script.parent.mkdir(parents=True)
+        script.write_text(text.replace("\nset -u\n", f"\nset -u\nsleep {run_sh_delay}\n"),
+                          encoding="utf-8")
+    script = str(script)
+    payload = json.dumps(_payload(main_path))
+    hook_data, bare_data = tmp_path / "plugin-data", tmp_path / "plugin-data-bare"
+    _nothing_new_cli(hook_data, startup_delay=startup_delay + hook_delay)
+    bare_cli = _nothing_new_cli(bare_data, bare=True, startup_delay=startup_delay)
+    runs = (
+        (["bash", script, "post-tool"], hook_data),
+        (["bash", script, "post-tool"], bare_data),
+        ([str(bare_cli), "hook", "post-tool"], bare_data),
+    )
+    first = _post_tool(*runs[0], payload)
+    assert first.returncode == 0 and first.stdout == "", first
+    timings = _Timings([], [], [], hook_data, bare_data)
+    for _ in range(pairs):
+        for (command, data), samples in zip(runs, timings[:3], strict=True):
+            start = time.perf_counter()
+            result = _post_tool(command, data, payload)
+            samples.append(time.perf_counter() - start)
+            assert result.returncode == 0 and result.stdout == "", result
+    return timings
+
+
+def _ms(samples: list[float]) -> str:
+    """The samples in the order they were timed, so a pair lines up across two lists."""
+    return "[" + ", ".join(f"{s * 1000:.0f}" for s in samples) + "] ms"
+
+
+def _paired_ratio(slow: list[float], fast: list[float]) -> float:
+    """The median of each pair's ratio: both of a pair ran under the same load."""
+    return statistics.median(s / f for s, f in zip(slow, fast, strict=True))
+
+
+def _ci_budget_failure(hook: list[float], bare: list[float], direct: list[float]) -> str | None:
+    """Why the nothing-new call misses the budget CI checks, or None."""
+    ratio = _paired_ratio(hook, bare)
+    if ratio >= NOTHING_NEW_MAX_BARE_STARTS:
+        return (f"the call: {ratio:.2f} times a bare start through run.sh:"
+                f" {_ms(hook)} against {_ms(bare)}")
+    ratio = _paired_ratio(bare, direct)
+    if ratio >= RUN_SH_MAX_BARE_STARTS:
+        return (f"run.sh: {ratio:.2f} times the bare CLI started directly:"
+                f" {_ms(bare)} against {_ms(direct)}")
+    return None
+
+
+def test_run_sh_answers_a_call_with_nothing_new_silently_and_close_to_a_bare_start(tmp_path):
     # the whole path a real tool call takes: run.sh resolving the CLI, its deadline wrapper, then
     # the console entry and the gate; the CLI is this tree's, started the way uv's script does
-    from test_plugin import _run_run_sh, _write_fake_cli
+    from test_plugin import _run_run_sh
 
     main_path = _session(tmp_path)
     agent = aid(95)
     transcript = _running_background_agent(main_path, agent)
-    plugin_data = tmp_path / "plugin-data"
-    _write_fake_cli(plugin_data / "bin", "agent-postmortem", (
-        "#!/bin/sh\n"
-        f"PYTHONPATH='{REPO / 'src'}' exec '{sys.executable}' -c "
-        "'import sys; from agent_postmortem.entry import main; sys.exit(main(sys.argv[1:]))' \"$@\"\n"
-    ))
-    payload = json.dumps(_payload(main_path))
-    first = _run_run_sh("post-tool", path_entries=[], plugin_data=plugin_data, stdin=payload)
-    assert first.returncode == 0 and first.stdout == "", first
-    timings = []
-    for _ in range(9):
-        start = time.perf_counter()
-        result = _run_run_sh("post-tool", path_entries=[], plugin_data=plugin_data, stdin=payload)
-        timings.append(time.perf_counter() - start)
-        assert result.returncode == 0 and result.stdout == "", result
-    timings.sort()
-    assert timings[4] < 0.150, f"median {timings[4] * 1000:.0f} ms: {timings}"
+    timings = _time_nothing_new_calls(tmp_path, main_path, pairs=9)
+    failure = _ci_budget_failure(timings.hook, timings.bare, timings.direct)
+    assert failure is None, failure
     # control: the same path does speak, so the silence above is the gate, not a failed start
     _kill(transcript, agent)
-    told = _run_run_sh("post-tool", path_entries=[], plugin_data=plugin_data, stdin=payload)
+    told = _run_run_sh("post-tool", path_entries=[], plugin_data=timings.hook_data,
+                       stdin=json.dumps(_payload(main_path)))
     context = json.loads(told.stdout)["hookSpecificOutput"]["additionalContext"]
     assert "KILL" in context, told
+
+
+@pytest.mark.skipif(_on_ci(), reason="a wall-clock budget on a shared runner is noise (inbox E47);"
+                    " CI checks the same call against a bare start instead")
+def test_run_sh_answers_a_call_with_nothing_new_within_150_ms(tmp_path):
+    main_path = _session(tmp_path)
+    _running_background_agent(main_path, aid(95))
+    hook = _time_nothing_new_calls(tmp_path, main_path, pairs=9).hook
+    median = statistics.median(hook)
+    assert median < NOTHING_NEW_BUDGET_SECONDS, f"median {median * 1000:.0f} ms: {_ms(hook)}"
+
+
+def test_a_slow_runner_does_not_fail_the_ci_budget_of_a_correct_build(tmp_path):
+    # inbox E47: on a shared macos-latest runner this build's call took a median of 152 ms
+    # (samples 126 to 521 ms) and failed the 150 ms budget. Here every process start costs 120 ms
+    # more, as on a slow runner; the build is the same, so the check CI runs must still pass.
+    main_path = _session(tmp_path)
+    _running_background_agent(main_path, aid(95))
+    timings = _time_nothing_new_calls(tmp_path, main_path, pairs=5, startup_delay=0.12)
+    # every timed path ran its delay: the hook's CLI at the first call and each round, the bare
+    # CLI twice a round (through run.sh and directly)
+    assert (timings.hook_data / "delays").read_text().count("x") == 6
+    assert (timings.bare_data / "delays").read_text().count("x") == 10
+    for samples in timings[:3]:
+        assert min(samples) >= 0.12, _ms(samples)
+    failure = _ci_budget_failure(timings.hook, timings.bare, timings.direct)
+    assert failure is None, failure
+
+
+def _fault_scale(tmp_path, main_path: Path) -> _Timings:
+    """This machine's own timings, so a fault can be sized from them and read the same on a
+    runner of any speed (review: a fixed 500 ms in run.sh reads under 8 direct starts once a
+    direct start takes 70 ms)."""
+    return _time_nothing_new_calls(tmp_path / "scale", main_path, pairs=3)
+
+
+def test_the_ci_budget_fails_a_call_that_got_slower_through_run_sh(tmp_path):
+    # review: the timing harness itself must see the call alone get slower (the hook's CLI alone
+    # waits 3 bare starts), not just the comparator on numbers
+    main_path = _session(tmp_path)
+    _running_background_agent(main_path, aid(95))
+    delay = 3 * statistics.median(_fault_scale(tmp_path, main_path).bare)
+    timings = _time_nothing_new_calls(tmp_path, main_path, pairs=3, hook_delay=delay)
+    failure = _ci_budget_failure(timings.hook, timings.bare, timings.direct)
+    assert failure is not None and failure.startswith("the call:"), failure
+
+
+def test_the_ci_budget_fails_a_run_sh_that_got_slower(tmp_path):
+    # review: and run.sh alone get slower (12 direct starts more), which the bare start through it
+    # shares
+    main_path = _session(tmp_path)
+    _running_background_agent(main_path, aid(95))
+    delay = 12 * statistics.median(_fault_scale(tmp_path, main_path).direct)
+    timings = _time_nothing_new_calls(tmp_path, main_path, pairs=3, run_sh_delay=delay)
+    failure = _ci_budget_failure(timings.hook, timings.bare, timings.direct)
+    assert failure is not None and failure.startswith("run.sh:"), failure
+
+
+def test_the_ci_budget_fails_a_call_that_costs_more_than_two_bare_starts():
+    # measured on the reference machine at rest: the bare CLI started directly 19 ms, through run.sh
+    # 46 ms, the call 62 ms, and 112 ms when the console entry also imports cli (what the gate
+    # exists to avoid)
+    assert _ci_budget_failure([0.062] * 9, [0.046] * 9, [0.019] * 9) is None
+    failure = _ci_budget_failure([0.112] * 9, [0.046] * 9, [0.019] * 9)
+    assert failure is not None and "2.43 times" in failure, failure
+
+
+def test_the_ci_budget_reads_each_pair_under_its_own_load():
+    # review: load that changes during the test splits the two sets of samples, so their separate
+    # medians compare a slow call with a fast bare start; each pair was timed under one load
+    hook = [0.162] * 4 + [0.062] * 4 + [0.162]
+    bare = [0.146] * 4 + [0.046] * 4 + [0.046]
+    direct = [0.119] * 4 + [0.019] * 4 + [0.019]
+    assert _ci_budget_failure(hook, bare, direct) is None
+
+
+def test_the_ci_budget_fails_a_run_sh_that_costs_more_than_eight_bare_starts():
+    # review: the bare start runs the same run.sh, so a slower run.sh slows both sides; the bare CLI
+    # started without run.sh is the wrapper's own reference (2.6 times at rest, about 4 under three
+    # busy processes per core). 200 ms more in run.sh: 262, 246 and 19 ms.
+    failure = _ci_budget_failure([0.262] * 9, [0.246] * 9, [0.019] * 9)
+    assert failure is not None and "run.sh" in failure and "12.95 times" in failure, failure
 
 
 def test_a_return_notice_in_the_main_transcript_alone_opens_the_gate(

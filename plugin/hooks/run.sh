@@ -25,11 +25,15 @@ set -u
 
 EVENT="${1:-}"
 
+# docs/DESIGN.md 4.14.5: tells the CLI that this plugin's hooks.json starts the idle watcher. An
+# older plugin's run.sh sets nothing, so a newer CLI behind it keeps the Stop deadline request.
+export AGENT_POSTMORTEM_WATCHER_HOOK=1
+
 # docs/DESIGN.md 4.14.5 (0.4): post-tool and prompt-submit run at every tool call and prompt
 # under a 5 s hooks.json timeout, so the PATH probe (step 2 below) and the call share 4 s: 1 s
 # for the probe, 3 s for the call. Every other event keeps 2 s for the probe.
 case "$EVENT" in
-    post-tool|prompt-submit) PROBE_DEADLINE=1 ;;
+    post-tool|prompt-submit|pre-bash) PROBE_DEADLINE=1 ;;
     *) PROBE_DEADLINE=2 ;;
 esac
 
@@ -40,6 +44,11 @@ esac
 # *before* a same-command `2>/dev/null` can apply -- this blanket
 # redirection, applied before any file is ever written, is what actually
 # makes that silent.
+# docs/DESIGN.md 4.14.5: stop-watch's stderr is the message Claude Code wakes the session with, so
+# the real one is kept on fd 3 for that event alone.
+if [ "$EVENT" = "stop-watch" ]; then
+    exec 3>&2
+fi
 if [ -z "${AGENT_POSTMORTEM_DEBUG:-}" ]; then
     exec 2>/dev/null
 fi
@@ -382,13 +391,19 @@ _maybe_install() {
         </dev/null >>"$install_log" 2>&1
 }
 
-# docs/DESIGN.md 4.14.11: the version a CLI's `hook capabilities` reports, or nothing.
-_cli_version() {
+# What a CLI's `hook capabilities` says, when it is a well-formed answer.
+_cli_capabilities() {
     out_file="$(_tmpfile)"
     _run_with_deadline 2 "$1" hook capabilities >"$out_file" 2>/dev/null </dev/null
     caps="$(cat "$out_file" 2>/dev/null)"
     rm -f "$out_file" 2>/dev/null
     _looks_like_capabilities_v1 "$caps" || return 0
+    printf '%s' "$caps"
+}
+
+# docs/DESIGN.md 4.14.11: the version a CLI's `hook capabilities` reports, or nothing.
+_cli_version() {
+    caps="$(_cli_capabilities "$1")"
     printf '%s' "$caps" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
 }
 
@@ -447,6 +462,28 @@ _maybe_upgrade_bundled() {
         </dev/null >>"$upgrade_log" 2>&1
 }
 
+# docs/DESIGN.md 4.14.5 (the PATH-CLI skew): a CLI on PATH is the person's own and is never
+# upgraded here, and it stays silent for a hook it does not have. At a session start with nothing
+# else to say, at most once a day, say so. A bundled CLI is upgraded instead (above).
+_print_old_cli_hint_if_due() {
+    [ "$EVENT" = "session-start" ] || return 0
+    [ "$CLI" = "agent-postmortem" ] || return 0
+    case "$(_cli_capabilities "$CLI")" in
+        *'"stop-watch"'*) return 0 ;;
+        *'"protocol"'*) ;;
+        *) return 0 ;; # a probe that timed out says nothing about its age
+    esac
+    _ensure_data_dir || return 0
+    _try_lock "$DATA_DIR/cli-old-hint.lock" || return 0
+    marker="$DATA_DIR/cli-old-hint"
+    if _modified_within_a_day "$marker"; then
+        return 0
+    fi
+    printf '{"systemMessage": "agent-postmortem on PATH is older than this plugin, so its newer hooks stay silent; run: uv tool upgrade %s"}\n' \
+        "$PYPI_PACKAGE"
+    : >"$marker" 2>/dev/null
+}
+
 # ---- main -----------------------------------------------------------------
 
 CLI="$(_resolve_cli)"
@@ -456,6 +493,19 @@ CLI="$(_resolve_cli)"
 if [ -z "$CLI" ] && [ "$EVENT" = "session-start" ]; then
     _maybe_install
     CLI="$(_resolve_cli)"
+fi
+
+if [ "$EVENT" = "stop-watch" ]; then
+    # docs/DESIGN.md 4.14.5: Claude Code runs this one in the background and an exit 2 wakes the
+    # session, so it is the one event whose exit code and stderr are passed on: no deadline here
+    # (it lives while it watches, and watches its own parent), no missing-CLI hint on a background
+    # hook, and only a CLI that says it has this hook, since an older one's usage error exits 2.
+    [ -n "$CLI" ] || exit 0
+    case "$(_cli_capabilities "$CLI")" in
+        *'"stop-watch"'*) ;;
+        *) exit 0 ;;
+    esac
+    exec "$CLI" hook stop-watch 2>&3 3>&-
 fi
 
 if [ -z "$CLI" ]; then
@@ -472,7 +522,7 @@ case "$EVENT" in
     session-start) HOOK_DEADLINE=80 ;;
     # docs/DESIGN.md 4.14.5 (0.4): every tool call and prompt; hooks.json gives them 5s, of
     # which the PATH probe may take 1s
-    post-tool|prompt-submit) HOOK_DEADLINE=3 ;;
+    post-tool|prompt-submit|pre-bash) HOOK_DEADLINE=3 ;;
     *) HOOK_DEADLINE=8 ;;
 esac
 
@@ -498,6 +548,8 @@ rm -f "$out_file" 2>/dev/null
 
 if [ "$cli_status" -eq 0 ] && [ -n "$cli_output" ] && _looks_like_json_object "$cli_output"; then
     printf '%s\n' "$cli_output"
+else
+    _print_old_cli_hint_if_due
 fi
 
 # docs/DESIGN.md 4.14.11: the upgrade runs detached, after this hook's output, with every fd

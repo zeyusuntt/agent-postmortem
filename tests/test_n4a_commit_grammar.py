@@ -144,7 +144,7 @@ NEGATIVE = [
     "git cherry-pick x",
     "git notacommit",
     "xargs git commit -m x",
-    "env git commit -m x",
+    # E48: `env git commit -m x` moved to E48_FLIPPED_POSITIVE (a bare env is a run-as-is prefix).
     "sudo git commit -m x",
     "time git commit -m x",
     "command git commit -m x",
@@ -169,7 +169,8 @@ NEGATIVE = [
     'git commit -m "$(echo hi)"',
     "git commit -m x `echo y`",
     "git commit -m 'unbalanced",
-    "git commit -m x && eval ls",
+    # E48: `git commit -m x && eval ls` moved to E48_FLIPPED_POSITIVE (the opaque segment
+    # cannot spell a commit, so the literal commit segment is judged on its own).
     # wrappers outside the one recognized level
     "bash -c \"bash -c 'git commit -m x'\"",
     "sh -c 'bash -lc \"git commit -m x\"'",
@@ -258,8 +259,8 @@ A1_STILL_NEGATIVE = [
     "bash -c 'git commit -m x' &",
     "bash -c 'git add .; git commit -m x' &",
     "bash -c \"bash -c 'git commit -m x'\"",
-    "git commit -m x ; echo $X",
-    "git commit -m x ; (echo y)",
+    # E48: `git commit -m x ; echo $X` and `git commit -m x ; (echo y)` moved to
+    # E48_FLIPPED_POSITIVE.
     "echo git commit ; echo y",
     "# git commit -m x\necho y",
     "echo 'git commit -m x' ; echo y",
@@ -270,6 +271,28 @@ A1_STILL_NEGATIVE = [
 @pytest.mark.parametrize("command", A1_STILL_NEGATIVE)
 def test_a1_still_not_a_commit_call(command):
     assert commands.commit_facts(command, CWD).segments == ()
+
+
+# --- Field report 2026-11-03 (E48): a command the lexer does not place is judged per segment --
+#
+# Each command below was a NEGATIVE or A1_STILL_NEGATIVE row and is a commit call now: its
+# commit segment is literal, and no other segment that cannot be judged spells `commit`. The
+# repository is unknown (the lexer places no base in such a command), and the ledger keeps the
+# call's own candidate. tests/test_e48_commit_ids_behind_a_prefix.py has the rest.
+
+E48_FLIPPED_POSITIVE = [
+    ("env git commit -m x", [None]),
+    ("git commit -m x && eval ls", [None]),
+    ("git commit -m x ; echo $X", [None]),
+    ("git commit -m x ; (echo y)", [None]),
+]
+
+
+@pytest.mark.parametrize("command,expected", E48_FLIPPED_POSITIVE)
+def test_e48_a_literal_commit_beside_an_opaque_segment_is_a_commit_call(command, expected):
+    facts = commands.commit_facts(command, CWD)
+    assert [seg.repo for seg in facts.segments] == expected
+    assert facts.placed is False
 
 
 A1_ID_ROWS = [

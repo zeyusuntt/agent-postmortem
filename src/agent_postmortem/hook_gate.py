@@ -12,7 +12,15 @@ post_tool_check) only when:
 - the bytes appended to the main transcript since the last call name a task notification, an
   agent id (a launch or a return), an interrupt or a TaskStop: the facts that decide or explain
   an ending;
-- an earlier check left a kill waiting for its native notice (`pending`).
+- an earlier check left a kill waiting for its native notice (`pending`);
+- (field report 2026-11-03) a background command was launched (`"backgroundTaskId"` in the
+  appended bytes), or the time the last check stored, when a running command can first have
+  stopped writing (`recheck_at`), has come. A session with no subagent keeps no gate state
+  until its transcript's tail names a background command or a worker;
+- (field reports 2026-11-04) this call launched a worker (`claude --bg`, read from the payload,
+  since the transcript can lag), the appended bytes name one (`--bg`, `--background`, `claude
+  attach `), or a worker's job file says something new: its file is parsed only when its size or
+  mtime moved, at most 8 per call, and the gate opens only if its state, class or `needs` did.
 
 Gate state is one small private file per session in `$STATE_DIR/hook-gate/`, read and written
 only through state.py's verified private-file calls (4.14.9 item 4), and pruned after 7 days
@@ -28,10 +36,13 @@ import sys
 import time
 from pathlib import Path
 
-from . import state  # standard library only, about 14 ms to import; every write goes through it
+from . import state, workers  # standard library only; every write goes through state
 
 _EVENTS = {"post-tool": "PostToolUse", "prompt-submit": "UserPromptSubmit"}
-_MAIN_MARKS = (b"task-notification", b'"agentId"', b"[Request interrupted", b"TaskStop")
+_LAUNCH_MARKS = (b'"backgroundTaskId"', b"--bg", b"--background", b"claude attach ")
+_MAIN_MARKS = (b"task-notification", b'"agentId"', b"[Request interrupted", b"TaskStop",
+               *_LAUNCH_MARKS)
+_GATE_VERSION = 2  # 2: `workers`; a file of another version opens the gate once
 _TAIL_KEEP = 64  # bytes kept before the offset, so a mark split across two reads is still seen
 _LINE_SEARCH = 1 << 16  # how far back a first call looks for the last complete line
 _GATE_PRUNE_SECONDS = 7 * 86400  # the live store's own pruning age (4.14.8)
@@ -126,6 +137,58 @@ def _main_delta(main_path: str, gate: dict | None) -> tuple[bool, dict]:
     return marked, _position(info, offset)
 
 
+def _tail_names_a_launch(main_path: str) -> bool:
+    """Whether the last 64 KB of the main transcript name a background command: the one read a
+    session with no subagent and no gate state pays at a call (field report 2026-11-03)."""
+    try:
+        size = os.stat(main_path).st_size
+    except OSError:
+        return False
+    tail = _read_range(main_path, max(0, size - _LINE_SEARCH), size)
+    return tail is not None and any(mark in tail for mark in _LAUNCH_MARKS)
+
+
+def _worker_changes(main_path: str, gate: dict | None) -> tuple[bool, dict | None]:
+    """(whether a worker's job file says something new, the gate's table with moved signatures
+    brought up to date). Only a file whose signature moved is parsed; one past the limit opens
+    the gate, whose full check has the same limit, so a later call gets to it."""
+    table = gate.get("workers") if gate else None
+    if not isinstance(table, dict) or not table:
+        return False, None
+    jobs_root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(main_path))), "jobs")
+    changed = False
+    parsed = 0
+    fresh: dict = {}
+    rows = [(short, known) for short, known in table.items()
+            if isinstance(known, list) and len(known) == 3]
+    # the file read longest ago first, so busy workers cannot hide another behind the limit
+    for short, known in sorted(rows, key=lambda row: row[1][0]):
+        if known[2] == "-":
+            fresh[short] = known
+            continue
+        path = workers.job_file(jobs_root, short)
+        signature = workers.job_signature(path)
+        if signature is None or signature == known[:2]:
+            fresh[short] = known  # a stat that failed once ends nothing; a removed job says nothing
+            continue
+        if parsed >= workers.PARSES_PER_CALL:
+            changed = True
+            fresh[short] = known
+            continue
+        parsed += 1
+        data = workers.read_job(path)
+        if data is None:
+            # tried at this signature: read again when the file changes, its place given up, so
+            # a job that cannot be read cannot take the limit from the others
+            fresh[short] = [*signature, known[2]]
+        elif workers.identity(data) == known[2]:
+            fresh[short] = [*signature, known[2]]
+        else:
+            changed = True
+            fresh[short] = known
+    return changed, fresh
+
+
 def _position(info: os.stat_result, offset: int) -> dict:
     """The gate's main position: the end of the last complete line, and whether a line after it
     was still being written."""
@@ -143,22 +206,44 @@ def run(command: str) -> int:
         if not isinstance(main_path, str) or not main_path.endswith(".jsonl"):
             return 0
         subagents = os.path.join(main_path[: -len(".jsonl")], "subagents")
-        if not os.path.isdir(subagents):
-            return 0  # no subagent, nothing to check, no state written
         gate_path = _gate_path(main_path)
         gate = _read_gate(gate_path)
-        signature = _signature(subagents)
+        launched = bool(workers.payload_launches(payload))
+        if not os.path.isdir(subagents) and gate is None and not launched \
+                and not _tail_names_a_launch(main_path):
+            return 0  # no subagent, background command or worker: nothing to check or write
+        signature = _signature(subagents) if os.path.isdir(subagents) else ""
         marked, position = _main_delta(main_path, gate)
-        if gate is not None and not marked and not gate.get("pending") \
+        recheck_at = gate.get("recheck_at") if gate else None
+        due = isinstance(recheck_at, (int, float)) and time.time() >= recheck_at
+        worker_changed, table = _worker_changes(main_path, gate)
+        if gate is not None and gate.get("v") == _GATE_VERSION and not marked and not due \
+                and not launched and not worker_changed and not gate.get("pending") \
                 and gate.get("sig") == signature:
-            if position and position != gate.get("main"):
-                _write_gate(gate_path, {**gate, "main": position})
+            moved = {**({"main": position} if position and position != gate.get("main") else {}),
+                     **({"workers": table} if table is not None and table != gate.get("workers")
+                        else {})}
+            if moved:
+                _write_gate(gate_path, {**gate, **moved})
             return 0
+        if gate is not None and table is not None and table != gate.get("workers"):
+            # what this call parsed, so the full check spends its own limit on the others
+            _write_gate(gate_path, {**gate, "workers": table})
         from . import hooks_cli  # the full check; heavy, so only past the gate
 
         deliver, pending = hooks_cli.post_tool_check(main_path, payload)
-        _write_gate(gate_path, {"sig": signature, "main": position, "pending": bool(pending)},
-                    new=gate is None)
+        written = {"v": _GATE_VERSION, "sig": signature, "main": position,
+                   "pending": bool(pending)}
+        recheck_at = getattr(deliver, "recheck_at", None)
+        if isinstance(recheck_at, (int, float)):
+            written["recheck_at"] = recheck_at
+        checked = getattr(deliver, "workers", None)
+        if isinstance(checked, dict) and checked:
+            written["workers"] = checked
+        turn = getattr(deliver, "stall_turn", None)
+        if isinstance(turn, int) and turn:
+            written["stall_turn"] = turn
+        _write_gate(gate_path, written, new=gate is None)
         message = deliver()  # the claims, last: a call killed before here has claimed nothing
         if message:
             print(json.dumps({"hookSpecificOutput": {

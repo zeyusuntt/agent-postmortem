@@ -1,6 +1,12 @@
 # agent-postmortem (Claude Code plugin)
 
-Catches what a Claude Code Workflow run left silently broken: a subagent
+Claude Code records the state. The plugin tells you. A worker you launched
+with `claude --bg` that waits on a permission prompt, waits on an answer,
+fails, or sits idle on a command that never ends is told to your session at
+its next tool call, and an idle session is woken for it. Nothing has to be
+armed.
+
+It also catches what a Claude Code Workflow run left silently broken: a subagent
 killed and retried from scratch, a kill logged as a user interrupt, a shell
 command that outlived its timeout, structured output that arrived
 corrupted, a review finding that names a file that never appeared.
@@ -47,6 +53,21 @@ raises, the hook prints nothing and exits 0.
   run. The same opt-out applies.
 - On **SessionStart** after a resume, the session hears which of its own
   subagents never returned.
+- **PostToolUse** (every tool) and **UserPromptSubmit** also follow the
+  background sessions this session launched with `claude --bg`: each change
+  to a permission prompt, a question, an error, a failure or a stall is told
+  once with the command that helps (`claude attach <id>`, `claude logs <id>`),
+  and a worker that delivered gets a one-line note. The worker's own words
+  are never printed.
+- **Stop** also starts a background watcher when this session has a worker or
+  a running command to follow, and that watcher wakes the session if it goes
+  idle. It checks every 20 s, wakes at most once per 5 minutes, and leaves as
+  soon as the session acts again. A Claude Code older than 2.1.314 gets none.
+  This is the one hook whose exit code matters: exit 2 wakes the session. Turn
+  it off with `AGENT_POSTMORTEM_WAKE=0`.
+- **Stop** in a background session whose subagents and workflows have all
+  ended, with no `agent-postmortem status` since, reminds it once to run that
+  before reporting done. `AGENT_POSTMORTEM_WATCH_HINT=0` turns it off.
 
 On SessionStart the plugin also keeps its bundled CLI at the plugin's
 version: after a plugin upgrade it reinstalls the matching CLI in the

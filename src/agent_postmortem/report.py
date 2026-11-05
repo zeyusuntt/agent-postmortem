@@ -2431,6 +2431,7 @@ def render_scan_triage_text(
     total_live_now: int = 0,
     both_kinds: bool = True,
     all_label: str = "ALL TIME",
+    older_blocked: int = 0,
 ) -> str:
     """unit M3b: the new default `scan` text output. `shown_candidates` is
     already sorted and already truncated to --limit by the caller;
@@ -2448,7 +2449,8 @@ def render_scan_triage_text(
         f"; showing {len(shown_candidates)}, use --limit N or --all for more" if truncated else ""
     )
     lines = [f"NEEDS ATTENTION ({total_candidates} of {total_runs} runs{note})"]
-    if not shown_candidates and not total_candidates:  # P12: never a bare header
+    if not shown_candidates and not total_candidates and not older_blocked:
+        # P12: never a bare header
         lines.append("  nothing needs attention")
         workflow_runs = totals_all.get("workflow", {}).get("runs", 0)
         session_children = totals_all.get("session", {}).get("subagents", 0)
@@ -2467,6 +2469,9 @@ def render_scan_triage_text(
             f"{candidate['verdict']}  {redactor(candidate['reason'])}"
         )
         lines.append(f"    -> {redactor(candidate['command'])}")
+    if older_blocked:  # field reports 2026-11-04
+        lines.append(f"  {older_blocked} more blocked in other sessions for over 3 days: "
+                     "agent-postmortem status")
     if total_live_now:
         shown_live = live_now or []
         live_note = (

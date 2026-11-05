@@ -90,6 +90,24 @@ class JournalLineTooLong(Exception):
 _LABEL_WIDTH = 7
 
 
+class _LineFlushed:
+    """docs/DESIGN.md 4.12 (field report 2026-11-03): the stream watch prints to, flushed at
+    the end of every line. A Monitor reads watch's stdout through a pipe, where Python buffers
+    by block, so without this every line reached the reader only when the process exited."""
+
+    def __init__(self, stream) -> None:
+        self._stream = stream
+
+    def write(self, text: str) -> int:
+        written = self._stream.write(text)
+        if "\n" in text:
+            self._stream.flush()
+        return written
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+
 def _now() -> float:
     """Epoch seconds (docs/DESIGN.md 4.12): the same domain as a file's own
     mtime, so QUIET's 'now - mtime' needs no unit conversion. A test
@@ -415,7 +433,7 @@ def watch_run(
     out=None,
     err=None,
 ) -> int:
-    out = sys.stdout if out is None else out
+    out = _LineFlushed(sys.stdout if out is None else out)
     err = sys.stderr if err is None else err
 
     start = _now()

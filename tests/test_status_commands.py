@@ -102,7 +102,8 @@ def test_a_session_whose_only_worker_is_a_background_command_says_status_does_no
     lines = _command_lines(out)
     assert len(lines) == 1, out
     assert "1 in the background" in lines[0] and "1 completed" in lines[0]
-    assert "status does not check their output" in lines[0]
+    # field report 2026-11-03: status now reads whether a command still writes, never what
+    assert "status checks only whether they still write" in lines[0]
 
 
 def test_commands_are_counted_by_their_native_end(tmp_path, capsys):

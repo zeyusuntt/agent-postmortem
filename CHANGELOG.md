@@ -5,6 +5,100 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0]
+
+0.5 tells a session about the workers it launched, with nothing to arm. Claude Code records a
+background session's state in its job file and tells nobody: a worker sat 8.5 hours on a
+permission prompt while the session that launched it heard nothing. Now that session reads one
+line at its next tool call or prompt, and an idle session is woken for it. This needs the plugin;
+without it, `status` and `scan` print the same reasons when someone runs them.
+
+### Added
+
+- Worker notice. The plugin reads the `claude --bg` in the session's own Bash call and follows
+  that worker from then on: `WORKER night-run (a1b2c3d4) blocked 15m: waiting for a permission
+  approval (approve Entering worktree). A person must approve it: claude attach a1b2c3d4`. A
+  permission prompt, a question, a first prompt never sent, an API error, a failure and a worker
+  idle on a stuck command each have their own line, told once per change at the next tool call
+  or prompt, ahead of anything else the hook has to say. A worker that delivered gets a one-line
+  note with no problem word. The worker's own words are never printed: only the name its launch
+  printed, the short id and a permission's tool. A worker that finishes on its own schedule is
+  told finishing twice, then not until trouble. A first look after an upgrade tells trouble from
+  the last 24 hours and deliveries from the last 10 minutes, and records the rest silently. A
+  launch by a subagent, by another session or by a Bash call that ran in the background is not
+  linked; `status` and `scan` still list those workers.
+- Idle wake. Every Stop starts a watcher (`hook stop-watch`, an `asyncRewake` hook) when the
+  session has a worker or a running command to follow, and it wakes an idle session with the
+  same line. It checks every 20 s, wakes at most once per 5 minutes, leaves as soon as the session
+  acts again, and gives a worker's own report 2 minutes to arrive before it wakes for a delivery.
+  A session is never woken for a line it could not record as told, and any error exits without
+  waking it. It needs Claude Code 2.1.314 or later, a reboot loses it until the next Stop, and
+  `AGENT_POSTMORTEM_WAKE=0` turns it off. A running session starts it after `/reload-plugins` or
+  a restart; the per-call line does not need either.
+- Reason classes in `status` and `scan`. A BLOCKED row says what the session waits for
+  (`waiting for a permission approval`, `waiting for an answer`, `stopped on an API error`, `the
+  reason is not recorded`) and `dispatched by this session` when it did, those rows first. A
+  worker that delivered and waits on a decision has its own DELIVERED row. `--local` adds the
+  tool and the command that helps (`-> claude attach <id>`, `-> claude logs <id>`), `status
+  --json` adds `class` and `mine`, and `--local` adds `label` and `short`. Another session's row
+  older than 3 days folds into one count line.
+- `scan` lists under NEEDS ATTENTION every background session waiting on a person or failed in
+  the last day, read at scan time and whatever `--since` says, the caller's own workers first. One
+  that delivered is not listed. `scan --json` gains `blocked` only when one is listed.
+- Stall checks. A background command whose output has not changed for 30 minutes, or whose output
+  ends in codex's "Reading additional input from stdin..." for 2 minutes, is told once through a
+  COMMAND line at the next tool call or prompt. `status` prints a STALLED row and `scan` lists the
+  session first under NEEDS ATTENTION when its process is alive, its turn ended 30 minutes ago and
+  nothing is set to wake it. The BACKGROUND line counts such a session as stalled, not working. A
+  command under a real `timeout`, a timer by any path to `sleep`, or one carrying the marker
+  `# postmortem: silent-wait` is quiet by design, and only the stdin rule still speaks for it. So
+  is `perl -e 'alarm N; exec @ARGV' ...` or `'alarm shift; exec @ARGV' N ...`, in that exact shape
+  with only exact, literal steps around it. Any other wrapper is told once, in words that say it
+  may be fine: a loose rule would silence the only alarm for a real hang.
+- Codex stdin warning. `hook pre-bash` warns before a background `codex exec` with no stdin
+  redirect runs: codex reads stdin to its end when it is not a terminal, and one review hung
+  26 hours that way.
+- A Stop with a background command still running asks the session to arm a deadline, once per
+  command, wherever the idle watcher would not catch a hang: an interactive session, an older
+  Claude Code or plugin, or a command whose output the watcher cannot read (`> "$LOG"`).
+  A Monitor or a wake that can still fire counts as that deadline.
+- A background session whose subagents and workflows have all ended, with no `status`, `scan`,
+  `run` or `watch` of this tool since, is reminded once at a Stop with nothing else to say to run
+  `status` before reporting done. An interactive session gets none, and
+  `AGENT_POSTMORTEM_WATCH_HINT=0` turns it off.
+- At a session start with nothing else to say, at most once a day, the plugin says so when the
+  `agent-postmortem` on PATH is older than the plugin and its newer hooks stay silent. `hook
+  capabilities` lists `hooks`, and an older CLI is never started for `stop-watch`.
+
+### Changed
+
+- `watch` flushes every line. A Monitor reads it through a pipe, where block buffering delivered
+  nothing until the run ended. It also stops quietly when its reader closes the pipe.
+- `watch --session`, `status` and `scan` read a worker's `tempo` before its `state`, which is
+  written only when a turn ends: a worker on a permission prompt reads `state: working, tempo:
+  blocked`, and one given a new prompt reads `state: blocked, tempo: active`.
+- The top-level help names `watch --session` and a background worker's blocked or needs-input
+  state.
+- In a session that is itself a background worker, `status` lists only the rows it launched and
+  ends the count line with `; this session launched <n>, scan lists the rest`. `--json` keeps every
+  row with its owner, and if it launched a worker whose id it never saw, all rows stay.
+
+### Fixed
+
+- `status` no longer keeps a finished subagent as RUNNING. A subagent resumed by a message ends
+  with a notice naming only its task, no tool-use id, and the live read dropped it, so the first
+  notice stood while the transcript grew past it. It now counts when the task is a subagent this
+  session launched.
+- A commit's id is read per segment of the shell command. When an assignment or expansion
+  elsewhere in the command made the whole command unplaced, an agent's printed summary line was
+  dropped and its COMMITS read `?`. Substitutions that spell a commit still read `?`.
+- A Monitor no longer gets the deadline request (Claude Code lists it as a plain shell task, so a
+  Monitor is now known from the session's own Monitor calls), and a deliberately silent wait no
+  longer reads as hung and suggests stopping it.
+- On CI the hook-speed test compares a nothing-new call with a bare start of the same interpreter
+  in interleaved rounds. A shared runner read 152 ms against the 150 ms budget on a correct
+  build; the 150 ms test still runs where CI is unset.
+
 ## [0.4.0]
 
 0.4 adds live mode: the tool checks a subagent's "done" the moment it returns, and tells the

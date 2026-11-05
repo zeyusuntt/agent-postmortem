@@ -35,8 +35,39 @@ RESULTS = ("[main 1a2b3c4] msg\n 1 file changed", "no summary here", "[a b] x\n[
 
 # Fields added after the frozen classifier (field milestone F, FA6): `Lexed.reason_at`
 # and `CallClass.commit_command_present`. The frozen copy has neither, so the comparison is over every
-# field it does have; tests/test_fa_commit_no_id.py pins the new ones.
-_FIELDS_ADDED_AFTER_THE_FROZEN_COPY = frozenset({"reason_at", "commit_command_present"})
+# field it does have; tests/test_fa_commit_no_id.py pins the new ones. `CommitFacts.placed`
+# (field report 2026-11-03) is pinned by tests/test_e48_commit_ids_behind_a_prefix.py.
+_FIELDS_ADDED_AFTER_THE_FROZEN_COPY = frozenset({"reason_at", "commit_command_present", "placed"})
+
+
+def e48_commit_facts_may_differ(command: str) -> bool:
+    """Field report 2026-11-03 changed A1's id grammar on purpose: a command the lexer does not
+    place is judged segment by segment, a `mise exec|x ... --` prefix is looked through, and a
+    `GIT_` assignment word counts no id (tests/test_e48_commit_ids_behind_a_prefix.py and the
+    E48 rows of tests/test_n4a_commit_grammar.py pin those). Outside these commands the commit
+    facts must still equal the frozen classifier's."""
+    return _may_differ(command, 0)
+
+
+def _may_differ(command: str, depth: int) -> bool:
+    lexed = live.lex(command, commit_message_form=True)
+    if not lexed.placed:
+        return True
+    for seg in lexed.segments:
+        texts = [word.text for word in seg.words]
+        if texts[:1] == ["mise"] or any(live._GIT_ASSIGN_RE.match(text) for text in texts):
+            return True
+        if (depth == 0 and len(texts) == 3 and texts[0] in ("bash", "sh")
+                and texts[1] in ("-c", "-lc") and _may_differ(texts[2], 1)):
+            return True
+    return False
+
+
+def _without_commit(value):
+    data = as_data(value)
+    if isinstance(data, dict):
+        data.pop("commit", None)
+    return data
 
 
 def as_data(value):
@@ -272,17 +303,25 @@ def compare(command: str, cwd, rng_flags: tuple[bool, bool, str]) -> None:
     ), ("bases", command, cwd)
     new_facts = live.commit_facts(command, cwd)
     old_facts = ref.commit_facts(command, cwd)
-    assert as_data(new_facts) == as_data(old_facts), ("commit", command, cwd)
-    for text in RESULTS:
-        assert live.commit_ids(new_facts, text) == ref.commit_ids(old_facts, text)
+    same = as_data if not e48_commit_facts_may_differ(command) else _without_commit
+    if same is as_data:
+        assert as_data(new_facts) == as_data(old_facts), ("commit", command, cwd)
+        for text in RESULTS:
+            assert live.commit_ids(new_facts, text) == ref.commit_ids(old_facts, text)
+    elif not live.lex(command, commit_message_form=True).placed:
+        # the frozen A1 read no commit segment in a command it could not place
+        assert old_facts.segments == (), ("frozen unplaced commit", command)
     kwargs = {"run_in_background": background, "backgrounded_hit": hit, "cwd": cwd}
     new_class = live._classify_call(tool, command, **kwargs)
     old_class = ref._classify_call(tool, command, **kwargs)
-    assert as_data(new_class) == as_data(old_class), ("classify", tool, command, kwargs)
+    assert same(new_class) == same(old_class), ("classify", tool, command, kwargs)
     if new_class is not None:
-        assert new_class.to_dict() == old_class.to_dict()
+        new_dict, old_dict = new_class.to_dict(), old_class.to_dict()
+        if same is not as_data:
+            new_dict.pop("commit"), old_dict.pop("commit")
+        assert new_dict == old_dict
     cached = live.classify_call(tool, command, **kwargs)
-    assert as_data(cached) == as_data(old_class), ("classify_call", tool, command, kwargs)
+    assert same(cached) == same(old_class), ("classify_call", tool, command, kwargs)
 
 
 def test_every_table_row_classifies_identically_to_the_frozen_classifier():

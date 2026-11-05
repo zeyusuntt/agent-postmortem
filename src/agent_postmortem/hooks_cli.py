@@ -43,6 +43,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import time
 import traceback
@@ -50,7 +51,18 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import config, detectors, disclosure, live, reader, report, state
+from . import (
+    commands,
+    config,
+    detectors,
+    disclosure,
+    live,
+    reader,
+    report,
+    stalls,
+    state,
+    workers,
+)
 from .markers import KILL_SENTINEL_PREFIX
 from .redact import Redactor
 
@@ -950,12 +962,224 @@ def _format_notify_lines(notifications: list[_NotifyInfo], redactor: Redactor) -
     return lines
 
 
+# docs/DESIGN.md 4.14.5 (field report 2026-11-03, item 1 of "no silent failures")
+_STOP_BUDGET = 400
+
+
+_is_timer = commands.is_timer
+_is_bounded = commands.is_bounded
+
+
+def _stop_deadline_notice(payload: dict) -> dict | None:
+    """Stop: the session is ending its turn with shell commands still running in the background.
+    Claude Code wakes it when one ends and never when one does not, so ask it, once per task, to
+    arm a deadline first, unless it already has one armed (a cron, a Monitor, a timer task) or is
+    already continuing from a Stop hook. None, or {full, short, keys, main}: the request, a short
+    form for when it joins another message, the delivery keys and the main transcript."""
+    if payload.get("hook_event_name") != "Stop" or payload.get("stop_hook_active"):
+        return None
+    transcript = payload.get("transcript_path")
+    tasks = payload.get("background_tasks")
+    if not isinstance(transcript, str) or not transcript.endswith(".jsonl") \
+            or not isinstance(tasks, list) or payload.get("session_crons"):
+        return None
+    covered = _watcher_covers(transcript)
+    shells = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        kind, status = task.get("type"), task.get("status")
+        if kind == "monitor" and status in (None, "running", "pending"):
+            return None  # a Monitor tells its end or its expiry
+        if kind != "shell" or status not in (None, "running"):
+            continue
+        command = task.get("command")
+        if isinstance(command, str) and _is_timer(command):
+            return None  # a deadline is armed
+        cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
+        if isinstance(command, str) and (commands.is_bounded(command, cwd)
+                                         or commands.under_its_own_alarm(command, cwd)):
+            continue  # under a positive timeout or its own alarm, it ends on its own
+        if covered and not (isinstance(command, str) and _watcher_cannot_read(command, cwd)):
+            continue
+        if isinstance(task.get("id"), str) and live.TASK_ID_RE.fullmatch(task["id"]):
+            shells.append(task["id"])
+    main_path = Path(transcript)
+    if shells and _armed_by_facts(main_path, [
+            task.get("id") for task in tasks if isinstance(task, dict)
+            and task.get("type") == "shell" and task.get("status") in (None, "running")]):
+        return None
+    told = live.delivered_keys(main_path) if shells else set()
+    untold = [task for task in shells if f"cmd:{task}:stop" not in told]
+    if not untold:
+        return None
+    return {"tasks": untold, "keys": [f"cmd:{task}:stop" for task in untold], "main": main_path}
+
+
+def _watcher_covers(transcript: str) -> bool:
+    """A background session on a Claude Code that can run the idle watcher has nothing to arm:
+    the watcher tells it when a command goes silent, so this request would only ask an agent to
+    do by hand what the plugin does (4.14.5). An interactive session is told only about a wait
+    on stdin (a server in one is silent by design), so it is still asked, as is any session the
+    watcher cannot run in."""
+    from . import watcher
+
+    main_path = Path(transcript)
+    return os.environ.get(watcher.PLUGIN_MARK) == "1" and watcher.enabled(main_path) \
+        and stalls.live_session_kind(
+            main_path.stem, stalls.default_sessions_root(main_path)) == "bg"
+
+
+def _watcher_cannot_read(command: str, cwd: str | None) -> bool:
+    """The watcher tells a silence only for a command whose output it can read. Silence is never
+    judged for a redirect it cannot place, for one that is no regular file, or for one where it
+    may not be, as a relative one after a `cd X;` that may have failed, so the deadline request
+    stays for those (0.5.0 review)."""
+    outputs, unknown = live.command_outputs(command, cwd)
+    if unknown:
+        return True
+    segments = commands.lex(command).segments
+    if segments and [word.text for word in segments[0].words][:1] == ["cd"] \
+            and segments[0].sep_after != "&&":
+        if any(not redirect.target.startswith(("/", "~"))
+               for seg in segments[1:] for redirect in seg.redirects
+               if isinstance(redirect.target, str) and redirect.op in live._OUTPUT_OPS):
+            return True
+    for path in outputs:
+        try:
+            if not stat.S_ISREG(os.stat(path).st_mode):
+                return True
+        except FileNotFoundError:
+            if not os.path.isdir(os.path.dirname(path)):
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _armed_by_facts(main_path: Path, tasks: list[str]) -> bool:
+    """Field report 2026-11-04: the payload can list a Monitor as a plain `shell` task, so a
+    Monitor is known from the session's own Monitor calls; one of them still listed as running,
+    or a wake still able to fire, is the deadline this request would ask for. A read cut short
+    says no, and asks."""
+    from . import status as _status
+
+    if not main_path.is_file():
+        return False
+    follower = live.SessionFollower(main_path, caller_session=None)
+    _status._restore(follower, state.read_cache(follower.store_path))
+    follower._read(deadline=time.monotonic() + _FIRST_READ_BUDGET_SECONDS)
+    now = time.time()
+    _status._save(follower, {}, now)
+    return any(task in follower.main.monitors for task in tasks) \
+        or follower.main.wake_pending(now)
+
+
+def _deadline_texts(tasks: list[str]) -> tuple[str, str]:
+    """The request in full and its short form, naming only the tasks it asks about (rendered
+    from the keys this call won, inside the claim: review rounds 1 and 2)."""
+    ids = ", ".join(tasks[:3]) + (f" and {len(tasks) - 3} more" if len(tasks) > 3 else "")
+    full = (
+        f"DEADLINE {ids}: still running as this turn ends. Claude Code wakes you when a command "
+        "ends, never when it hangs. Before stopping, arm a deadline that wakes you (a Monitor "
+        "with timeout_ms, or a background `sleep 1800`); when it fires and the output has not "
+        "moved, TaskStop it and rerun with </dev/null and a timeout. A server or watcher needs "
+        "none."
+    )
+    short = (f"DEADLINE {ids}: still running; before stopping, arm a deadline that wakes you (a "
+             "Monitor with timeout_ms, or a background `sleep 1800`).")
+    return full, short
+
+
+def _claim_deadline(deadline: dict, room: int | None = None) -> str | None:
+    """Claim the request's keys and render it from the tasks this call won; with `room`, the
+    text must fit in it, in full or short, else every won key is handed back."""
+    handed_back: list[str] = []
+
+    def render(won: list[str]) -> str | None:
+        tasks = [task for task in deadline["tasks"] if f"cmd:{task}:stop" in won]
+        if not tasks:
+            return None
+        for text in _deadline_texts(tasks):
+            if room is None or len(text) <= room:
+                return text
+        handed_back.extend(won)  # nothing fits: the next Stop asks
+        return None
+
+    _won, text = live.claim_deliveries(deadline["main"], deadline["keys"], then=render,
+                                       unclaim=lambda: handed_back)
+    return text
+
+
+def _print_deadline(deadline: dict | None, payload: dict | None = None) -> None:
+    """The Stop-time deadline request on its own (no finding to tell), once per task, else the
+    reminder to run `status`, which waits for a Stop with nothing else to say."""
+    text = _claim_deadline(deadline) if deadline is not None else None
+    if not text and payload is not None:
+        text = _status_reminder(payload)
+    if text:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop",
+                                                 "additionalContext": text}}))
+
+
+_STATUS_HINT_KEY = "hint:status"
+
+
+def _status_reminder(payload: dict) -> str | None:
+    """Field report 2026-11-04: two of three workers with subagents never ran `status` before
+    reporting, since the rule lives only in an instruction file. At a Stop of a background session
+    (an interactive one has a person reading), once per session (4.14.6 rule 4), when its subagents
+    and workflows have all ended and no `status`, `scan`, `run` or `watch` of this tool ran since
+    the last ending. Fixed words and two counts. A session with no subagent reads nothing here."""
+    transcript = payload.get("transcript_path")
+    if payload.get("hook_event_name") != "Stop" or payload.get("stop_hook_active") \
+            or os.environ.get("AGENT_POSTMORTEM_WATCH_HINT", "").strip() == "0" \
+            or not isinstance(transcript, str) or not transcript.endswith(".jsonl"):
+        return None
+    main_path = Path(transcript)
+    if not (main_path.parent / main_path.stem / "subagents").is_dir() \
+            or stalls.live_session_kind(main_path.stem,
+                                        stalls.default_sessions_root(main_path)) != "bg" \
+            or _STATUS_HINT_KEY in live.delivered_keys(main_path):
+        return None
+    from . import status as _status
+
+    snap = _status.snapshot(main_path, background=False)
+    counts = snap["counts"]
+    if counts["running"] or counts["waiting"] \
+            or any("ended" not in flow for flow in snap["workflows"]):
+        return None
+    subagents, flows = sum(counts.values()), len(snap["workflows"])
+    entry = (state.read_cache(live.state.live_store_path()).get("transcripts") or {}).get(
+        str(main_path))
+    facts = live.MainFacts.from_dict(entry.get("facts")) if isinstance(entry, dict) else None
+    if facts is None or not (subagents or flows):
+        return None
+    # an ending known only from its own transcript has its time on the row; with no time at all,
+    # no earlier `status` can be said to have covered it
+    times = [facts.last_ending(), *(row.get("at") for row in snap["subagents"])]
+    times = [when for when in times if isinstance(when, (int, float))]
+    if facts.status_ran is not None and times and facts.status_ran >= max(times):
+        return None
+    if not live.claim_delivery(main_path, _STATUS_HINT_KEY):
+        return None
+    what = " and ".join(part for part in (
+        f"{subagents} subagent{'' if subagents == 1 else 's'}" if subagents else "",
+        f"{flows} workflow{'' if flows == 1 else 's'}" if flows else "") if part)
+    return (f"{what} finished and agent-postmortem status has not run since. Run it before "
+            f"reporting done: it says which results can be trusted.")
+
+
 def _cmd_check(payload: dict) -> None:
+    # field report 2026-11-03 (item 1): asked for at every Stop, a session with no subagent too
+    deadline = _stop_deadline_notice(payload)
     session_dir = _session_dir_from_payload(payload)
     if session_dir is None:
+        _print_deadline(deadline, payload)
         return
     session_id = _resolve_session_id(payload)
     if session_id is None:
+        _print_deadline(deadline, payload)
         return
     root = session_dir.parent.parent
     session_key = _session_state_key(root, session_id)
@@ -963,12 +1187,18 @@ def _cmd_check(payload: dict) -> None:
 
     notifications: list[_NotifyInfo] = []
     live_claims: list[tuple[Path, str]] = []
-    with state.transaction() as data:
-        outcomes = _process_units_for_session(data, session_key, session_dir, payload)
-        for outcome in outcomes:
-            if outcome.notify is not None:
-                notifications.append(outcome.notify)
-                live_claims.extend(outcome.live_claims)
+    try:
+        with state.transaction() as data:
+            outcomes = _process_units_for_session(data, session_key, session_dir, payload)
+            for outcome in outcomes:
+                if outcome.notify is not None:
+                    notifications.append(outcome.notify)
+                    live_claims.extend(outcome.live_claims)
+    except (state.StateError, OSError):
+        # the unit check could not run now (a locked or unreadable store); the deadline request
+        # does not depend on it, and this Stop may be the session's last chance (rounds 2, 3)
+        _print_deadline(deadline, payload)
+        return
     # 4.14.6 rule 3: the endings told here are claimed in the live gate after the state lock is
     # released, so the post-tool hook and the watch never tell them again; nothing there may
     # stop the notification itself
@@ -982,6 +1212,7 @@ def _cmd_check(payload: dict) -> None:
             pass  # a repeat later beats a notification lost now
 
     if not notifications:
+        _print_deadline(deadline, payload)
         return
 
     # N3b P17, P8: one registration for every agent the message names (none
@@ -1004,9 +1235,17 @@ def _cmd_check(payload: dict) -> None:
         message += f"  ({disclosure.UNAVAILABLE_DIAGNOSTIC})"
     output: dict = {"systemMessage": message}
     if not stop_hook_active:
+        context = message
+        # joined with the finding within the 400 characters, in full or short; if neither fits,
+        # nothing is claimed and the next Stop asks (review round 1)
+        request = None
+        if deadline is not None:
+            request = _claim_deadline(deadline, room=_STOP_BUDGET - len(message) - 1)
+        if request:
+            context = f"{message}\n{request}"
         output["hookSpecificOutput"] = {
             "hookEventName": payload.get("hook_event_name"),
-            "additionalContext": message,
+            "additionalContext": context,
         }
     print(json.dumps(output))
 
@@ -1384,7 +1623,8 @@ _FIRST_READ_BUDGET_SECONDS = 1.5
 _CALL_BUDGET_SECONDS = 2.0
 
 
-def _render_endings(events: list[dict], main_path: Path, follower) -> str | None:
+def _render_endings(events: list[dict], main_path: Path, follower,
+                    budget: int = _HOOK_BUDGET) -> str | None:
     if not events:
         return None
     redact = live.session_redactor(main_path, follower._agent_ids())
@@ -1393,7 +1633,7 @@ def _render_endings(events: list[dict], main_path: Path, follower) -> str | None
         text = "\n".join(line.rstrip() for line in live.render_text(event, redact))
         rest = len(events) - index - 1
         tail = f"\n... and {rest} more: agent-postmortem status" if rest else ""
-        if parts and len("\n".join([*parts, text])) + len(tail) > _HOOK_BUDGET:
+        if parts and len("\n".join([*parts, text])) + len(tail) > budget:
             parts.append(f"... and {len(events) - index} more: agent-postmortem status")
             break
         parts.append(text)
@@ -1415,13 +1655,18 @@ def post_tool_check(main_path_str: str, payload: dict) -> tuple[Callable[[], str
     if not main_path.is_file():
         return _nothing, False
     follower = live.SessionFollower(main_path, caller_session=None)
-    _status._restore(follower, state.read_cache(follower.store_path))
+    cache = state.read_cache(follower.store_path)
+    _status._restore(follower, cache)
     complete = follower._read(deadline=started + _FIRST_READ_BUDGET_SECONDS)
+    # field reports 2026-11-04: workers first, and told even with no baseline yet: what they say
+    # needs none, and the baseline can take many calls in a long session
+    worker_check = _worker_check(follower, payload, cache, started)
     if not follower.load_endings(new_baseline=complete or follower.read_once_each()):
         # no baseline yet and a transcript never read: keep the place, and take the baseline
         # only once every transcript was read, so an old ending is never told as new
         _status._save(follower, {}, time.time())
-        return _nothing, True
+        return _make_deliver([], [], 0, None, {}, worker_check, main_path, follower,
+                             None), True
     now = time.time()
     found: list[tuple[dict, str]] = []  # (event, its delivery key): claimed only once rendered
     handled: list[str] = []  # the keys of endings that need no line (4.14.6 rule 1)
@@ -1456,28 +1701,375 @@ def post_tool_check(main_path_str: str, payload: dict) -> tuple[Callable[[], str
             judged += 1  # only an agent with an ending counts, so every call makes progress
     if follower.unsettled_meta or follower.rule_pending:
         pending = True  # a meta file to read again, or a baseline to extend (4.14.5)
-    message = _render_endings([event for event, _key in found], main_path, follower)
+    # field report 2026-11-03 (item 2): a background command that stopped writing, once each;
+    # the commands still clocking say when the gate must open again
+    told = live.delivered_keys(main_path, follower.store_path)
+    running = stalls.running_commands(follower.main, now)
+    waiting = [(c, _command_key(c)) for c in running
+               if c["silent"] and _command_key(c) not in told]
+    rechecks = [c["recheck_seconds"] for c in running
+                if c["recheck_seconds"] is not None and _command_key(c) not in told]
+    # with commands to tell, the endings leave room for their summary line (review round 1)
+    reserve = {"budget": _HOOK_BUDGET - _COMMAND_RESERVE} if waiting else {}
+    message = _render_endings([event for event, _key in found], main_path, follower, **reserve)
+    # only the commands whose lines fit are claimed; the rest are told at the next call
+    _text, shown = _with_commands(message, [c for c, _key in waiting])
+    commands = waiting[:shown]
+    overflow = len(waiting) - shown
     _status._save(follower, {}, now)
     follower._save_reported(handled)
 
-    def deliver() -> str | None:
-        if not found:
-            return None
-
-        def message_for(won: list[str]) -> str | None:  # inside the claim's lock, before its write
-            if len(won) == len(found):
-                return message
-            return _render_endings([event for event, key in found if key in won], main_path,
-                                   follower)
-
-        _won, text = live.claim_deliveries(main_path, [key for _event, key in found],
-                                           follower.store_path, then=message_for)
-        return text
-
+    recheck_at = now + min(rechecks) if rechecks else None
+    deliver = _make_deliver(found, commands, overflow, message, reserve, worker_check, main_path,
+                            follower, recheck_at)
     # endings to deliver keep the gate open for one more call: the gate is written before
     # deliver() runs, so a call killed while it claims is checked again, and a call whose claims
     # went through finds nothing new and closes it
-    return deliver, pending or bool(found)
+    return deliver, pending or bool(found) or bool(commands) or overflow > 0 \
+        or worker_check.pending
+
+
+def _make_deliver(found: list[tuple[dict, str]], commands: list[tuple[dict, str]], overflow: int,
+                  message: str | None, reserve: dict, check: "_WorkerCheck", main_path: Path,
+                  follower, recheck_at: float | None) -> Callable[[], str | None]:
+    """`deliver()` for one full check: every key claimed and the message rendered in one locked
+    write (4.14.6 rule 3). In the 400 characters: a worker in trouble, then endings, then
+    commands, then a worker that delivered; what does not fit stays due."""
+
+    def deliver() -> str | None:
+        if not found and not commands and not check.observed:
+            return None
+
+        dropped: list[str] = []
+        trouble: list[dict] = []
+        info: list[dict] = []
+        quiet: dict[str, str] = {}
+        told: list[dict] = []
+
+        def before(record: dict) -> None:
+            # a commit that fails runs this again for the fallback (0.5.0 review)
+            for held in (trouble, info, quiet, told):
+                held.clear()
+            lines, silent = workers.due(_told_workers(record), check.observed,
+                                        _finishes(record))
+            trouble.extend(w for w in lines if w["class"] in workers.TROUBLE)
+            info.extend(w for w in lines if w["class"] in workers.INFORMATION)
+            quiet.update(silent)
+
+        def message_for(won: list[str]) -> str | None:  # inside the claim's lock, before its write
+            events = [event for event, key in found if key in won]
+            mine = [(c, key) for c, key in commands if key in won]
+            parts: list[str] = []
+            for index, worker in enumerate(trouble):
+                line = workers.line(worker)
+                left = len(trouble) - index - 1 + len(events) + len(mine) + overflow + len(info)
+                tail = len(_more_line(left)) + 1 if left else 0
+                if len("\n".join([*parts, line])) + tail > _HOOK_BUDGET:
+                    break
+                parts.append(line)
+                told.append(worker)
+            room = _HOOK_BUDGET - (len("\n".join(parts)) + 1 if parts else 0)
+            unshown = len(trouble) - len(parts)
+            if not parts:
+                endings = message if all(k in won for _e, k in found) \
+                    else _render_endings(events, main_path, follower, **reserve)
+            else:
+                spare = room - _COMMAND_RESERVE if mine else room
+                endings = _render_endings(events, main_path, follower, budget=spare)
+                if endings is not None and len(endings) > room:
+                    # the first ending always renders whole: it waits for the next call
+                    dropped.extend(key for _e, key in found if key in won)
+                    unshown += len(events)
+                    endings = None
+            text, shown = _with_commands(endings, [c for c, _key in mine], more=overflow + unshown,
+                                         budget=room)
+            # a command whose line no longer fits is not recorded: told at a later call (round 2)
+            dropped.extend(key for _c, key in mine[shown:])
+            if text:
+                parts.append(text)
+            if unshown or overflow or shown < len(mine):
+                return "\n".join(parts) or None
+            for index, worker in enumerate(info):
+                line = workers.line(worker)
+                left = len(info) - index - 1
+                tail = len(_more_line(left)) + 1 if left else 0
+                if len("\n".join([*parts, line])) + tail > _HOOK_BUDGET:
+                    parts.append(_more_line(len(info) - index))
+                    break
+                parts.append(line)
+                told.append(worker)
+            return "\n".join(parts) or None
+
+        def after(record: dict) -> None:
+            if not quiet and not told:
+                return
+            workers.save_told(record, check.table, quiet, told)
+            record["seen"] = time.time()
+
+        _won, text = live.claim_deliveries(
+            main_path, [key for _event, key in found] + [key for _c, key in commands],
+            follower.store_path, then=message_for, unclaim=lambda: dropped,
+            before=before, after=after)
+        return text
+
+    rechecks = [at for at in (recheck_at, check.recheck_at) if at is not None]
+    deliver.recheck_at = min(rechecks) if rechecks else None  # type: ignore[attr-defined]
+    deliver.workers = check.table  # type: ignore[attr-defined]
+    deliver.stall_turn = check.stall_turn  # type: ignore[attr-defined]
+    return deliver
+
+
+# --- workers this session launched (field reports 2026-11-04, docs/DESIGN.md 4.14.5) -----------
+
+_STALL_RECHECK_SECONDS = 300.0
+_STALL_READ_BYTES = 32 << 20
+_NOT_THIS_SESSIONS = "-"  # a call named this id but did not create that job
+_NO_JOB_YET = "?"
+_UNREADABLE = "!"  # never read at this signature, and no use trying until the file changes
+
+
+@dataclass
+class _WorkerCheck:
+    observed: list[dict] = field(default_factory=list)  # read this call; told or recorded
+    # short id -> [mtime_ns, size, identity]: what the gate compares (hook_gate.py)
+    table: dict[str, list] = field(default_factory=dict)
+    pending: bool = False  # a line to tell, or job files left for the next call
+    recheck_at: float | None = None  # when a working worker can first read STALLED
+    stall_turn: int = 0  # the next idle worker's turn at the stall read
+    stall_any_size: bool = False  # the watcher's: no 3 s limit kills it, so it reads any session
+    names: dict[str, str] = field(default_factory=dict)  # what each launch result printed
+
+
+def _told_workers(record: object) -> dict[str, str]:
+    table = record.get("workers") if isinstance(record, dict) else None
+    return {short: value for short, value in table.items() if isinstance(value, str)} \
+        if isinstance(table, dict) else {}
+
+
+def _finishes(record: object) -> dict[str, int]:
+    table = record.get("worker_finishes") if isinstance(record, dict) else None
+    return {short: value for short, value in table.items() if isinstance(value, int)} \
+        if isinstance(table, dict) else {}
+
+
+def _store_record(cache: dict, main_path: Path) -> dict:
+    sessions = cache.get("sessions") if isinstance(cache, dict) else None
+    record = sessions.get(live.session_key(main_path)) if isinstance(sessions, dict) else None
+    return record if isinstance(record, dict) else {}
+
+
+def _worker_check(follower, payload: dict, cache: dict, started: float,
+                  previous: dict | None = None, stall_turn: int | None = None,
+                  stall_any_size: bool = False) -> _WorkerCheck:
+    """Reads the job files of this session's workers that changed since the last check, at most
+    PARSES_PER_CALL per call; the rest wait for the next one. A worker whose job was not created
+    by the launching call is remembered as no worker, so its file is never read again.
+    `previous` and `stall_turn` are the gate's, unless the idle watcher keeps its own."""
+    from . import hook_gate
+
+    now = time.time()
+    if previous is None:
+        gate = hook_gate._read_gate(hook_gate._gate_path(str(follower.main_path))) or {}
+        previous = gate.get("workers") if isinstance(gate.get("workers"), dict) else {}
+        if stall_turn is None and isinstance(gate.get("stall_turn"), int):
+            stall_turn = gate["stall_turn"]
+    known = {short: launch for short, launch in follower.main.workers.items()
+             if isinstance(launch, dict)}
+    for short, name in workers.payload_launches(payload).items():
+        known.setdefault(short, {"ts": now - workers.PAYLOAD_WINDOW_SECONDS, "end": now,
+                                 "name": name})
+
+    def recorded(short: str) -> int:
+        row = previous.get(short)
+        return row[0] if isinstance(row, list) and len(row) == 3 else -1
+
+    # a row the transcript does not name yet (a launch it lags behind) stays, within the bound
+    for short in sorted(previous, key=recorded, reverse=True):
+        if len(known) >= workers.WORKERS_KEPT:
+            break
+        known.setdefault(short, {})
+    while len(known) > workers.WORKERS_KEPT:
+        del known[min(known, key=lambda short: known[short].get("ts") or 0)]
+    check = _WorkerCheck(stall_turn=stall_turn or 0, stall_any_size=stall_any_size,
+                         names={short: launch["name"] for short, launch in known.items()
+                                if isinstance(launch.get("name"), str)})
+    if not known:
+        return check
+    record = _store_record(cache, follower.main_path)
+    told = _told_workers(record)
+    parsed = 0
+    # the file read longest ago first, so busy workers cannot hide another behind the limit
+    for short in sorted(known, key=recorded):
+        launch = known[short]
+        path = workers.job_file(follower.jobs_root, short)
+        signature = workers.job_signature(path)
+        seen = previous.get(short)
+        seen = seen if isinstance(seen, list) and len(seen) == 3 else None
+        if seen is not None and seen[2] == _NOT_THIS_SESSIONS:
+            check.table[short] = seen
+            continue
+        if signature is None:
+            # the gate sees it when it appears; a stat that failed once forgets nothing
+            check.table[short] = seen if seen is not None else [0, 0, _NO_JOB_YET]
+            continue
+        if seen is not None and seen[:2] == signature \
+                and (told.get(short) == seen[2] or seen[2] == _UNREADABLE):
+            check.table[short] = seen
+            continue
+        if parsed >= workers.PARSES_PER_CALL:
+            check.pending = True
+            check.table[short] = seen if seen is not None else [0, 0, _NO_JOB_YET]
+            continue
+        parsed += 1
+        data = workers.read_job(path)
+        if data is None:  # being replaced, or over the size limit: tried again when it changes
+            validated = seen is not None and seen[2] not in (_NO_JOB_YET, _UNREADABLE)
+            check.table[short] = [*signature, seen[2] if validated else _UNREADABLE]
+            continue
+        linked = (seen is not None and seen[2] not in (_NO_JOB_YET, _UNREADABLE)) \
+            or workers.created_during(data, launch.get("ts"), launch.get("end"))
+        if not linked and launch.get("ts") is None:
+            # the job appeared while the transcript lags behind its launch: judged when it shows
+            check.table[short] = seen if seen is not None else [0, 0, _NO_JOB_YET]
+            continue
+        if not linked:
+            check.table[short] = [*signature, _NOT_THIS_SESSIONS]
+            continue
+        worker = workers.view(short, path, data, now, launch.get("name"))
+        if worker is None:
+            check.table[short] = [*signature, workers.identity(data)]
+            continue
+        check.table[short] = [*signature, worker["identity"]]
+        check.observed.append(worker)
+    _worker_stall(follower, check, now, started, cache=cache)
+    lines, quiet = workers.due(told, check.observed, _finishes(record))
+    # a change recorded with no line waits for its store write as well (review round 3): else a
+    # write that fails leaves the old identity there, and the same prompt coming back reads as told
+    check.pending = check.pending or bool(lines) or bool(quiet)
+    return check
+
+
+def _unread_bytes(main: Path, cache: dict | None) -> int:
+    """What a read of this session's transcripts has left to do, by the offsets in the store."""
+    main = Path(main)
+    transcripts = cache.get("transcripts") if isinstance(cache, dict) else None
+    transcripts = transcripts if isinstance(transcripts, dict) else {}
+    total = 0
+    for path in [main, *sorted((main.parent / main.stem / "subagents").glob("agent-*.jsonl"))]:
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        size = info.st_size
+        entry = transcripts.get(str(path))
+        offset = entry.get("offset") if isinstance(entry, dict) else None
+        # what a read would keep (`status._restore`, `Tail.read`): another version, a replaced file
+        # or one shorter than the offset is read again from byte 0 (0.5.0 review)
+        kept = isinstance(entry, dict) and isinstance(offset, int) and offset <= size \
+            and entry.get("inode") in (None, info.st_ino) and (
+                entry.get("facts_version") == live.MAIN_FACTS_VERSION
+                and isinstance(entry.get("fork_line"), int) if path == main
+                else entry.get("sub_facts_version") == live.SUB_FACTS_VERSION)
+        total += size - offset if kept else size
+    return total
+
+
+def _worker_stall(follower, check: _WorkerCheck, now: float, started: float,
+                  cache: dict | None = None) -> None:
+    """A worker whose job still reads `working` can sit idle on a command that will not end, with
+    its job file unchanged. At most one such session is read per call, by the rule `status` uses
+    (4.14.4), within the time budget; the gate opens again when the next can be due."""
+    from . import status as _status
+
+    working = (f"working/{workers.WORKING}/", f"working/{workers.STALLED}/")
+    rows = [(short, row) for short, row in check.table.items() if row[2] in working]
+    candidates = sorted(short for short, row in rows
+                        if now - row[0] / 1e9 >= stalls.IDLE_SECONDS)
+    rechecks = [stalls.IDLE_SECONDS - (now - row[0] / 1e9) for _short, row in rows
+                if now - row[0] / 1e9 < stalls.IDLE_SECONDS]
+    if candidates:
+        rechecks.append(_STALL_RECHECK_SECONDS)
+    check.recheck_at = now + min(rechecks) if rechecks else None
+    if not candidates or time.monotonic() >= started + _CALL_BUDGET_SECONDS:
+        return
+    # the gate keeps the turn, so every idle worker gets one whatever the cadence of the calls
+    short = candidates[check.stall_turn % len(candidates)]
+    check.stall_turn += 1
+    path = workers.job_file(follower.jobs_root, short)
+    data = workers.read_job(path)
+    session_id = data.get("sessionId") if data is not None else None
+    if not isinstance(session_id, str) or workers.effective_state(data) != "working":
+        return
+    projects_root = follower.main_path.parent.parent
+    main = _status._job_transcript(projects_root, session_id)
+    if main is None:
+        return
+    if not check.stall_any_size and _unread_bytes(main, cache) > _STALL_READ_BYTES:
+        return  # run.sh kills a call at 3 s and nothing is saved: the watcher and `status` read it
+    stall = _status._job_stall(main, now, stalls.live_sessions(projects_root.parent / "sessions"),
+                               deadline=started + _CALL_BUDGET_SECONDS)
+    if stall is _status.STALL_UNKNOWN:
+        return  # neither a stall nor the end of one: what was told stands
+    identity = f"working/{workers.STALLED}/" if stall is not None else f"working/{workers.WORKING}/"
+    check.table[short] = [check.table[short][0], check.table[short][1], identity]
+    check.observed = [w for w in check.observed if w["short"] != short]
+    check.observed.append({
+        "short": short, "name": workers.name_of(data, short, check.names.get(short)),
+        "label": None,
+        "class": workers.STALLED if stall is not None else workers.WORKING,
+        "age": float(stall["idle_seconds"]) if stall is not None else 0.0, "identity": identity,
+        "stdin": bool(stall.get("waiting_on_stdin")) if stall is not None else False})
+
+
+def _command_key(command: dict) -> str:
+    """One background command's silence, told once (4.14.6 rule 3)."""
+    return f"cmd:{command['task_id']}:silent"
+
+
+def _command_line(command: dict) -> str:
+    """docs/DESIGN.md 4.14.5 (field report 2026-11-03): fixed words, the native task id and two
+    ages, so it skips the redactor (which would hide `/dev/null` as a path)."""
+    from .status import _age
+
+    task = command["task_id"]
+    launched = command.get("launched_seconds")
+    since = f" (launched {_age(launched)} ago)" if launched is not None else ""
+    fix = f"stop it (TaskStop {task}) and rerun it with </dev/null and a timeout"
+    if command.get("waiting_on_stdin"):
+        return (f"COMMAND {task}{since} waits on stdin, which nothing will close: its output ends "
+                f"in codex's \"Reading additional input from stdin...\" and stopped changing. "
+                f"{fix[0].upper()}{fix[1:]}.")
+    quiet = command.get("silent_seconds")
+    return (f"COMMAND {task}{since} has written nothing for {_age(quiet or 0)}. Claude Code "
+            f"tells you when it ends, never that it hangs: if it is stuck, {fix}.")
+
+
+_COMMAND_RESERVE = 45  # room for the summary line below, held back from the endings
+
+
+def _more_line(n: int) -> str:
+    return f"... and {n} more: agent-postmortem status"
+
+
+def _with_commands(endings: str | None, commands: list[dict], more: int = 0,
+                   budget: int = _HOOK_BUDGET) -> tuple[str | None, int]:
+    """The endings message, then one line per silent command, all within the 400-character
+    budget, and a summary line for the commands left for a later call, whose room is always
+    kept (review round 1). Returns (the message, how many command lines it holds)."""
+    parts = [endings] if endings else []
+    shown = 0
+    for index, command in enumerate(commands):
+        line = _command_line(command)
+        left = len(commands) - index - 1 + more
+        tail = len(_more_line(left)) + 1 if left else 0
+        if len("\n".join([*parts, line])) + tail > budget:
+            break
+        parts.append(line)
+        shown += 1
+    left = len(commands) - shown + more
+    if left:
+        parts.append(_more_line(left))
+    return ("\n".join(parts) if parts else None), shown
 
 
 def _nothing() -> None:
@@ -1552,9 +2144,10 @@ _EVENT_FOR_COMMAND = {
 
 def dispatch(command: str) -> int:
     """Run one `hook <command>`, reading its payload from stdin. Always
-    returns 0 (docs/DESIGN.md 7.2: "the hook never fails a turn"); any
-    exception, including StateLocked, is swallowed after writing nothing,
-    with a traceback to stderr only when AGENT_POSTMORTEM_DEBUG is set."""
+    returns 0 (docs/DESIGN.md 7.2: "the hook never fails a turn"), except that
+    `stop-watch` returns 2 to wake an idle session (4.14.5); any exception,
+    including StateLocked, is swallowed after writing nothing, with a traceback
+    to stderr only when AGENT_POSTMORTEM_DEBUG is set."""
     try:
         if command == "capabilities":
             _cmd_capabilities()
@@ -1563,6 +2156,14 @@ def dispatch(command: str) -> int:
             from . import hook_gate
 
             return hook_gate.run(command)
+        if command == "pre-bash":
+            from . import pre_bash
+
+            return pre_bash.run()
+        if command == "stop-watch":
+            from . import watcher
+
+            return watcher.run()
 
         payload = _read_payload()
         if payload is None or _is_subagent_context(payload):

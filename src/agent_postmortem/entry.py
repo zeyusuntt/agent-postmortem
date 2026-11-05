@@ -23,7 +23,9 @@ def capabilities() -> int:
         pass
     from . import __version__  # the single source of truth (7.1's D1), no metadata import
 
-    print(json.dumps({"protocol": 1, "version": __version__}))
+    # `hooks`: what a release added since protocol 1. run.sh asks before starting `stop-watch`,
+    # since an older CLI's usage error exits 2, which would wake the session (4.14.5)
+    print(json.dumps({"protocol": 1, "version": __version__, "hooks": ["pre-bash", "stop-watch"]}))
     return 0
 
 
@@ -35,6 +37,14 @@ def main(argv: list[str] | None = None) -> int:
         return hook_gate.run(args[1])
     if args == ["hook", "capabilities"]:
         return capabilities()
+    if args == ["hook", "pre-bash"]:  # every Bash call (4.14.5): answered without the CLI
+        from . import pre_bash
+
+        return pre_bash.run()
+    if args == ["hook", "stop-watch"]:  # every Stop, and alive while it watches (4.14.5)
+        from . import watcher
+
+        return watcher.run()
     from .cli import main as cli_main
 
     return cli_main(args)
