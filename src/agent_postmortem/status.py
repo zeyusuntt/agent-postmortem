@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import stat
 import time
 from pathlib import Path
 
@@ -209,17 +210,24 @@ def _background(jobs_root: Path, projects_root: Path, now: float, *,
         if word not in ("working", "blocked") and now - mtime > _BACKGROUND_RECENT_SECONDS:
             continue
         jobs.append((job_dir, word, session_id, mtime))
-    eligible = [(job_dir, session_id) for job_dir, word, session_id, mtime in jobs
-                if word == "working" and session_id and now - mtime >= stalls.IDLE_SECONDS
+    eligible = [(job_dir, session_id, mtime) for job_dir, word, session_id, mtime in jobs
+                if word == "working" and session_id and now - mtime >= workers.MCP_TASK_WAIT_SECONDS
                 and (want is None or want(_job_name_and_cwd(job_dir)[1]))]
     stalled: dict[Path, dict] = {}
+    waiting: dict[Path, dict] = {}
     if eligible:
         kinds = stalls.live_sessions(projects_root.parent / "sessions")
         candidates = []
-        for job_dir, session_id in eligible:
+        for job_dir, session_id, mtime in eligible:
             main = _job_transcript(projects_root, session_id)
-            if main is not None and kinds.get(session_id) == "bg" \
-                    and now - _mtime(main) >= stalls.IDLE_SECONDS:
+            if main is None or kinds.get(session_id) != "bg":
+                continue
+            job = workers.read_job(str(job_dir / "state.json")) or {}
+            call = {"tool": "MCP", "seconds": round(now - mtime), "digest": "task"} \
+                if workers.idle_on_mcp_task(job) else stalls.open_tool_call(main, now)
+            if call is not None:
+                waiting[job_dir] = call
+            elif now - mtime >= stalls.IDLE_SECONDS and now - _mtime(main) >= stalls.IDLE_SECONDS:
                 candidates.append((job_dir, main))
         if max_reads is not None and len(candidates) > max_reads:
             start = int(now // 60) % len(candidates)
@@ -230,10 +238,25 @@ def _background(jobs_root: Path, projects_root: Path, now: float, *,
                 stalled[job_dir] = stall
     for job_dir, word, session_id, mtime in jobs:
         stall = stalled.get(job_dir)
+        call = waiting.get(job_dir)
         if stall is not None:
             word = "stalled"
+        elif call is not None:
+            word = "waiting"
         counts[word] = counts.get(word, 0) + 1
-        if stall is not None:
+        if call is not None:
+            matches = sorted(projects_root.glob(f"*/{session_id}.jsonl"))
+            name, cwd = _job_name_and_cwd(job_dir)
+            launch = (mine or {}).get(job_dir.name)
+            listed.append({"session": live.session_public_id(matches[0]) if matches else None,
+                           "state": "waiting", "age_seconds": call["seconds"],
+                           "session_id": session_id, "name": name, "cwd": cwd,
+                           "class": workers.TOOL_WAIT, "label": call["tool"],
+                           "short": job_dir.name,
+                           "mine": isinstance(launch, dict) and workers.created_during(
+                               workers.read_job(str(job_dir / "state.json")) or {},
+                               launch.get("ts"), launch.get("end"))})
+        elif stall is not None:
             matches = sorted(projects_root.glob(f"*/{session_id}.jsonl"))
             name, cwd = _job_name_and_cwd(job_dir)
             launch = (mine or {}).get(job_dir.name)
@@ -277,7 +300,12 @@ def own_workers(main_path: Path) -> dict[str, dict]:
 
 def _job_transcript(projects_root: Path, session_id: str) -> Path | None:
     matches = sorted(projects_root.glob(f"*/{session_id}.jsonl"))
-    return matches[0] if len(matches) == 1 else None
+    if len(matches) != 1:
+        return None
+    try:  # a FIFO with no writer would hold the open of whichever reader comes first, for ever
+        return matches[0] if stat.S_ISREG(matches[0].stat().st_mode) else None
+    except OSError:
+        return None
 
 
 def _mtime(path: Path) -> float:
@@ -587,8 +615,8 @@ def render_text(snap: dict, redactor: Redactor, now: float | None = None) -> str
     background = snap["background"]
     if background["counts"]:
         total_bg = sum(background["counts"].values())
-        order = {"working": 0, "stalled": 1, "blocked": 2, "delivered": 3, "done": 4, "stopped": 5,
-                 "failed": 6}
+        order = {"working": 0, "stalled": 1, "waiting": 2, "blocked": 3, "delivered": 4, "done": 5,
+                 "stopped": 6, "failed": 7}
         breakdown = ", ".join(f"{n} {word}" for word, n in sorted(
             background["counts"].items(), key=lambda kv: (order.get(kv[0], 9), kv[0])))
         launched = background.get("launched")

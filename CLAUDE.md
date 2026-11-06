@@ -66,7 +66,7 @@ continuing. Never `git checkout`, `git restore`, or `git stash` a file holding
 uncommitted work.
 
 ## Machine quirk: "No module named agent_postmortem" under uv
-Sandboxed shells on this Mac sometimes mark the venv's .pth files hidden, and
+Sandboxed shells on macOS sometimes mark the venv's .pth files hidden, and
 the editable install disappears. Fix, do not reinstall:
 `chflags nohidden .venv/lib/python3.13/site-packages/*.pth`. Tests are immune
 because pyproject sets `pythonpath = ["src"]`; the `postmortem` console script

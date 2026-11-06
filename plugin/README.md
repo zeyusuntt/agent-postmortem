@@ -2,8 +2,9 @@
 
 Claude Code records the state. The plugin tells you. A worker you launched
 with `claude --bg` that waits on a permission prompt, waits on an answer,
-fails, or sits idle on a command that never ends is told to your session at
-its next tool call, and an idle session is woken for it. Nothing has to be
+fails, sits idle on a command that never ends, or has no result from a tool
+call (10 minutes for a Model Context Protocol, or MCP, call moved to the
+background, 30 for most others) is told to your session at its next tool call, and an idle session is woken for it. Nothing has to be
 armed.
 
 It also catches what a Claude Code Workflow run left silently broken: a subagent
@@ -60,7 +61,8 @@ raises, the hook prints nothing and exits 0.
   subagents never returned.
 - **PostToolUse** (every tool) and **UserPromptSubmit** also follow the
   background sessions this session launched with `claude --bg`: each change
-  to a permission prompt, a question, an error, a failure or a stall is told
+  to a permission prompt, a question, an error, a failure, a stall or a tool
+  call with no result (10 or 30 minutes, as above) is told
   once with the command that helps (`claude attach <id>`, `claude logs <id>`),
   and a worker that delivered gets a one-line note. The worker's own words
   are never printed.

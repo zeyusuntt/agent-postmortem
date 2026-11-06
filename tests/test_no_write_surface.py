@@ -274,17 +274,17 @@ _ALLOWED_SINK_CALLS = {
     ("live.py", 119, "self.path.open"):
         "Tail.read: read appended transcript bytes from the last offset, mode 'rb', never "
         "written (docs/DESIGN.md 4.14.3)",
-    ("stalls.py", 50, "<expr>.open"):
+    ("stalls.py", 63, "<expr>.open"):
         "_last_line: read the last 1 KB of a background command's output file for codex's "
         "stdin line, mode 'rb', never written (docs/DESIGN.md 4.14.4)",
-    ("live.py", 1508, "path.open"):
+    ("live.py", 1513, "path.open"):
         "SessionFollower._nested_link: read a nested child's .meta.json (at most 64 KB) for its "
         "launcher and launch id, mode 'rb', never written (docs/DESIGN.md 4.14.3)",
-    ("cli.py", 3062, "os.open"):
+    ("cli.py", 3064, "os.open"):
         "_silence_closed_stdout: open the null device write-only and duplicate it onto stdout's "
         "descriptor after watch's reader closed the pipe, so the exit flush has somewhere to go; "
         "writes nothing else (docs/DESIGN.md 4.12)",
-    ("cli.py", 1850, "path.open"):
+    ("cli.py", 1852, "path.open"):
         "_has_a_timestamp: read a run file's first 64 KB for a timestamp before the --since "
         "pre-filter skips it, mode 'rb', never written (docs/DESIGN.md 4.14.9)",
     ("doctor.py", 138, "shutil.which"):
@@ -306,7 +306,10 @@ _ALLOWED_SINK_CALLS = {
     ("doctor.py", 338, "main_path.open"):
         "_first_timestamp: read a transcript's first 256 KB for when the session started, mode "
         "'rb', never written (docs/DESIGN.md 4.14.12)",
-    ("workers.py", 208, "<expr>.open"):
+    ("stalls.py", 79, "<expr>.open"):
+        "_tail_lines: read the last 256 KB of a background session's transcript for open_tool_call "
+        "and newest_mcp_call, mode 'rb', never written (docs/DESIGN.md 4.14.5)",
+    ("workers.py", 210, "<expr>.open"):
         "read_job: read a background session's job file, at most 1 MB, mode 'rb', never written "
         "(docs/DESIGN.md 4.14.5)",
     ("watcher.py", 71, "<expr>.open"):

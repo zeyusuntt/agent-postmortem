@@ -5,6 +5,52 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3]
+
+0.5.3 tells you about a worker stuck on a tool call. A worker waiting on a dialog or a prompt a tool
+opened looks idle with no error, and its job file keeps saying `working`, so nothing spoke until now.
+Refresh the plugin to get it: `claude plugin marketplace update agent-postmortem`, then
+`claude plugin update agent-postmortem@agent-postmortem`.
+
+### Added
+
+- A background worker with no result from one tool call is told to the session that launched it,
+  once per call, at that session's next tool call, or by waking it when idle. Nothing has to be
+  armed: `WORKER night-run (a1b2c3d4) has had no result from one MCP call for 10m. It may be stuck
+  on something outside Claude Code, such as a dialog or a prompt a tool opened, or just slow: claude
+  attach a1b2c3d4`. `status` and `scan` list such a worker as `WAITING`.
+  - A Model Context Protocol (MCP) call that Claude Code moved to the background is told at 10 minutes
+    with the job file unchanged. On 2.1.319 Claude Code moves such a call at 120 s and ends it itself
+    at its idle timeout, 1800 s by default, so the line comes well before that.
+  - Any other call still open, with nothing written to the transcript, is told at 30 minutes.
+  - A Bash call inside its own timeout is not told, so a slow build stays out. Past that timeout
+    Claude Code moves it to the background, and the rule for a silent command applies.
+  - Only a live `claude --bg` worker is read. Agent, Task, Workflow, AskUserQuestion, Monitor and the
+    plan-mode tools are long by nature and do not count.
+  - The line names one of Claude Code's own tools, `MCP` or `tool`, never an MCP server's name or a
+    call's input.
+  - Whether the tool's process is doing anything is not read. A tool blocked on a dialog and one
+    waiting on a remote service both look idle, so the line says it may just be slow.
+  - Two limits: if one background MCP call stays stuck while a later one moves to the background and
+    finishes, the same worker is told once more, in a line that is still true; and the call is read
+    from the last 256 KB of the transcript, so a larger entry can hide it.
+
+### Changed
+
+- A background command that starts with one plain `sleep N`, with `caffeinate` (the macOS keep-awake
+  command) around it or not, is not silent while it sleeps: the 30 minute mark runs from the end of the sleep, and what comes after
+  is judged as usual. `caffeinate -i sleep N` alone counts as a timer. A command already running when
+  you install this keeps its old cached reading until it ends, so it can still be told once.
+- The line for a silent command now says `It may be waiting on purpose, so look at what it is first`
+  before any word of stopping it. A waiter run as `caffeinate -i <script>` still gets this line, once,
+  at 30 minutes, since what a script does cannot be read from its command line. For a wait you know
+  about, `# postmortem: silent-wait` keeps it quiet.
+
+### Fixed
+
+- `status`, `scan` and the hooks skip a worker's transcript that is not a regular file. A named pipe
+  at that path would have held them for ever.
+
 ## [0.5.2]
 
 0.5.2 makes the plugin work on its own. With the plugin as the only install, `agent-postmortem` now

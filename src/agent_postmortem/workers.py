@@ -68,12 +68,14 @@ ERROR = "error"
 UNKNOWN = "unknown"
 FAILED = "failed"
 STALLED = "stalled"
+TOOL_WAIT = "tool_wait"
 DELIVERED_WAITING = "delivered-waiting"
 DELIVERED = "delivered"
 WORKING = "working"
 STOPPED = "stopped"
 
-TROUBLE = frozenset({PERMISSION, QUESTION, WAITING_PROMPT, ERROR, UNKNOWN, FAILED, STALLED})
+TROUBLE = frozenset({PERMISSION, QUESTION, WAITING_PROMPT, ERROR, UNKNOWN, FAILED, STALLED,
+                     TOOL_WAIT})
 INFORMATION = frozenset({DELIVERED_WAITING, DELIVERED})
 
 
@@ -260,6 +262,23 @@ def effective_state(data: dict) -> object:
     return word
 
 
+# Claude Code kills such a task at its own idle timeout (1800 s by default, 2.1.319) and wakes the
+# worker, so this mark must come well before that to help. Of 1,577 MCP calls on one machine in 14
+# days, 7 ran past 10 minutes, 3 of those in background sessions.
+MCP_TASK_WAIT_SECONDS = 600.0
+
+
+def idle_on_mcp_task(data: dict) -> bool:
+    """A worker whose turn ended on an MCP call moved to the background, as Claude Code does with
+    one still running after 120 s (2.1.319, a real worker): `working / idle`, `inFlight.kinds`
+    holding `mcp_task`. Only that task's end wakes it, unless its own cron does."""
+    if data.get("state") != "working" or data.get("tempo") != "idle":
+        return False
+    flight = data.get("inFlight")
+    kinds = flight.get("kinds") if isinstance(flight, dict) else None
+    return isinstance(kinds, list) and "mcp_task" in kinds and "session_cron" not in kinds
+
+
 def classify(data: dict) -> tuple[str | None, str | None]:
     """(class, label) of a job file, the worker's own words never in either. Precedence for a
     blocked job: a permission prompt, then `awaiting input`, `send a prompt to start`, an API
@@ -407,6 +426,8 @@ def reason_words(cls: str, label: str | None = None) -> str:
     if cls == PERMISSION:
         return f"waiting for a permission approval ({label})" if label \
             else "waiting for a permission approval"
+    if cls == TOOL_WAIT:
+        return f"no result from one {label or 'tool'} call"
     return {
         QUESTION: "waiting for an answer",
         WAITING_PROMPT: "waits for its first prompt",
@@ -445,6 +466,10 @@ def line(worker: dict) -> str:
         return (f"{who} idle {age}: its background command's output has not changed. It may be "
                 f"hung or writing elsewhere, and only its end would wake the worker. Check before "
                 f"stopping it: claude attach {short}")
+    if cls == TOOL_WAIT:
+        return (f"{who} has had {reason_words(cls, worker.get('label'))} for {age}. It may be "
+                f"stuck on something outside Claude Code, such as a dialog or a prompt a tool "
+                f"opened, or just slow: claude attach {short}")
     if cls == DELIVERED_WAITING:
         return f"{who} delivered {age} ago and waits for your reply: claude logs {short}"
     if worker.get("finishes"):

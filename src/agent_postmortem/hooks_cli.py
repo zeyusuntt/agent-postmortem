@@ -1952,6 +1952,13 @@ def _worker_check(follower, payload: dict, cache: dict, started: float,
         if worker is None:
             check.table[short] = [*signature, workers.identity(data)]
             continue
+        told_now = told.get(short)
+        if worker["identity"] == f"working/{workers.WORKING}/" and isinstance(told_now, str) \
+                and told_now.startswith(f"working/{workers.TOOL_WAIT}/"):
+            # the file moved, which says nothing of the call told about: `_worker_stall` reads that
+            # once the job has been still long enough, so one call is not told twice
+            check.table[short] = [*signature, told_now]
+            continue
         check.table[short] = [*signature, worker["identity"]]
         check.observed.append(worker)
     _worker_stall(follower, check, now, started, cache=cache)
@@ -1989,17 +1996,19 @@ def _unread_bytes(main: Path, cache: dict | None) -> int:
 
 def _worker_stall(follower, check: _WorkerCheck, now: float, started: float,
                   cache: dict | None = None) -> None:
-    """A worker whose job still reads `working` can sit idle on a command that will not end, with
-    its job file unchanged. At most one such session is read per call, by the rule `status` uses
-    (4.14.4), within the time budget; the gate opens again when the next can be due."""
+    """A worker whose job still reads `working` can sit idle on a command that will not end, or wait
+    on a tool call that never returns, with its job file unchanged. At most one such session is read
+    per call, by the rules `status` uses (4.14.4, 4.14.5), within the time budget; the gate opens
+    again when the next can be due."""
     from . import status as _status
 
-    working = (f"working/{workers.WORKING}/", f"working/{workers.STALLED}/")
-    rows = [(short, row) for short, row in check.table.items() if row[2] in working]
-    candidates = sorted(short for short, row in rows
-                        if now - row[0] / 1e9 >= stalls.IDLE_SECONDS)
-    rechecks = [stalls.IDLE_SECONDS - (now - row[0] / 1e9) for _short, row in rows
-                if now - row[0] / 1e9 < stalls.IDLE_SECONDS]
+    rows = [(short, row) for short, row in check.table.items()
+            if isinstance(row[2], str) and row[2].startswith("working/")]
+    # the first mark that can be due: a worker idle on an MCP task, ahead of any other reading
+    first_mark = workers.MCP_TASK_WAIT_SECONDS
+    candidates = sorted(short for short, row in rows if now - row[0] / 1e9 >= first_mark)
+    rechecks = [first_mark - (now - row[0] / 1e9) for _short, row in rows
+                if now - row[0] / 1e9 < first_mark]
     if candidates:
         rechecks.append(_STALL_RECHECK_SECONDS)
     check.recheck_at = now + min(rechecks) if rechecks else None
@@ -2017,10 +2026,36 @@ def _worker_stall(follower, check: _WorkerCheck, now: float, started: float,
     main = _status._job_transcript(projects_root, session_id)
     if main is None:
         return
+    live_kinds = stalls.live_sessions(projects_root.parent / "sessions")
+    waiting = None
+    if live_kinds.get(session_id) == "bg":  # a person is at an interactive one
+        if workers.idle_on_mcp_task(data):
+            age = now - check.table[short][0] / 1e9
+            waiting = {"tool": "MCP", "seconds": age,
+                       "digest": stalls.newest_mcp_call(main) or "task"}
+        else:  # the end of the file only, so before any size test
+            waiting = stalls.open_tool_call(main, now)
+    if waiting is None and now - check.table[short][0] / 1e9 < stalls.TOOL_WAIT_SECONDS:
+        identity = f"working/{workers.WORKING}/"  # too soon for any other reading: a task ended
+        check.table[short] = [check.table[short][0], check.table[short][1], identity]
+        check.observed = [w for w in check.observed if w["short"] != short]
+        check.observed.append({
+            "short": short, "name": workers.name_of(data, short, check.names.get(short)),
+            "label": None, "class": workers.WORKING, "age": 0.0, "identity": identity,
+            "stdin": False})
+        return
+    if waiting is not None:
+        identity = f"working/{workers.TOOL_WAIT}/{waiting['digest']}"
+        check.table[short] = [check.table[short][0], check.table[short][1], identity]
+        check.observed = [w for w in check.observed if w["short"] != short]
+        check.observed.append({
+            "short": short, "name": workers.name_of(data, short, check.names.get(short)),
+            "label": waiting["tool"], "class": workers.TOOL_WAIT,
+            "age": float(waiting["seconds"]), "identity": identity, "stdin": False})
+        return
     if not check.stall_any_size and _unread_bytes(main, cache) > _STALL_READ_BYTES:
         return  # run.sh kills a call at 3 s and nothing is saved: the watcher and `status` read it
-    stall = _status._job_stall(main, now, stalls.live_sessions(projects_root.parent / "sessions"),
-                               deadline=started + _CALL_BUDGET_SECONDS)
+    stall = _status._job_stall(main, now, live_kinds, deadline=started + _CALL_BUDGET_SECONDS)
     if stall is _status.STALL_UNKNOWN:
         return  # neither a stall nor the end of one: what was told stands
     identity = f"working/{workers.STALLED}/" if stall is not None else f"working/{workers.WORKING}/"
@@ -2059,7 +2094,8 @@ def _command_line(command: dict) -> str:
                 f"it should be done by now, stop it (TaskStop {task}) and rerun with </dev/null, "
                 f"a timeout and its output in a file.")
     return (f"COMMAND {task}{since} has written nothing for {_age(quiet or 0)}. Claude Code "
-            f"tells you when it ends, never that it hangs: if it is stuck, {fix}.")
+            f"tells you when it ends, never that it hangs. It may be waiting on purpose, so look "
+            f"at what it is first: if it is stuck, {fix}.")
 
 
 _COMMAND_RESERVE = 45  # room for the summary line below, held back from the endings

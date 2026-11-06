@@ -30,6 +30,19 @@ STDIN_SECONDS = 120.0
 # A session whose turn ended this long ago, with a silent command and nothing armed to wake it,
 # is STALLED.
 IDLE_SECONDS = 1800.0
+# The same mark as a silent command's: on one machine over 14 days, of 33,453 calls in background
+# sessions 26 ran past 15 minutes and 1 past 30, that one across a restart of the session. Claude
+# Code moves a Bash call to the background at its timeout, so this is mostly an MCP tool's mark
+TOOL_WAIT_SECONDS = IDLE_SECONDS
+_TOOL_TAIL_BYTES = 1 << 18
+_LONG_BY_NATURE = frozenset({"Agent", "Task", "Workflow", "AskUserQuestion", "Monitor",
+                             "ExitPlanMode", "EnterPlanMode"})
+# Claude Code's own names, safe to print. Any other name may be the user's, however plain it looks
+_OWN_TOOLS = frozenset({"Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit",
+                        "NotebookRead", "Glob", "Grep", "LSP", "WebFetch", "WebSearch", "Skill",
+                        "ToolSearch", "TaskOutput", "TaskStop", "KillShell", "SendMessage"})
+# What Claude Code's result says of an MCP call it moved to the background (2.1.319)
+_MOVED_WORDS = "moved to the background"
 _TAIL_BYTES = 1024
 _SESSION_FILES_MAX = 200
 _SESSION_FILE_BYTES = 65536
@@ -55,6 +68,148 @@ def _last_line(path: str, size: int):
     lines = [line.strip() for line in tail.decode("utf-8", "replace").splitlines()]
     lines = [line for line in lines if line]
     return lines[-1] if lines else None
+
+
+def _tail_lines(main: Path | str, info: os.stat_result) -> list[bytes] | None:
+    """The whole lines in the end of a transcript, or None when it cannot be read. Only a regular
+    file is opened: a FIFO with no writer would hold the open for ever."""
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    try:
+        with Path(main).open("rb") as handle:
+            handle.seek(max(0, info.st_size - _TOOL_TAIL_BYTES))
+            raw = handle.read(_TOOL_TAIL_BYTES)
+    except OSError:
+        return None
+    lines = raw.split(b"\n")
+    # the first is only the end of a line
+    return lines[1:] if info.st_size > _TOOL_TAIL_BYTES else lines
+
+
+def _call_digest(call_id: str) -> str:
+    import hashlib  # only for a session past a mark
+
+    return hashlib.sha256(call_id.encode("utf-8", "replace")).hexdigest()[:8]
+
+
+def _entry_time(entry: dict) -> float | None:
+    from datetime import datetime  # only for a session past the mark
+
+    value = entry.get("timestamp")
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (AttributeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _call_mark(name: str, shape: object) -> float:
+    """How long a call may stay out before it reads as stuck: a Bash call has its own timeout,
+    past which Claude Code moves it to the background, so a slow build is not told. Any other
+    tool's input is its own and says nothing here."""
+    timeout = shape.get("timeout") if name == "Bash" and isinstance(shape, dict) else None
+    if isinstance(timeout, (int, float)) and not isinstance(timeout, bool) and timeout > 0:
+        return max(TOOL_WAIT_SECONDS, timeout / 1000 + 60)
+    return TOOL_WAIT_SECONDS
+
+
+def open_tool_call(main: Path | str, now: float) -> dict | None:
+    """The tool call a session is still waiting on, past TOOL_WAIT_SECONDS with nothing written
+    since, or None (4.14.5). Read from the end of its
+    transcript alone, so it costs the same on any session. `tool` says nothing private: an MCP
+    server's name is the user's, and the call's input is never read."""
+    try:
+        info = os.stat(main)
+    except OSError:
+        return None
+    if now - info.st_mtime < TOOL_WAIT_SECONDS:
+        return None
+    lines = _tail_lines(main, info)
+    if lines is None:
+        return None
+    out: dict[str, tuple[str, float | None, float]] = {}
+    last_message = None  # one message can span entries: a thinking block between two parallel calls
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        kind = entry.get("type") if isinstance(entry, dict) else None
+        if kind not in ("assistant", "user"):
+            continue  # a hook's or a system's line says nothing about the session moving on
+        message = entry.get("message")
+        if not isinstance(message, dict):
+            continue  # a line it cannot read says nothing, as one that is not JSON says nothing
+        content = message.get("content")
+        blocks = [block for block in content if isinstance(block, dict)] \
+            if isinstance(content, list) else []
+        answers = [block for block in blocks if block.get("type") == "tool_result"]
+        calls = [block for block in blocks if block.get("type") == "tool_use"]
+        same_message = last_message is not None and message.get("id") == last_message
+        if not answers and not calls and (kind == "user" or not same_message):
+            out.clear()  # it wrote or was told something after them: not waiting on them
+        for block in answers:
+            answered = block.get("tool_use_id")
+            if isinstance(answered, str):
+                out.pop(answered, None)
+        for block in calls:
+            name, shape = block.get("name"), block.get("input")
+            background = name == "Bash" and isinstance(shape, dict) \
+                and shape.get("run_in_background") is True
+            last_message = message.get("id")
+            if isinstance(name, str) and isinstance(block.get("id"), str) \
+                    and name not in _LONG_BY_NATURE and not background:
+                out[block["id"]] = (name, _entry_time(entry), _call_mark(name, shape))
+    for call_id, (name, started, mark) in out.items():
+        seconds = now - (info.st_mtime if started is None else started)
+        if seconds < mark:
+            continue  # a slow build inside its own timeout: nothing is odd yet
+        tool = "MCP" if name.startswith("mcp__") else name if name in _OWN_TOOLS else "tool"
+        return {"tool": tool, "seconds": round(seconds), "digest": _call_digest(call_id)}
+    return None
+
+
+def _result_says_moved(block: dict) -> bool:
+    content = block.get("content")
+    parts = content if isinstance(content, list) else [content]
+    for part in parts:
+        text = part.get("text") if isinstance(part, dict) else part
+        if isinstance(text, str) and _MOVED_WORDS in text:
+            return True
+    return False
+
+
+def newest_mcp_call(main: Path | str) -> str | None:
+    """A digest of the MCP call a worker's background task most likely is: the newest one Claude
+    Code says it moved to the background, else the newest MCP call, or None. A job file holds only
+    the kinds of what is out, so this is what tells one stuck task from the next, and a call that
+    returned meanwhile does not read as another (4.14.5). The name and the input are not kept."""
+    try:
+        info = os.stat(main)
+    except OSError:
+        return None
+    newest = moved = None
+    calls: set[str] = set()
+    for line in _tail_lines(main, info) or []:
+        try:
+            entry = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        message = entry.get("message") if isinstance(entry, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            kind, call_id = block.get("type"), block.get("id")
+            if kind == "tool_use" and isinstance(call_id, str) \
+                    and isinstance(block.get("name"), str) and block["name"].startswith("mcp__"):
+                newest = call_id
+                calls.add(call_id)
+            elif kind == "tool_result":
+                answered = block.get("tool_use_id")
+                if isinstance(answered, str) and answered in calls and _result_says_moved(block):
+                    moved = answered
+    found = moved if moved is not None else newest
+    return _call_digest(found) if found is not None else None
 
 
 def command_state(task_id: str, shell: dict, now: float) -> dict:
@@ -90,10 +245,17 @@ def command_state(task_id: str, shell: dict, now: float) -> dict:
     since = newest if newest is not None else launched
     quiet = max(0.0, now - since) if since is not None else None
     waiting = stdin_line and quiet is not None and quiet >= STDIN_SECONDS
+    # a command that starts with `sleep N` says it will be silent that long: the mark runs from the
+    # end of the sleep. The stdin rule above reads its files, which do not sleep
+    silence = quiet
+    sleep_first = shell.get("sleep_first")
+    if silence is not None and launched is not None and isinstance(sleep_first, (int, float)) \
+            and not isinstance(sleep_first, bool):
+        silence = max(0.0, now - max(since, launched + sleep_first))
     # nothing to watch (no file named, an older Claude Code), an output that cannot be watched,
     # or one that could not be inspected now
     silent_seconds = None if shell.get("unknown_outputs") or not outputs or uninspected \
-        else quiet
+        else silence
     # under a real timeout, or marked: silence is its normal state, and
     # only the stdin rule still speaks
     by_design = shell.get("quiet") is True

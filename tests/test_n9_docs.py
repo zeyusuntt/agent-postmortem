@@ -96,11 +96,11 @@ def test_changelog_unreleased_entry_is_first_and_grouped():
     assert "http" not in entry
 
 
-def test_the_package_version_is_0_5_2():
+def test_the_package_version_is_0_5_3():
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     init = (REPO_ROOT / "src" / "agent_postmortem" / "__init__.py").read_text(encoding="utf-8")
-    assert re.search(r'^version = "0\.5\.2"', pyproject, re.M)
-    assert '__version__ = "0.5.2"' in init
+    assert re.search(r'^version = "0\.5\.3"', pyproject, re.M)
+    assert '__version__ = "0.5.3"' in init
 
 
 # ---- DESIGN ----

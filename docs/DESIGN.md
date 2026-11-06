@@ -1677,7 +1677,7 @@ code is unchanged (`tests/test_stalls.py`).
 **Blocked and failed background sessions ("NEEDS ATTENTION (0 of 14
 runs) nothing needs attention" with a worker blocked all night).** NEEDS ATTENTION also lists every
 background session whose job is blocked on a person (`permission`, `question`, `waiting-prompt`,
-`error`, `unknown`, 4.14.5) or `failed` within the last day: `<sid>[ (dispatched by this session)]
+`error`, `unknown`, 4.14.5), waiting on a tool call with no result (`tool_wait`, 4.14.5) or `failed` within the last day: `<sid>[ (dispatched by this session)]
 for <age>  BLOCKED  <why>` or `... FAILED  this background session failed`, next command `claude
 attach <short>` or `claude logs <short>` from `--local` and `agent-postmortem status --local` below
 it. The caller's own workers come first of everything (`CLAUDE_CODE_SESSION_ID` names the caller,
@@ -5309,8 +5309,9 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   same check tells a background command of the session that is silent or waits on stdin
   (4.14.4's rules), once per command (delivery key `cmd:<task id>:silent`, claimed with the
   endings in one write), as `COMMAND <task id> (launched <age> ago) has written nothing for <q>.
-  Claude Code tells you when it ends, never that it hangs: if it is stuck, stop it (TaskStop
-  <task id>) and rerun it with </dev/null and a timeout.`, or for a wait on stdin `COMMAND <task
+  Claude Code tells you when it ends, never that it hangs. It may be waiting on purpose, so look at
+  what it is first: if it is stuck, stop it (TaskStop <task id>) and rerun it with </dev/null and a
+  timeout.`, or for a wait on stdin `COMMAND <task
   id> (launched <age> ago) waits on stdin, which nothing will close: ...`. A command whose last
   pipe stage holds everything until its input ends (`tail` with at most a count from the end, `sort`
   but not `-m`, `tac` and `wc`, each reading the pipe and no file; `commands.writes_only_at_its_end`;
@@ -5319,7 +5320,12 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   same mark it reads `COMMAND <task id> (launched <age> ago) has shown nothing for <q>, but it ends in
   `tail`, which prints only when it ends, so that may be fine. If it should be done by now, stop it
   (TaskStop <task id>) and rerun with </dev/null, a timeout and its output in a file.`, and
-  `status`'s COMMANDS row adds `tail prints only at its end`. It is not
+  `status`'s COMMANDS row adds `tail prints only at its end`. A command that starts with one plain
+  `sleep N`, `caffeinate` around it or not, says it will be silent that long, so the mark runs from the
+  end of the sleep (`commands.leading_sleep_seconds`), and what comes after is judged as usual; the
+  stdin rule reads its files and does not wait for that. A command already running when a build with this
+  rule is installed keeps its cached facts until it ends, since a facts version bump would read every main
+  transcript again. A command ending in such a stage is not
   quiet by design: a `codex exec | tail` that waits on stdin looks the same and has no other alarm.
   The line is fixed
   words, the native task id (which the agent needs for TaskStop and already holds from its
@@ -5484,7 +5490,36 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
     name of at most two words>`, `... (MCP)`; a misreading says "waiting for an answer", whose next
     step still helps. `done` is `delivered`, `failed`
     is `failed`, `stopped` says nothing (someone chose it), `working` says nothing unless STALLED
-    (4.14.4). Age is the job file's mtime, which does not move while a worker sits blocked.
+    (4.14.4) or waiting on a tool call, below. Age is the job file's mtime, which does not move while a
+    worker sits blocked.
+  - **A tool call with no result.** A worker stuck on something outside Claude Code, such as a dialog or a
+    prompt a tool opened, looks idle with no error. Measured on real workers: a foreground call reads
+    `working / active` with no `needs` until Claude Code moves it to the background, a Bash call at its
+    timeout (seen at 600 s, 2.1.318) and an MCP call once it has run 120 s (2.1.319). After that an MCP
+    call's worker reads `working / idle` with `inFlight.kinds` holding `mcp_task`, its job file stops
+    changing, and only that task's end wakes it (`workers.idle_on_mcp_task`; not with a scheduled wake, `session_cron`,
+    pending, which wakes it anyway). Claude Code ends that task itself at its idle timeout (1800 s by default,
+    `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`) and wakes the worker, so the mark must come well before: 10 minutes
+    with the job file unchanged (from the timestamps of each call and its result in the main transcripts, of 1,577 MCP
+    calls on one machine in 14 days, 7 ran past 10 minutes, 3 of those in background sessions). Class `tool_wait`, for a live background session, is that shape, or a
+    transcript ending in a tool call with no result and nothing written for 30 minutes, for a build of Claude
+    Code that does not bound the call (`stalls.open_tool_call`, from the last 256 KB, so an entry larger than
+    that can hide a call; a line it cannot read says nothing, and only a regular file is opened). `WORKER <name> (<short>) has had no result from one <tool> call for
+    <age>. It may be stuck on something outside Claude Code, such as a dialog or a prompt a tool opened, or
+    just slow: claude attach <short>`, once per call, by the per-call hook and the idle watcher. The job file holds only the kinds of what is out, so
+    a background MCP task is known by the newest MCP call in the last 256 KB whose result says it was moved to the
+    background, else the newest MCP call (`stalls.newest_mcp_call`), so a later call that returns normally
+    causes no second line. One that first moves to the background can cause one while the first is still pending, and
+    that line is still true. A change of the job file alone says nothing of the call told about: its identity stands until the
+    job has been still long enough to read again. `status` and `scan` list it as `waiting`. `<tool>` is one of
+    Claude Code's own tool names, `MCP`, or `tool`: any other name may be the user's, an MCP server's name is, and a
+    call's input is never read, but for Bash's own `timeout` and `run_in_background`. Agent,
+    Task, Workflow, AskUserQuestion, Monitor and the plan-mode tools are long by nature and do not count. Counted the same way on
+    one machine over 14 days, of 33,453 calls in background sessions 26 ran past 15 minutes and 1 past 30, that
+    one across a restart of the session, which sets that second mark, the same as a silent command's. A Bash call inside its own timeout is not told, so a slow
+    build stays out. Process activity is not read: a tool blocked on a dialog and one waiting on a remote
+    service both look idle, an MCP server is shared and outlives its calls, so a process cannot be tied to one
+    call from outside it, and reading it would mean running `ps` from a hook.
   - Once per change. A worker's identity is `effective state/class/digest of needs`, so a second
     prompt of one tool counts, a class change with the state word unchanged counts (the field
     night), and a touch of the file or the state word catching up does not. The live store keeps per worker the last identity told
@@ -8014,7 +8049,7 @@ later events go positional).
 
 ### 8.1 Package
 
-`pyproject.toml`: name `agent-postmortem`, version `0.5.2`, console scripts
+`pyproject.toml`: name `agent-postmortem`, version `0.5.3`, console scripts
 `agent-postmortem` and `postmortem`, `requires-python >= 3.11`, no runtime
 dependencies, `[project.optional-dependencies].dev = ["pytest>=8",
 "ruff>=0.6"]`, classifiers, URLs (Homepage, Issues, Changelog). The wheel
@@ -8029,7 +8064,7 @@ checkout also ships `agent_postmortem/_build_info.json` (`branch`, short `commit
 printed, for a wheel built from the sdist (the release workflow's `uv build`, where there is no
 git), from the commit tagged `v<version>`, or for an editable install; a malformed stamp is
 ignored. The package version, the plugin manifest and `hook capabilities` stay the plain
-release version (`0.5.2`): run.sh compares `hook
+release version (`0.5.3`): run.sh compares `hook
 capabilities` with the manifest of the INSTALLED plugin copy and reinstalls a bundled CLI that
 differs (4.14.11), so a version that moved ahead of the cached manifest would have the bundled
 CLI replaced by the release from PyPI. `tests/test_build_identity.py`.

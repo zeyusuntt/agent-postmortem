@@ -1628,7 +1628,9 @@ def _fold_blocked(blocked: list[dict], candidates: list[dict], live_now: list[di
         age = float(entry.get("age_seconds") or 0)
         candidates.append({
             "run": SimpleNamespace(run_id=public), "age": f"for {status._age(age)}",
-            "verdict": "FAILED" if failed else "BLOCKED", "reason": reason,
+            "verdict": "FAILED" if failed else (
+                "WAITING" if entry.get("class") == workers.TOOL_WAIT else "BLOCKED"),
+            "reason": reason,
             "command": status.next_action(entry) if named
             else "agent-postmortem status --local",
             "mark": "dispatched by this session" if entry.get("mine") else None,

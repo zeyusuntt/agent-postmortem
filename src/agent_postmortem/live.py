@@ -631,6 +631,8 @@ class MainFacts:
                 self.shells[task_id]["quiet"] = True
             if isinstance(pending, dict) and isinstance(pending.get("end_only"), str):
                 self.shells[task_id]["end_only"] = pending["end_only"]
+            if isinstance(pending, dict) and isinstance(pending.get("sleep_first"), (int, float)):
+                self.shells[task_id]["sleep_first"] = pending["sleep_first"]
             # what is not redirected goes to the task output file: with none named (an older
             # Claude Code), that part of the output cannot be watched; with the
             # call itself no longer kept, its redirects are unknown
@@ -755,6 +757,9 @@ class MainFacts:
         call = {"outputs": outputs, "unknown": unknown, "ts": ts}
         if commands.quiet_by_design(command, cwd):
             call["quiet"] = True  # silence is its normal state
+        sleeps = commands.leading_sleep_seconds(command)
+        if sleeps:
+            call["sleep_first"] = sleeps
         end_only = commands.writes_only_at_its_end(command)
         if end_only and not outputs:  # a file of its own would show it working (2026-11-05)
             call["end_only"] = end_only

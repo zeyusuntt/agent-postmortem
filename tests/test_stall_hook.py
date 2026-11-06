@@ -326,3 +326,80 @@ def test_the_soft_line_stays_within_the_budget():
 )
 def test_which_commands_write_only_at_their_end(command, word):
     assert commands.writes_only_at_its_end(command) == word
+
+
+# --- a deliberate wait (field case: a wait until a set time, and a deadline with a report after it) -
+
+
+def test_a_command_that_starts_by_sleeping_is_not_silent_while_it_sleeps(tmp_path, monkeypatch, capsys):
+    w = Worker(tmp_path, launched_ago=1900, command='sleep 27000; echo "deadline"; tail -2 out.log')
+    assert _hook(monkeypatch, capsys, w) == ""
+
+
+def test_past_its_sleep_the_usual_mark_runs_from_the_end_of_it(tmp_path, monkeypatch, capsys):
+    w = Worker(tmp_path, launched_ago=900 + 1900, command="sleep 900; run-the-phase")
+    text = _hook(monkeypatch, capsys, w)
+    assert "COMMAND" in text and "has written nothing for 31m" in text, text
+
+
+def test_just_past_its_sleep_nothing_is_said_yet(tmp_path, monkeypatch, capsys):
+    w = Worker(tmp_path, launched_ago=900 + 600, command="sleep 900; run-the-phase")
+    assert _hook(monkeypatch, capsys, w) == ""
+
+
+def test_the_stdin_rule_still_speaks_during_a_sleep(tmp_path, monkeypatch, capsys):
+    w = Worker(tmp_path, launched_ago=180, command=f"sleep 9000; {FIELD}")
+    w.file("review.md", "", 180)
+    w.file("review.log", STDIN_LINE, 178)
+    assert "waits on stdin" in _hook(monkeypatch, capsys, w)
+
+
+def test_the_plain_line_says_it_may_be_waiting_on_purpose(tmp_path, monkeypatch, capsys):
+    """A wait inside a script looks the same from here: following the old words would have killed a
+    queued paid phase."""
+    w = Worker(tmp_path, launched_ago=1900, command="caffeinate -i ./wait-then-run.sh")
+    text = _hook(monkeypatch, capsys, w)
+    assert "may be waiting on purpose" in text and "look at what it is first" in text, text
+    assert len(text) < 400, text
+
+
+@pytest.mark.parametrize(
+    "command,seconds",
+    [
+        pytest.param("sleep 900", 900, id="alone"),
+        pytest.param('sleep 900; echo "done"', 900, id="then a word"),
+        pytest.param("sleep 900 && run-it", 900, id="and then a command"),
+        pytest.param("sleep 900\nrun-it", 900, id="on its own line"),
+        pytest.param("sleep 5m; x", 300, id="minutes"),
+        pytest.param("sleep 2h; x", 7200, id="hours"),
+        pytest.param("sleep 1d; x", 86400, id="days"),
+        pytest.param("sleep 1.5; x", 1.5, id="a fraction"),
+        pytest.param("/bin/sleep 900; x", 900, id="by path"),
+        pytest.param("caffeinate -i sleep 900; x", 900, id="kept awake"),
+        pytest.param("caffeinate -dim sleep 900; x", 900, id="kept awake with more flags"),
+        pytest.param("x; sleep 900", None, id="not first"),
+        pytest.param("sleep $N; x", None, id="not a number it can read"),
+        pytest.param("sleep 900 > log; x", None, id="a redirect on it"),
+        pytest.param("sleep 900 | x", None, id="piped"),
+        pytest.param("sleep 900 || x", None, id="the next runs only if it fails"),
+        pytest.param("sleep 900 & x", None, id="backgrounded by the shell"),
+        pytest.param("sleep 0; x", None, id="no time at all"),
+        pytest.param("sleep 1 2; x", None, id="two words"),
+        pytest.param("caffeinate -i ./wait.sh", None, id="a script"),
+        pytest.param("caffeinate -t 60 sleep 900", None, id="caffeinate's own timer"),
+        pytest.param("", None, id="nothing"),
+    ],
+)
+def test_how_long_a_command_sleeps_first(command, seconds):
+    assert commands.leading_sleep_seconds(command) == seconds
+
+
+@pytest.mark.parametrize("command,timer", [("caffeinate -i sleep 900", True),
+                                           ('caffeinate -i sleep 900; echo "x"', True),
+                                           ("caffeinate -i ./wait.sh", False)])
+def test_a_timer_kept_awake_is_a_timer(command, timer):
+    assert commands.is_timer(command) is timer
+
+
+def test_a_final_semicolon_does_not_hide_a_sleep():
+    assert commands.leading_sleep_seconds("sleep 900; run-it;") == 900

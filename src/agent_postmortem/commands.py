@@ -2088,13 +2088,43 @@ def runs_this_tool(command: str) -> bool:
                for segment in lex(_without_substitutions(command)).segments)
 
 
+_CAFFEINATE_FLAGS_RE = re.compile(r"-[dimsu]+")
+_DURATION_UNITS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 _PYTHON_NAME_RE = re.compile(r"python(?:3(?:\.\d+)?)?")
 _TIMER_RE = re.compile(r"\s*import\s+time\s*;\s*time\.sleep\(\s*(\d+(?:\.\d+)?)\s*\)\s*;?\s*")
+
+
+def _without_caffeinate(words: list[str]) -> list[str]:
+    """`caffeinate -i sleep 900` keeps the machine awake and waits for its command."""
+    if words[:1] and words[0].rsplit("/", 1)[-1] == "caffeinate":
+        rest = words[1:]
+        while rest and _CAFFEINATE_FLAGS_RE.fullmatch(rest[0]):
+            rest = rest[1:]
+        return rest
+    return words
+
+
+def leading_sleep_seconds(command: str) -> float | None:
+    """How long a command sleeps before anything else, when it starts with one plain `sleep N`: for
+    that long its silence is what it says it will do. What comes after is judged as usual."""
+    lexed = lex(command)
+    if not lexed.segments or lexed.trailing_op not in (None, ";"):
+        return None
+    first = lexed.segments[0]
+    if first.redirects or first.sep_after not in (None, ";", "\n", "&&"):
+        return None
+    words = _without_caffeinate([word.text for word in first.words])
+    if len(words) != 2 or words[0].rsplit("/", 1)[-1] not in ("sleep", "gsleep"):
+        return None
+    match = _DURATION_RE.fullmatch(words[1])
+    seconds = float(match.group(1)) * _DURATION_UNITS[match.group(2)] if match else 0.0
+    return seconds if seconds > 0 else None
 
 
 def _only_waits(words: list[str]) -> bool:
     """`sleep N` by any path, or exactly `python3 -c 'import time; time.sleep(N)'`
     (an agent refused a foreground `sleep` wrote its timer this way). N > 0."""
+    words = _without_caffeinate(words)
     name = words[0].rsplit("/", 1)[-1] if words else ""
     if name in ("sleep", "gsleep"):
         return len(words) == 2 and positive_duration(words[1])

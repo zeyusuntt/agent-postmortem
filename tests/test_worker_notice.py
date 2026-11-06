@@ -676,8 +676,9 @@ def test_the_stall_clock_opens_the_gate(tmp_path, monkeypatch, capsys):
     m.launched(ago=7200)
     assert _hook(monkeypatch, capsys, m) == ""
     gate = json.loads(hook_gate._gate_path(str(m.main)).read_bytes())
-    # the job file was just written, so its 30 minutes run from now
-    assert gate["recheck_at"] == pytest.approx(time.time() + 1800, abs=30)
+    # the job file was just written, so the first mark that can be due, a worker idle on an MCP task
+    # for 10 minutes (test_tool_wait.py), runs from now; STALLED's 30 come later
+    assert gate["recheck_at"] == pytest.approx(time.time() + 600, abs=30)
 
 
 def test_an_ending_waits_when_the_workers_fill_the_budget(tmp_path, monkeypatch, capsys):
