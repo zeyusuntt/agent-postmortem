@@ -16,11 +16,8 @@ _FAST_HOOKS = ("post-tool", "prompt-submit")
 
 
 def capabilities() -> int:
-    """`hook capabilities` (7.2): one static object, the protocol and the package version."""
-    try:
-        sys.stdin.read()
-    except Exception:
-        pass
+    """`hook capabilities` (7.2): one static object, the protocol and the package version. It reads
+    no stdin: an open one in a terminal or script would keep it waiting (report 2026-11-05)."""
     from . import __version__  # the single source of truth (7.1's D1), no metadata import
 
     # `hooks`: what a release added since protocol 1. run.sh asks before starting `stop-watch`,

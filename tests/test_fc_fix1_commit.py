@@ -1,5 +1,4 @@
-"""Fix round 1 of field milestone F: C1 (docs/DESIGN.md 4.13.1, 4.7, 5.3b;
-.reviews/v0.3/F-dispositions.md).
+"""C1 (docs/DESIGN.md 4.13.1, 4.7, 5.3b).
 
 The finding: FA6 counted a commit command the shell may never have reached
 (`git diff --quiet || git commit -q -m x` in a clean repository; `false && git commit -q -m x;

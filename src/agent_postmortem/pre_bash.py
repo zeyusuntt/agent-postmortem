@@ -1,6 +1,5 @@
-"""`hook pre-bash` (docs/DESIGN.md 4.14.5; field report 2026-11-03, item 5 of "no silent
-failures"): before a Bash call runs, warn when it starts `codex exec` in the background with no
-stdin redirect.
+"""`hook pre-bash` (docs/DESIGN.md 4.14.5): before a Bash call runs, warn when it starts
+`codex exec` in the background with no stdin redirect.
 
 codex exec reads stdin to its end when stdin is not a terminal. Under the Bash tool that is
 usually harmless: over 30 days on the reference machine, 276 foreground and 51 of 60 background
@@ -30,7 +29,7 @@ WARNING = (
 
 _ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 # the prefixes that run the command after them, each with its options that take a value
-# (review rounds 1 and 2: `env -u X`, `env -iu X`, `time -p`, `command --`, `timeout -s TERM
+# (`env -u X`, `env -iu X`, `time -p`, `command --`, `timeout -s TERM
 # 900` hid the command)
 _WRAPPERS = {
     "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
@@ -43,7 +42,7 @@ _WRAPPERS = {
     "nohup": frozenset(),
     "builtin": frozenset(),
 }
-# codex's own options that take a value, before its subcommand (review round 2)
+# codex's own options that take a value, before its subcommand
 _CODEX_VALUE_OPTIONS = frozenset({"-c", "--config", "-m", "--model", "-p", "--profile", "-s",
                                   "--sandbox", "-a", "--ask-for-approval", "-C", "--cd", "-i",
                                   "--image", "--enable", "--disable", "--local-provider",
@@ -98,7 +97,7 @@ def _command_words(words: list[str]) -> list[str] | None:
 
 
 def _split(text: str) -> list[str]:
-    """`env -S STRING`'s words, by its own quoting rules (review round 3)."""
+    """`env -S STRING`'s words, by its own quoting rules."""
     import shlex
 
     try:
@@ -109,8 +108,8 @@ def _split(text: str) -> list[str]:
 
 def _without_substitutions(command: str) -> str:
     """The command with every `$(...)` and backtick span (balanced, quote-aware) replaced by a
-    plain word, so a redirect inside one is never read as the outer command's (review rounds 1
-    to 3: `codex exec $(cat </dev/null )`); literal text, a here-string's `)` included, stays."""
+    plain word, so a redirect inside one is never read as the outer command's
+    (`codex exec $(cat </dev/null )`); literal text, a here-string's `)` included, stays."""
     out: list[str] = []
     i, n = 0, len(command)
     single = double = False
@@ -169,7 +168,7 @@ def _substitution_end(command: str, start: int) -> int:
 
 
 def _runs_codex_exec(words: list[str]) -> bool:
-    """`codex exec` or `codex e`, after codex's own options and their values (review round 2)."""
+    """`codex exec` or `codex e`, after codex's own options and their values."""
     if not words or words[0].rsplit("/", 1)[-1] != "codex":
         return False
     i = 1
@@ -179,14 +178,14 @@ def _runs_codex_exec(words: list[str]) -> bool:
     return i < len(words) and words[i] in ("exec", "e")
 
 
-# Words before a command word in a segment of a conditional or a loop (0.5.0 review).
+# Words before a command word in a segment of a conditional or a loop.
 _CONTROL_WORDS = frozenset({"then", "do", "else", "elif", "if", "while", "until", "!"})
 _OPENERS = frozenset({"if", "while", "until", "for"})
 
 
 def _compounds(segments) -> tuple[set[int], set[int]]:
     """The segments inside a conditional or loop, and those of them whose stdin is given to it as a
-    whole, by a redirect on its `fi` or `done` or by a pipe into it (0.5.0 review)."""
+    whole, by a redirect on its `fi` or `done` or by a pipe into it."""
     inside: set[int] = set()
     fed: set[int] = set()
     open_at: list[tuple[int, bool]] = []
@@ -208,7 +207,7 @@ def _compounds(segments) -> tuple[set[int], set[int]]:
 
 def _sets_stdin(redirect) -> bool:
     """A redirect that gives fd 0 something other than the caller's stdin: `<`, a heredoc, a
-    here-string, `<&`, or any form naming fd 0 (`0>&-`, review round 2)."""
+    here-string, `<&`, or any form naming fd 0 (`0>&-`)."""
     return (redirect.op in _STDIN_OPS and redirect.fd in (None, "0")) or redirect.fd == "0"
 
 
@@ -217,7 +216,7 @@ def unredirected_codex(command: str) -> bool:
     reads the caller's stdin: no stdin redirect on that segment (one inside a substitution
     does not count), none on a commandless `exec` before it, and not fed by a pipe.
     A command with a `{ ...; }` group or a subshell is not judged: its stdin may come from the
-    group (review round 1)."""
+    group."""
     from . import commands  # only for a command that names codex
 
     segments = commands.lex(_without_substitutions(command)).segments
@@ -227,11 +226,11 @@ def unredirected_codex(command: str) -> bool:
         return False
     inside, fed = _compounds(segments)
     previous_sep = None
-    shell_stdin = False  # `exec </dev/null` changed the shell's own stdin (review round 2)
+    shell_stdin = False  # `exec </dev/null` changed the shell's own stdin
     for index, seg in enumerate(segments):
         words = [word.text for word in seg.words]
         # only an `exec` that surely runs in this shell: the start of a list, not piped, not
-        # backgrounded, not after `&&` or `||` (review round 3)
+        # backgrounded, not after `&&` or `||`
         if words == ["exec"] and index not in inside \
                 and any(_sets_stdin(r) for r in seg.redirects) \
                 and previous_sep in (None, ";", "\n") and seg.sep_after not in ("|", "|&", "&"):
@@ -261,7 +260,7 @@ def run() -> int:
         if not isinstance(command, str) or "codex" not in (
                 command.replace("\\\n", "").replace('"', "").replace("'", "")
                 .replace("\\", "")):
-            return 0  # `co"dex"` and `co\<newline>dex` are codex too (review rounds 1 and 2)
+            return 0  # `co"dex"` and `co\<newline>dex` are codex too
         if tool_input.get("run_in_background") is not True:
             return 0  # in the foreground the Bash tool's stdin ends at once (276 of 276 here)
         if not unredirected_codex(command):

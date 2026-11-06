@@ -1,6 +1,5 @@
 """attempt_failed: names the cause of a workflow attempt the journal closed
-with a `failed` event (.reviews/proposals/2026-09-v0.2-guided-rescue.md
-section 4.2). The cause is read from exactly one place: the attempt's own
+with a `failed` event. The cause is read from exactly one place: the attempt's own
 last transcript entry (not counting trailing attachment entries), never a
 wider window and never a user-authored prompt -- a fixture whose prompt
 merely mentions "API Error" must still come back unattributed

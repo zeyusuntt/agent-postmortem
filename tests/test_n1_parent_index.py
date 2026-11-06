@@ -213,7 +213,7 @@ def test_unrecognized_launch_status_diagnostic_matches_the_contract_literal_stri
     assert gen.diagnostics == ["unrecognized launch status"]
 
 
-# --- status vocabulary (4.13.3, N1N2 review finding 6) ----------------------
+# --- status vocabulary (4.13.3) ----------------------
 #
 # docs/DESIGN.md 4.13.3's Status vocabulary paragraph: for notifications AND
 # synchronous launch results alike, 'completed' -> 'completed', 'failed' ->
@@ -423,7 +423,7 @@ def test_task_stop_then_later_notification_resolves_to_the_notification(tmp_path
     assert gen.terminal_line == 4
 
 
-# --- TaskStop task_id / shell_id matching (4.13.3, N1N2 review finding 6) ---
+# --- TaskStop task_id / shell_id matching (4.13.3) ---
 #
 # "Terminal evidence per generation": a TaskStop tool_use block whose input
 # task_id OR shell_id equals the generation's own task_id counts. Every
@@ -710,7 +710,7 @@ def test_generations_for_filters_by_run_id(tmp_path):
     assert index.generations_for("wf_00000000-ba3") == []
 
 
-# --- N1N2 review round 2, original finding 1 (PARTLY): one stable,         --
+# --- one stable,         --
 # line-specific Run diagnostic per decode or shape failure, and one stable,
 # file-level diagnostic per read failure (docs/DESIGN.md section 2: "a bad
 # line becomes a diagnostic string on the Run, never an exception"),
@@ -790,7 +790,7 @@ def test_line_level_diagnostic_survives_a_failed_rebuilds_restore(tmp_path, monk
     assert f"{parent.name}: parent transcript unreadable" in index2.diagnostics
 
 
-# --- N1N2 review round 2, original finding 7 (PARTLY): json.loads itself ---
+# --- json.loads itself ---
 # only ever runs once per physical parent line (docs/DESIGN.md 4.13.3's
 # parent index cache paragraph: "parsing cost stays proportional to new
 # lines"). The existing cross-workflow spy in test_n2_lifecycle.py
@@ -840,7 +840,7 @@ def test_json_loads_called_once_per_parent_line_then_zero_then_k_more(tmp_path, 
     assert index3.generations[0].terminal == "completed"
 
 
-# --- N1N2 review round 2, new finding 2 (MINOR): a failed rebuild must ----
+# --- a failed rebuild must ----
 # preserve EVERY state class _reset_state() clears, not just the three
 # (generations, task_stops, kill_sentinels) the original N1N2 fix review
 # finding 1 test above happens to seed -- mutation M27 (dropping
@@ -855,7 +855,7 @@ def _full_observable_state(index: "reader.ParentIndex") -> dict:
     """Every field _reset_state() clears, read directly off the index's own
     attributes -- never self.diagnostics, which a failed refresh legitimately
     grows by one new file-level diagnostic (docs/DESIGN.md section 2, N1N2
-    review round 2, original finding 1); that is checked separately, below."""
+    Original finding 1); that is checked separately, below."""
     return {
         "task_stops": list(index.task_stops),
         "kill_sentinels": list(index.kill_sentinels),

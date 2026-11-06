@@ -1,8 +1,8 @@
-"""Fix round 4 (W4, W5) of field milestone F: the one free-text path scanner reaches every output
-that can carry a path (docs/DESIGN.md 5.1, 4.11; .reviews/v0.3/F-W-spec.md W4).
+"""The one free-text path scanner reaches every output
+that can carry a path (docs/DESIGN.md 5.1, 4.11).
 
-Rows: rescue excerpts (F-codex-r3 item 4) through text and JSON at local, the direct
-`Pseudonyms.check()` values at local (spec review round 2 item 4), the direct Pseudonyms name
+Rows: rescue excerpts through text and JSON at local, the direct
+`Pseudonyms.check()` values at local , the direct Pseudonyms name
 values at local, diagnostics, metrics, evidence lines, a hook debug traceback and a handler error.
 Share keeps `check-N` and no excerpt; raw is unchanged.
 
@@ -55,7 +55,7 @@ def _status_outputs(excerpt, listed):
     return text, json.dumps(payload)
 
 
-# --- F-codex-r3 item 4: rescue excerpts at local ---------------------------------------------------
+# --- rescue excerpts at local ---------------------------------------------------
 
 EXCERPTS = [
     pytest.param(("/srv/data/A",), "cat /srv/data/A\\ Client/deep/notes.md now",

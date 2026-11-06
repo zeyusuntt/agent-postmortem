@@ -1,4 +1,4 @@
-"""Fix round 8 of field milestone F: a seeded generator of private names in the spellings the round 7
+"""A seeded generator of private names in the spellings the round 7
 reviews found (an apostrophe inside a single-quoted path, a home or working-directory variable inside
 a command, a colour sequence, a path after `@`, a Windows namespace path, a root path that starts with
 a space, a Windows path before JSON).

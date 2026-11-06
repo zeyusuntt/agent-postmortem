@@ -1,10 +1,9 @@
-"""Fix round 6 (W6-2 to W6-8, W6-10) of field milestone F: the end-of-line rule, the paired U+201D
+"""The end-of-line rule, the paired U+201D
 opener, bracket spans inside a name, JSON escapes in a double-quoted fragment, Python repr escapes
 at every sink, lone surrogates in rewritten JSON, and the path forms the grammar missed
-(docs/DESIGN.md 5.1; .reviews/v0.3/F-dispositions.md, "Fix round 5 review").
+(docs/DESIGN.md 5.1).
 
-Every exact input of the sonnet review (F-W5-review.md) and of Codex round 5 (F-codex-r5.md) runs
-through the sinks the reviewers list, at share and at local.
+Every exact input found so far runs through the sinks, at share and at local.
 
 Every fixture is synthetic. Private words are the ones a stranger must never read.
 """

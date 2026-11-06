@@ -1,6 +1,5 @@
-"""Fix round 6 (W6-2, W6-6, W6-8) of field milestone F through the rescue, check, name, scan, hook,
-apply, reader and run sinks the reviewers list (docs/DESIGN.md 5.1, 4.11;
-.reviews/v0.3/F-dispositions.md, "Fix round 5 review").
+"""Through the rescue, check, name, scan, hook, apply, reader and run sinks
+(docs/DESIGN.md 5.1, 4.11).
 
 Every fixture is synthetic.
 """

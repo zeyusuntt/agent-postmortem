@@ -19,10 +19,11 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from live_helpers import FAKE_UUID, tool_result, tool_use, user, write_jsonl
 from test_live_session import SLUG
 
-from agent_postmortem import hook_gate, hooks_cli, state
+from agent_postmortem import commands, hook_gate, hooks_cli, state
 
 STDIN_LINE = "Reading additional input from stdin...\n"
 TASK = "b00000001"
@@ -142,7 +143,7 @@ def test_a_session_with_no_subagent_and_no_background_command_writes_nothing(tmp
     assert not hook_gate._gate_path(str(main)).exists()
 
 
-# --- review round 1 ------------------------------------------------------------------------------
+# --- further cases ------------------------------------------------------------------------------
 
 
 def _two_silent(tmp_path):
@@ -192,7 +193,7 @@ def test_endings_and_commands_together_stay_within_400_characters():
     assert shown < len(commands) and "more: agent-postmortem status" in text
 
 
-# --- review round 2 ------------------------------------------------------------------------------
+# --- further cases ------------------------------------------------------------------------------
 
 
 def test_a_command_dropped_while_claiming_is_not_recorded(tmp_path, monkeypatch, capsys):
@@ -237,3 +238,91 @@ def test_an_output_that_cannot_be_read_is_checked_again(tmp_path, monkeypatch):
     state = stalls.command_state("b00000001", shell, time.time())
     assert state["recheck_seconds"] == 60.0
     assert state["silent_seconds"] is None
+
+
+# --- a command that ends in `tail` shows nothing until it ends ----------
+
+
+TAILED = "render-the-video --long 2>&1 | tail -n 20"
+
+
+def test_the_field_command_is_told_softly_and_once(tmp_path, monkeypatch, capsys):
+    w = Worker(tmp_path, launched_ago=1900, command=TAILED)
+    text = _hook(monkeypatch, capsys, w)
+    assert "ends in `tail`, which prints only when it ends, so that may be fine" in text, text
+    assert "has written nothing" not in text and f"TaskStop {TASK}" in text, text
+    assert "its output in a file" in text, text
+    assert _hook(monkeypatch, capsys, w) == ""
+
+
+def test_a_file_it_can_watch_still_means_silence(tmp_path, monkeypatch, capsys):
+    w = Worker(tmp_path, launched_ago=1900, command="render-the-video > r.log | tail -5")
+    w.file("r.log", "", 1900)
+    text = _hook(monkeypatch, capsys, w)
+    assert "has written nothing" in text and "may be fine" not in text, text
+
+
+def test_the_soft_line_stays_within_the_budget():
+    from agent_postmortem.hooks_cli import _HOOK_BUDGET, _command_line
+
+    line = _command_line({"task_id": "b0000000000000001", "launched_seconds": 360000,
+                          "silent_seconds": 360000, "end_only": "tail"})
+    assert len(line) < _HOOK_BUDGET - 100, line
+
+
+@pytest.mark.parametrize(
+    "command,word",
+    [
+        pytest.param("x | tail", "tail", id="tail"),
+        pytest.param("x | tail -5", "tail", id="tail -N"),
+        pytest.param("x | tail -n 5", "tail", id="tail -n N"),
+        pytest.param("x | tail -n5", "tail", id="tail -nN"),
+        pytest.param("x | tail -c 100", "tail", id="tail -c N"),
+        pytest.param("x | tail --lines=5", "tail", id="tail --lines="),
+        pytest.param("x | /usr/bin/tail -5", "tail", id="by path"),
+        pytest.param("x |& tail -5", "tail", id="both streams"),
+        pytest.param("x 2>&1 | tail -5", "tail", id="stderr merged"),
+        pytest.param("cd /tmp/w && x 2>&1 | tail -20", "tail", id="after a cd"),
+        pytest.param('run "$(cat prompt)" | tail -20', "tail", id="a substitution upstream"),
+        pytest.param('x | tail -5; echo "exit $?"', "tail", id="then a report of the exit"),
+        pytest.param("x | tail -5\n", "tail", id="a final newline"),
+        pytest.param("x | a | tail -5", "tail", id="three stages"),
+        pytest.param("x | sort -u", "sort", id="sort"),
+        pytest.param("x | wc -l", "wc", id="wc"),
+        pytest.param("x | tac", "tac", id="tac"),
+        pytest.param("x | sort -k2 -rn", "sort", id="sort with flags"),
+        pytest.param("x | tail -n +1", None, id="tail -n +N streams"),
+        pytest.param("x | tail -c +1", None, id="tail -c +N streams"),
+        pytest.param("x | tail -n+1", None, id="tail -n+N streams"),
+        pytest.param("x | tail +1", None, id="tail +N streams"),
+        pytest.param("x | sort -m", None, id="sort -m streams"),
+        pytest.param("x | sort --merge", None, id="sort --merge streams"),
+        pytest.param("x | sort -um", None, id="a cluster with m"),
+        pytest.param("x | wc -l done.txt", None, id="wc of a file, not the pipe"),
+        pytest.param("x | sort done.txt", None, id="sort of a file, not the pipe"),
+        pytest.param("x | tac done.txt", None, id="tac of a file, not the pipe"),
+        pytest.param("x | sort --files0-from=names", None, id="sort reading a list of files"),
+        pytest.param("x | wc --files0-from=names", None, id="wc reading a list of files"),
+        pytest.param('true | tail -5; echo "$(cat)"', None, id="a substitution after it can hang"),
+        pytest.param("true | tail -5; echo `cat`", None, id="the older spelling"),
+        pytest.param("x | tail -5 & echo started", None, id="the pipe backgrounded"),
+        pytest.param("x | tail -5 && echo done", "tail", id="then a word of success"),
+        pytest.param("x | tail -f", None, id="tail -f follows"),
+        pytest.param("x | tail -F", None, id="tail -F follows"),
+        pytest.param("x | tail -fn5", None, id="a cluster with f"),
+        pytest.param("x | tail --follow", None, id="tail --follow"),
+        pytest.param("x | tail other.log", None, id="tail of a file, not the pipe"),
+        pytest.param("x | tail -n", None, id="no count"),
+        pytest.param("tail -5 out.log", None, id="no pipe"),
+        pytest.param("x | head -5", None, id="head prints at once"),
+        pytest.param("x | grep y", None, id="grep prints as it goes"),
+        pytest.param("x | tail -5; y", None, id="another command after it"),
+        pytest.param("x | tail -5 && y", None, id="another command after it, joined"),
+        pytest.param("x | tail -5 > out", None, id="its own redirect"),
+        pytest.param("x | tail -5 &", None, id="backgrounded by the shell"),
+        pytest.param("x | tee log", None, id="tee prints as it goes"),
+        pytest.param("", None, id="nothing"),
+    ],
+)
+def test_which_commands_write_only_at_their_end(command, word):
+    assert commands.writes_only_at_its_end(command) == word

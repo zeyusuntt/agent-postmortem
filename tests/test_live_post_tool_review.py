@@ -1,4 +1,4 @@
-"""docs/DESIGN.md 4.14.5 (0.4), review rounds 1 and 2 of the hook-driven live checks: each test
+"""docs/DESIGN.md 4.14.5 (0.4) of the hook-driven live checks: each test
 is one reproduction of a finding, red before its fix."""
 
 from __future__ import annotations

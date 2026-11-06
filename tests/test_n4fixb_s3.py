@@ -1,5 +1,5 @@
 """Fix B, S3: a file-tool ledger path is the lexical normalization of the input
-path (docs/DESIGN.md 4.13.1 Paths (D7); .reviews/v0.3/N4-dispositions.md S3).
+path (docs/DESIGN.md 4.13.1 Paths (D7)).
 
 cwd is /tmp/ws unless a row says otherwise. Every row asserts the whole entry.
 """

@@ -39,11 +39,11 @@ one place that match happens; nothing else in this module or rescue.py
 re-derives it.
 
 `[[adopted]]` tables (docs/DESIGN.md 9, unit M6), each `{rule = "R-...",
-date = "YYYY-MM-DD", target = "..."}`: a rule the owner has already put into
+date = "YYYY-MM-DD", target = "..."}`: a rule the user has already put into
 a prompt, a hook, or a project's own instructions, by hand, outside this
 tool -- `rules review` uses the date to split a run's own detector rate into
 before/after windows. `rule` must name a rule in `rules.RULES`; `date` must
-parse as a calendar date; `target` is free text (where the owner put it),
+parse as a calendar date; `target` is free text (where the user put it),
 never checked against the filesystem. A malformed table, or one naming an
 unknown rule or an unparsable date, adds one warning and is dropped; every
 other well-formed `[[adopted]]` table is still kept.
@@ -132,7 +132,7 @@ class RepoConfig:
 
 @dataclass(frozen=True)
 class AdoptedRule:
-    """One `[[adopted]]` table (docs/DESIGN.md 9): a rule the owner already
+    """One `[[adopted]]` table (docs/DESIGN.md 9): a rule the user already
     put somewhere by hand, outside this tool. `date` is a plain "YYYY-MM-DD"
     string, already validated as a real calendar date at load time."""
 

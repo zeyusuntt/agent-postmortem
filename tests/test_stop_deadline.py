@@ -88,7 +88,7 @@ def test_the_request_stays_within_400_characters_with_many_tasks(tmp_path, monke
     assert "and 2 more" in text and len(text) <= 400, len(text)
 
 
-# --- review round 1 ------------------------------------------------------------------------------
+# --- further cases ------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -151,7 +151,7 @@ def test_the_request_joined_with_a_unit_finding_stays_within_400_characters(
     assert len(text) <= 400, len(text)
 
 
-# --- review round 2 ------------------------------------------------------------------------------
+# --- further cases ------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -203,7 +203,7 @@ def test_the_request_names_only_the_tasks_this_call_won(tmp_path, monkeypatch, c
     assert "DEADLINE b00000004:" in text and "b00000001" not in text, text
 
 
-# --- review round 3 (each with the reviewer's reproduction) -------------------------------------
+# --- further cases -------------------------------------
 
 
 @pytest.mark.parametrize(

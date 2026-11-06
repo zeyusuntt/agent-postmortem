@@ -1,4 +1,4 @@
-"""The replay benchmark (scripts/live_replay.py, .reviews/live/RESULTS.md) as a regression guard:
+"""The replay benchmark (scripts/live_replay.py) as a regression guard:
 every synthetic episode shaped like a corpus class is named, and nothing else is."""
 
 from __future__ import annotations

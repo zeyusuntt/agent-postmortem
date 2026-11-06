@@ -1,4 +1,4 @@
-"""Fix round 9 of field milestone F: a seeded generator of private names in the spellings the round 8
+"""A seeded generator of private names in the spellings the round 8
 reviews found (a path glued to CJK text, a variable anchor after `@`, a possessive apostrophe before a
 space in a single-quoted path, a colon-form or other control sequence, `$CLAUDE_PROJECT_DIR`, a `/tmp`
 path with a Unicode space).

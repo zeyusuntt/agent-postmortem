@@ -172,11 +172,11 @@ def _job_word(jobs_root: Path, session_id: str) -> str | None:
     return live._read_job_state(job_dir)[0] if job_dir is not None else None
 
 
-# review round 1: BACKGROUND reads at most this many jobs' own sessions per call
+# BACKGROUND reads at most this many jobs' own sessions per call
 _JOB_STALL_READS = 5
 
 
-# field reports 2026-11-04: a blocked row of another session older than this folds into one line
+# a blocked row of another session older than this folds into one line
 OLD_BLOCKED_SECONDS = 72 * 3600.0
 
 
@@ -187,7 +187,7 @@ def _background(jobs_root: Path, projects_root: Path, now: float, *,
     stalled. Only a job whose own state and transcript have not changed for IDLE_SECONDS, whose
     process is a live background session and that `want(cwd)` keeps is read for that; `status`
     reads at most `max_reads` per call, starting at a place that moves every minute so every
-    such job is reached (review round 2), and `scan` reads them all (max_reads None). A blocked
+    such job is reached, and `scan` reads them all (max_reads None). A blocked
     or failed job says why, by class and never in its own words (workers.classify), and a blocked
     one that delivered counts as `delivered`; `mine` holds the launches of the session asking, by
     short id (MainFacts.workers), checked against each job's own createdAt."""
@@ -292,7 +292,7 @@ STALL_UNKNOWN = object()  # a read cut short: neither a stall nor the end of one
 
 def _job_stall(main: Path, now: float, kinds: dict[str, str],
                deadline: float | None = None) -> object:
-    """docs/DESIGN.md 4.14.4 (field report 2026-11-03): the STALLED reading of a background
+    """docs/DESIGN.md 4.14.4: the STALLED reading of a background
     job's own session, from its own snapshot (without a BACKGROUND list of its own), or None. With
     a `deadline` (time.monotonic), a read cut short keeps its place and returns STALL_UNKNOWN."""
     read: dict = {}
@@ -340,7 +340,7 @@ def _workflow(main: live.MainFacts, run_id: str) -> dict:
 def _commands(main: live.MainFacts, stamp: float) -> dict:
     """docs/DESIGN.md 4.14.4 (0.4): the session's background shell commands by native end; no
     end notice is "running" only as far as the transcript knows, so the oldest one's launch age
-    goes beside the count, and (field report 2026-11-03) each running one says how long its
+    goes beside the count, and each running one says how long its
     files have been unchanged and whether it waits on stdin."""
     counts, oldest = main.commands()
     return {"counts": counts,
@@ -357,7 +357,7 @@ def snapshot(main_path: Path, *, now=time.time, jobs_root: Path | None = None,
     data = state.read_cache(follower.store_path)
     _restore(follower, data)
     read_complete = follower._read(deadline=read_deadline) and not follower.read_failed
-    try:  # a line still being written may be the session acting again (review round 3)
+    try:  # a line still being written may be the session acting again
         read_complete = read_complete and follower.main_tail.offset >= main_path.stat().st_size
     except OSError:
         read_complete = False
@@ -424,7 +424,7 @@ def snapshot(main_path: Path, *, now=time.time, jobs_root: Path | None = None,
     if background:
         background_rows = _background(follower.jobs_root, projects_root, stamp,
                                       mine=follower.main.workers)
-        # field report 2026-11-04: a background worker owns none of the machine's other sessions
+        # a background worker owns none of the machine's other sessions
         kinds = stalls.live_sessions(stalls.default_sessions_root(follower.main_path))
         # with a launch whose id it never saw, or past the facts' bound, any row may be its own
         if kinds.get(follower.main_path.stem) == "bg" and not follower.main.unlinked_launches \
@@ -437,7 +437,7 @@ def snapshot(main_path: Path, *, now=time.time, jobs_root: Path | None = None,
             _workflow(follower.main, run_id) for run_id in sorted(follower.main.workflows)
         ],
         "commands": _commands(follower.main, stamp),
-        # review round 2: never from cached facts alone when this read failed or stopped short
+        # never from cached facts alone when this read failed or stopped short
         "stalled": None if not read_complete else stalls.session_stall(
             follower.main, session_id=follower.main_path.stem,
             sessions_root=stalls.default_sessions_root(follower.main_path), now=stamp,
@@ -561,7 +561,7 @@ def render_text(snap: dict, redactor: Redactor, now: float | None = None) -> str
                                       f"still write"))
     stall = snap.get("stalled")
     if stall:
-        # field report 2026-11-03: idle on a command that will not end; nothing native says so
+        # idle on a command that will not end; nothing native says so
         what = (f"{_plural(stall['commands'], 'background command')} "
                 f"{'has' if stall['commands'] == 1 else 'have'} written nothing")
         if stall.get("silent_seconds") is not None:
@@ -569,7 +569,7 @@ def render_text(snap: dict, redactor: Redactor, now: float | None = None) -> str
         if stall.get("waiting_on_stdin"):
             what += ", waiting on stdin" if stall["commands"] == 1 else \
                 f", {stall['waiting_on_stdin']} waiting on stdin"
-        # field report 2026-11-04: only a command's own files are seen, and it may end yet
+        # only a command's own files are seen, and it may end yet
         lines.append(_row("STALLED", f"idle {_age(stall['idle_seconds'])}; {what}; "
                           + ("nothing will wake this session" if stall.get("waiting_on_stdin")
                              else "it may be hung or writing elsewhere, and only its end would "
@@ -598,7 +598,7 @@ def render_text(snap: dict, redactor: Redactor, now: float | None = None) -> str
                      else "; this session launched none, scan lists them")
         lines.append(f"BACKGROUND {_plural(total_bg, 'session')} on this machine: {breakdown}"
                      f"{scope}")
-        # field reports 2026-11-04: its own workers first; another session's old blocked row is
+        # its own workers first; another session's old blocked row is
         # one more on a line of its own, so the one that matters is not skimmed past
         rows = background["sessions"]
         if isinstance(launched, int):
@@ -660,7 +660,7 @@ def next_action(entry: dict) -> str:
 
 def _why(entry: dict, named: bool) -> str:
     """After a row's age: what it waits for, whose it is, and from `--local`, where a tool's
-    label and the short id are shown, what helps (field reports 2026-11-04)."""
+    label and the short id are shown, what helps."""
     cls = entry.get("class")
     if cls is None:
         return ""
@@ -673,7 +673,7 @@ def _why(entry: dict, named: bool) -> str:
 
 
 def _silence_words(running: list[dict], n: int) -> str:
-    """field report 2026-11-03: after a running count, how long the commands' files have been
+    """after a running count, how long the commands' files have been
     unchanged, when that is past the silence mark, and how many wait on stdin."""
     silent = [c for c in running if c.get("silent")]
     stdin = sum(1 for c in silent if c.get("waiting_on_stdin"))
@@ -682,6 +682,8 @@ def _silence_words(running: list[dict], n: int) -> str:
     if n == 1 and len(silent) == 1:
         quiet = silent[0].get("silent_seconds")
         words = f", silent {_age(quiet)}" if quiet is not None else ", silent"
+        if silent[0].get("end_only"):
+            words += f", {silent[0]['end_only']} prints only at its end"
         return words + (", waiting on stdin" if stdin else "")
     return f", {len(silent)} silent" + (f", {stdin} waiting on stdin" if stdin else "")
 
@@ -707,7 +709,7 @@ def render_json(snap: dict, redactor: Redactor) -> str:
         if named:
             entry["cwd"] = _shown_cwd(entry.get("cwd"), redactor.level)
             if redactor.level == "local":
-                # what the text line gets (batch 2 review): a path or an id inside is hidden
+                # what the text line gets: a path or an id inside is hidden
                 for key in ("name", "cwd"):
                     if isinstance(entry.get(key), str):
                         entry[key] = redactor(entry[key])

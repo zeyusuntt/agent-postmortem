@@ -1,5 +1,5 @@
 """Part FB3 (field milestone F, P2): `rescue plan` text on a live run
-(docs/DESIGN.md 4.11 LIVE rule; .reviews/v0.3/F-plan.md FB3).
+(docs/DESIGN.md 4.11 LIVE rule).
 
 The field case: an agent running `rescue plan` inside the very session it was rescuing was
 told "POSSIBLY LIVE: do not modify files in this repo", which is true of the session and

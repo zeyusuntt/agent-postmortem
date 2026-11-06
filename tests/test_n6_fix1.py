@@ -1,4 +1,4 @@
-"""N6 fix round 1 (docs/DESIGN.md 4.8, 4.13.5, 4.13.6; .reviews/v0.3/N6-dispositions.md):
+"""N6 (docs/DESIGN.md 4.8, 4.13.5, 4.13.6):
 C1 `run --here` renders the run it chose with no second load, C2 a descriptor close
 failure in the alias lookup is "unavailable", S-m2 a deleted caller directory,
 S-m3 cwd on non-user lines, S-m4 an uppercase UUID is no match."""

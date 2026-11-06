@@ -447,7 +447,7 @@ def test_scan_here_keeps_only_a_worker_in_the_callers_directory(tmp_path, monkey
     assert "STALLED" in out
 
 
-# --- review round 1 ------------------------------------------------------------------------------
+# --- further cases ------------------------------------------------------------------------------
 
 NOW = LAUNCH + timedelta(hours=23)
 
@@ -632,7 +632,7 @@ def test_only_a_group_or_subshell_hides_every_output(command, expected):
         assert outputs == expected and unknown is False
 
 
-# --- review round 2 ------------------------------------------------------------------------------
+# --- further cases ------------------------------------------------------------------------------
 
 
 def _jobs(tmp_path, n: int, *, cwd: str | None = None) -> None:
@@ -753,7 +753,7 @@ def test_a_folded_stalled_session_keeps_its_caller_marker(monkeypatch):
     assert fresh[0]["mark"] == "this session"
 
 
-# --- review round 3 (each with the reviewer's reproduction) -------------------------------------
+# --- further cases -------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -816,7 +816,7 @@ def test_a_line_still_being_written_holds_back_a_stall(tmp_path):
     assert status.snapshot(s.main, now=lambda: _at(NOW))["stalled"] is None
 
 
-# --- review round 4 (each with the reviewer's reproduction) -------------------------------------
+# --- further cases -------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -847,3 +847,13 @@ def test_round_three_invalidates_v7_stall_facts():
         "facts_version": 7, "fork_line": 0, "offset": 10, "lines": 1, "size": 10,
         "facts": old}}})
     assert follower.main_tail.offset == 0
+
+
+def test_status_says_why_a_command_ending_in_tail_is_silent(tmp_path):
+    """Field report 2026-11-05."""
+    s = Session(tmp_path).launch("render-the-video 2>&1 | tail -n 20").turn_end().alive().job()
+    snap = s.snapshot(LAUNCH + timedelta(minutes=31))
+    assert snap["commands"]["running"][0]["end_only"] == "tail"
+    from agent_postmortem.redact import Redactor
+    text = status.render_text(snap, Redactor())
+    assert "silent 31m, tail prints only at its end)" in text, text

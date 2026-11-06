@@ -67,7 +67,7 @@ def _takes(parser, flag: str) -> bool:
     parent parser (when the parent runs on its own, as `rules` does) and every
     nested leaf (rules propose, rescue plan, ...). A group that cannot run
     alone is judged by its leaves only. Never short-circuits on the parent
-    (N3c review finding 6)."""
+."""
     nested = _nested_parsers(parser)
     if not nested:
         return flag in parser._option_string_actions

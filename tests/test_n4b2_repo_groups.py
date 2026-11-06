@@ -1,6 +1,5 @@
 """N4b-2 coverage group 11 (repository grouping, L14): `ledger.group_by_repo`
-returns exact `RepoGroups` objects (docs/DESIGN.md 4.13.1;
-.reviews/v0.3/N4-plan.md L14, rev 6 wording: a shell call, not a ledger entry,
+returns exact `RepoGroups` objects (docs/DESIGN.md 4.13.1, rev 6 wording: a shell call, not a ledger entry,
 adds an attempt to `unknown`)."""
 
 from __future__ import annotations

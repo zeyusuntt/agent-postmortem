@@ -1,4 +1,4 @@
-"""Fix E (Codex round 3: omitted timestamps, rejected initial launches), Amendment A5
+"""Fix E (omitted timestamps, rejected initial launches), Amendment A5
 (continued): an event-bearing line with no usable timestamp (absent, not a string, or
 unparseable) at or before the earliest line carrying first_ts makes the attempt
 unassignable (R3-1); an initial rejected Workflow launch is always undiscovered in the

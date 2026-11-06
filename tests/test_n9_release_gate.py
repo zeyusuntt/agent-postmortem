@@ -1,4 +1,4 @@
-"""N9 release gate (docs/DESIGN.md 4.13.9, .reviews/v0.3/N9-plan.md V1).
+"""N9 release gate (docs/DESIGN.md 4.13.9).
 
 Built by parsing tests/*.py with `ast`, so nothing under tests/ is imported
 and no import side effect can hide a mark. It fails when:

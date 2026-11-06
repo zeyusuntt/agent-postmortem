@@ -1,11 +1,10 @@
-"""Fix round 7 (W7-1, W7-3, W7-4) of field milestone F: an end-to-end probe through the real CLI.
+"""An end-to-end probe through the real CLI.
 
 A planted run whose label, phase, description or transcript excerpt holds a private name spelled
-the way the review rounds broke the scanner (an operator then a space, a typographic closer, a
+the ways that once broke the scanner (an operator then a space, a typographic closer, a
 time, an ampersand, a Windows path) is read by every command that prints text from a run, at share
 and at local, as text, as JSON, with and without `--evidence`. No marker of the private name may
-reach stdout or stderr. This is the proof the inventory rows of
-`.reviews/tooling/f/inventory_fix7.py` that name an output family point at.
+reach stdout or stderr. This is the proof the inventory rows of the output inventory that name an output family point at.
 
 Every fixture is synthetic.
 """

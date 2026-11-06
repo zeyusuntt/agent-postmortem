@@ -143,7 +143,7 @@ def test_e48_a_quiet_commit_in_the_same_shape_still_reads_a_question_mark(tmp_pa
     assert _commits_cell(_text(run, capsys)) == "?"
 
 
-# --- review round 1 ----------------------------------------------------------------------
+# --- further cases ----------------------------------------------------------------------
 
 
 def test_e48_an_opaque_word_behind_a_placed_mise_prefix_poisons_the_call():
@@ -197,7 +197,7 @@ def test_e48_the_differential_exemption_names_only_the_changed_positions():
     assert may_differ("L=x && git commit -m x") is True
 
 
-# --- review round 2: a substitution can run a commit whatever program it is an argument of ----
+# --- a substitution can run a commit whatever program it is an argument of ----
 
 FORGED = "[main 1111111] a\n[main deadbee] hook\n"
 
@@ -229,7 +229,7 @@ def test_e48_text_that_cannot_run_a_commit_does_not_poison(command):
     assert _ids(command) == ("750b62f",)
 
 
-# --- review round 3 (each with the reviewer's failing test) ------------------------------------
+# --- further cases ------------------------------------
 
 
 def test_e48_heredoc_before_pipeline_poisons_call():
@@ -261,7 +261,7 @@ def test_e48_single_quotes_inside_an_unquoted_heredoc_still_run_a_substitution()
     assert _ids(command, FORGED) == ()
 
 
-# --- review round 4 (the reviewer's failing test; bash and zsh both run the substitution) -------
+# --- further cases ---
 
 
 def test_e48_ansi_c_quote_cannot_hide_commit_substitution():

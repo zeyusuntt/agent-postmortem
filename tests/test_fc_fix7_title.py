@@ -1,6 +1,5 @@
-"""Fix round 7 (W7-2) of field milestone F: a tool-built title never carries a path in-band for the
-scanner to rediscover (docs/DESIGN.md 4.13.4, 5.1; .reviews/v0.3/F-dispositions.md, "Fix round 6
-and 6b review"; Codex round 6 finding 3).
+"""A tool-built title never carries a path in-band for the
+scanner to rediscover (docs/DESIGN.md 4.13.4, 5.1).
 
 `Finding.title_parts` is a fixed template with one `{path}` placeholder plus the path value. The
 renderer formats the template once, with the path rendered by the level's path function, and does
@@ -42,7 +41,7 @@ UNCHECKED_TAIL = (
 )
 PRIVATE = ("Client", "Secret", "deep", "notes.md", "Zqa", "Zqb", "Zqc")
 
-# the exact input of Codex round 6 finding 3, two adjacent backquotes, several, and plain paths
+# two adjacent backquotes, several, and plain paths
 PATHS = [
     pytest.param("/srv/Client` Secret/deep/notes.md", id="codex3_one_backquote_and_a_space"),
     pytest.param("/srv/Client`` Secret/deep/notes.md", id="codex3_two_adjacent_backquotes"),

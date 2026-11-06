@@ -102,7 +102,7 @@ def test_a_session_whose_only_worker_is_a_background_command_says_status_does_no
     lines = _command_lines(out)
     assert len(lines) == 1, out
     assert "1 in the background" in lines[0] and "1 completed" in lines[0]
-    # field report 2026-11-03: status now reads whether a command still writes, never what
+    # status now reads whether a command still writes, never what
     assert "status checks only whether they still write" in lines[0]
 
 
@@ -235,7 +235,7 @@ def test_a_running_command_names_when_the_oldest_one_was_launched(tmp_path, caps
     assert "2 running (the oldest launched 2d ago)" in _command_lines(text)[0]
 
 
-# --- round 1 review ----------------------------------------------------------------------------
+# --- further cases ----------------------------------------------------------------------------
 
 
 def _queue(at, envelope: str) -> dict:
@@ -319,7 +319,7 @@ def test_a_leftover_notice_does_not_replace_an_end_the_command_already_has(tmp_p
     assert commands["killed"] == 1 and commands["stopped"] == 1
 
 
-# --- round 2 review ----------------------------------------------------------------------------
+# --- further cases ----------------------------------------------------------------------------
 
 
 def test_a_tool_less_end_written_before_its_launch_result_counts(tmp_path, capsys):
@@ -361,7 +361,7 @@ def test_a_damaged_early_end_in_the_store_is_evicted_first_and_never_raises():
     assert "b00000999" not in facts.early_ends and "b00000998" not in facts.early_ends
 
 
-# --- round 3 review ----------------------------------------------------------------------------
+# --- further cases ----------------------------------------------------------------------------
 
 
 def _early_then_launch(*early_notices) -> dict:
@@ -403,7 +403,7 @@ def test_a_command_the_timeout_moved_to_the_background_is_aged_from_its_start():
         "oldest_running_seconds"] == 180
 
 
-# --- round 4 review ----------------------------------------------------------------------------
+# --- further cases ----------------------------------------------------------------------------
 
 
 def test_facts_from_a_build_with_the_earlier_early_end_shape_are_read_again(tmp_path, capsys):

@@ -13,7 +13,7 @@ fixture builder another test file already has). Every wf_ id used here is
 already registered in tests/synthetic-ids.txt (reused from test_field_v03's
 own allocation, f01-f10/f0a-f0e), except wf_00000000-e20 through -e2f, newly
 registered below for this file's own scenarios, plus wf_00000000-e2e and
-wf_00000000-e30 (N2 review Finding 1: the two parent-inspection shape
+wf_00000000-e30 (the two parent-inspection shape
 sub-rules, assistant tool_use.name and queue-operation enqueue content,
 that no fixture exercised before).
 
@@ -155,7 +155,7 @@ def test_parent_inspection_incomplete_assistant_tool_use_missing_name_is_unknown
     """4.13.3's shape rule: 'every tool_use block has string id and name.'
     An assistant tool_use block with a string id but no name at all is the
     half of that rule the bare-string-message case above never exercises
-    (N2 review Finding 1: this sub-rule had no fixture at all, so a future
+    (this sub-rule had no fixture at all, so a future
     refactor dropping the name check would go uncaught)."""
     wf_id = "wf_00000000-e2e"
     root, run_dir = _basic_run(tmp_path, monkeypatch, wf_id, 215)
@@ -183,7 +183,7 @@ def test_parent_inspection_incomplete_queue_operation_enqueue_missing_content_is
     """4.13.3's shape rule: 'a queue-operation entry has a string operation,
     and a string content when operation is enqueue.' A queue-operation entry
     with operation 'enqueue' and no content at all is the other sub-rule no
-    fixture exercised before (N2 review Finding 1)."""
+    fixture exercised before."""
     wf_id = "wf_00000000-e30"
     root, run_dir = _basic_run(tmp_path, monkeypatch, wf_id, 216)
     parent = _parent_path(root)
@@ -208,7 +208,7 @@ def test_parent_inspection_incomplete_tool_result_missing_tool_use_id_is_unknown
 ):
     """4.13.3's shape rule: 'every tool_result block has a string
     tool_use_id.' A tool_result block with no tool_use_id at all (N1N2
-    review Finding 5, mutation M15: accepting this was never caught by any
+    Mutation M15: accepting this was never caught by any
     existing lifecycle test)."""
     wf_id = "wf_00000000-e31"
     root, run_dir = _basic_run(tmp_path, monkeypatch, wf_id, 217)
@@ -235,7 +235,7 @@ def test_parent_inspection_incomplete_assistant_content_not_a_list_is_unknown_pa
 ):
     """4.13.3's shape rule: 'an assistant entry has a dict message whose
     content is a list.' An assistant entry whose content is a bare string,
-    not a list at all (N1N2 review Finding 5, mutation M16)."""
+    not a list at all (mutation M16)."""
     wf_id = "wf_00000000-e32"
     root, run_dir = _basic_run(tmp_path, monkeypatch, wf_id, 218)
     parent = _parent_path(root)
@@ -260,7 +260,7 @@ def test_parent_inspection_incomplete_queue_operation_non_string_operation_is_un
 ):
     """4.13.3's shape rule: 'a queue-operation entry has a string
     operation.' A queue-operation entry whose operation is not a string at
-    all (N1N2 review Finding 5, mutation M17)."""
+    all (mutation M17)."""
     wf_id = "wf_00000000-e33"
     root, run_dir = _basic_run(tmp_path, monkeypatch, wf_id, 219)
     parent = _parent_path(root)
@@ -282,9 +282,7 @@ def test_parent_inspection_incomplete_queue_operation_non_string_operation_is_un
 def test_parent_malformed_json_line_is_unknown_parent_unavailable(tmp_path, monkeypatch):
     """4.13.3's Run lifecycle paragraph: parent inspection is complete only
     when the parent transcript 'has no undecodable line.' A line that is
-    simply not valid JSON at all (N1N2 review Finding 5). (N1N2 review round
-    2, original finding 1 PARTLY: the bad line must also become a Run
-    diagnostic, docs/DESIGN.md section 2.)"""
+    simply not valid JSON at all. """
     wf_id = "wf_00000000-e34"
     root, run_dir = _basic_run(tmp_path, monkeypatch, wf_id, 220)
     parent = _parent_path(root)
@@ -303,7 +301,7 @@ def test_parent_malformed_json_line_is_unknown_parent_unavailable(tmp_path, monk
 
 def test_parent_undecodable_byte_line_is_unknown_parent_unavailable(tmp_path, monkeypatch):
     """Same rule as above, the decode-failure half: a line that is not even
-    valid UTF-8 (N1N2 review Finding 5)."""
+    valid UTF-8."""
     wf_id = "wf_00000000-e35"
     root, run_dir = _basic_run(tmp_path, monkeypatch, wf_id, 221)
     parent = _parent_path(root)
@@ -601,7 +599,7 @@ def _permission_denied_open_for(target: Path):
 def test_unreadable_existing_parent_is_unknown_parent_unavailable_and_never_raises(
     tmp_path, monkeypatch,
 ):
-    """(N1N2 review round 2, original finding 1 PARTLY: an unreadable parent
+    """(original finding 1 PARTLY: an unreadable parent
     must also become a stable, file-level Run diagnostic, docs/DESIGN.md
     section 2.)"""
     wf_id = "wf_00000000-e3a"
@@ -726,7 +724,7 @@ def test_journal_read_exactly_once_per_load_run(tmp_path, monkeypatch):
     assert calls["n"] == 1, f"_read_journal was called {calls['n']} times for one load_run()"
 
 
-# --- N1N2 review round 2, new finding 1: a transient parent read failure ---
+# --- a transient parent read failure ---
 # must not permanently poison completeness (docs/DESIGN.md 4.13.3's parent
 # index cache paragraph). The bug: once a read failure anywhere in
 # ParentIndex._refresh's own stat/rehash/reparse steps flips
@@ -764,7 +762,7 @@ _UNREADABLE = "parent transcript unreadable"
 
 def _has_unreadable(diagnostics) -> bool:
     """Whether a diagnostics list still carries ParentIndex's file-level
-    'parent transcript unreadable' diagnostic (N1N2 Codex round 3, MINOR 1:
+    'parent transcript unreadable' diagnostic (MINOR 1:
     recovery must clear it, and it must not reappear)."""
     return any(_UNREADABLE in d for d in diagnostics)
 
@@ -953,7 +951,7 @@ def test_recovery_after_one_time_rebuild_parse_failure_restores_inspection_compl
 def test_recovered_unreadable_diagnostic_is_cleared_and_never_reappears_on_the_run(
     tmp_path, monkeypatch,
 ):
-    """N1N2 Codex round 3, MINOR 1: after a one-time read failure the
+    """After a one-time read failure the
     file-level diagnostic is present; after the successful retry it is gone
     from the index, stays gone on a further unchanged refresh, and never
     reaches Run.diagnostics."""

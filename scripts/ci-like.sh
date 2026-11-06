@@ -55,8 +55,16 @@ trap 'stop_active; exit 143' TERM
 # this returns 124 whatever the command's own exit code was. Whatever the step leaves running ends
 # with it, as on a runner.
 with_deadline() {
-    local seconds=$1 pid rc expired="${TMPDIR:-/tmp}/ci-like-expired.$$.$RANDOM"
+    local seconds=$1 pid rc expired=0
     shift
+    trap 'expired=1' USR1  # a signal, since no file can fail to be written
+    kill -USR1 $$
+    if [ "$expired" -ne 1 ]; then  # one ignored when bash started cannot be trapped
+        trap - USR1
+        echo "ci-like: USR1 is ignored here, so a step past its deadline could read as passed: not running it" >&2
+        return 125
+    fi
+    expired=0
     set -m
     "$@" </dev/null &
     pid=$!
@@ -68,22 +76,26 @@ with_deadline() {
             sleep 1
             left=$((left - 1))
         done
-        : > "$expired"
+        kill -USR1 $$
         echo "deadline of ${seconds}s passed: stopping this step"
         kill -TERM -"$pid" 2>/dev/null
         sleep "$GRACE"
         kill -KILL -"$pid" 2>/dev/null
     ) </dev/null &
     ACTIVE_WATCHDOG=$!
-    wait "$pid"
-    rc=$?
+    while :; do
+        wait "$pid"
+        rc=$?
+        # the signal above ends `wait` early, with the step still running
+        { [ "$rc" -gt 128 ] && kill -0 "$pid" 2>/dev/null; } || break
+    done
     kill "$ACTIVE_WATCHDOG" 2>/dev/null
     wait "$ACTIVE_WATCHDOG" 2>/dev/null
     kill -KILL -"$pid" 2>/dev/null
+    trap - USR1
     ACTIVE_WATCHDOG=""
     ACTIVE_GROUP=""
-    if [ -e "$expired" ]; then
-        rm -f "$expired"
+    if [ "$expired" -eq 1 ]; then
         return 124
     fi
     return "$rc"
@@ -129,7 +141,12 @@ while [ $# -gt 0 ]; do
     shift 2
 done
 
-[ -n "${VERSIONS// /}" ] || {
+# as the loop below will read it: a tab or a newline alone names no version either
+set -f
+# shellcheck disable=SC2086
+set -- $VERSIONS
+set +f
+[ $# -gt 0 ] || {
     echo "ci-like: no Python version to test" >&2
     exit 2
 }
@@ -164,14 +181,16 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     fi
     exit 3
 fi
+WORK=""
+cleanup() {
+    stop_active
+    [ -z "$WORK" ] || rm -rf "$WORK"
+    rm -rf "$LOCK"
+}
+trap cleanup EXIT  # from here on, whatever fails gives the lock back
 echo $$ > "$LOCK/pid"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/ci-like.XXXXXX") || exit 2
-cleanup() {
-    stop_active
-    rm -rf "$WORK" "$LOCK"
-}
-trap cleanup EXIT
 
 [ -n "$OUT" ] || OUT=$(mktemp -d "${TMPDIR:-/tmp}/ci-like-out.XXXXXX")
 mkdir -p "$OUT" || exit 2
@@ -285,6 +304,10 @@ one_version() {
     step "test" "uv run pytest -rs $PYTEST_ARGS" || return 1
     step "build" "uv build" || return 1
     step "privacy" "scripts/check-privacy.sh --tree --artifacts dist/" || return 1
+    # A runner has no deny list, so check-privacy.sh said it skipped it. This is this machine's: with
+    # its own HOME, where the list is, and a missing list fails.
+    echo "--- deny list, not as a runner:"
+    "$CLONE/scripts/check-deny-list.py" --root "$CLONE" --tree --history --artifacts "$CLONE/dist" || return 1
     echo "--- plugin validation: skipped, as on a runner: claude is not on PATH"
 
     left=$(cd "$HOME_DIR" && find . -mindepth 1 | sed 's#^\./##'; cd "$CONFIG_DIR" && find . -mindepth 1 | sed 's#^\./#config: #')

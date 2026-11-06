@@ -5,6 +5,51 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2]
+
+0.5.2 makes the plugin work on its own. With the plugin as the only install, `agent-postmortem` now
+runs in a session's Bash tool, so `/postmortem`, `/rescue` and every hook line that names the CLI
+work. Refresh the plugin to get it: `claude plugin marketplace update agent-postmortem`, then
+`claude plugin update agent-postmortem@agent-postmortem`.
+
+### Added
+
+- The plugin's `bin/agent-postmortem` runs the copy of the CLI the plugin installs for its hooks.
+  Claude Code puts a plugin's `bin/` at the end of the Bash tool's `PATH` (seen on 2.1.318), so a CLI
+  of your own still comes first. With no copy yet it says what to do and installs nothing.
+
+### Changed
+
+- A background command ending in `| tail` (or `sort`, `tac`, `wc`) shows nothing until it ends, so
+  its 30 minutes of silence say little. It is still told once, since a hang looks the same and has no
+  other alarm, but the `COMMAND` line now says it ends in `tail`, which prints only when it ends, so
+  that may be fine, and suggests sending the output to a file. `status` adds `tail prints only at
+  its end`.
+- `apply` names the hook template by file when the package is outside your home, where it read
+  `node path-1`, and says the full path prints with `--raw`.
+
+### Fixed
+
+- `hook capabilities` no longer reads stdin, so a terminal or a script with stdin open does not wait
+  on it.
+- A CLI on your `PATH` no longer reads as missing the first time it runs, outside the per-call hooks.
+  macOS can hold the first run of a new file for seconds, and a probe that runs out of time now gets
+  one more try, out of the hook call's own time.
+- `doctor` does not hang on a pipe named like the CLI, and the plugin's `bin/` script does not count
+  as a CLI for its hooks, which never see it.
+- `scripts/ci-like.sh`: a step past its deadline can no longer read as passed when the temp folder is
+  not writable, a `--python` of only a tab or newline is refused, and a failed `mktemp` gives the
+  lock back.
+
+### Project
+
+- `scripts/check-deny-list.py` stops a publish on a name from a list kept outside the repository. It
+  searches the tree, the full history and the built wheel and sdist, and a missing list fails.
+  `scripts/check-privacy.sh` and `scripts/ci-like.sh` run it; on a CI runner, which has no list,
+  `check-privacy.sh` says it skipped.
+- Comments, tests and `docs/DESIGN.md` no longer cite unpublished notes. Two tests that needed a
+  private tool left the tree, so the suite skips 2 instead of 11.
+
 ## [0.5.1]
 
 0.5.1 lets you check that alerts can reach you. The plugin's hooks print nothing when all is well
@@ -670,7 +715,7 @@ the synthetic tests missed (see Fixed).
 ## [0.2.0]
 
 Design first: 8 code-level studies of how other agent tools bound their
-repair loops, two Codex reviews of the design, and the reviews removed every
+repair loops, two reviews of the design, and the reviews removed every
 write surface the first draft had. In 0.2 the tool observes and reports; a
 human decides. The tool never edits a file, never writes to a repository,
 never runs a check, never launches an agent, and never says "verified".

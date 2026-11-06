@@ -1,5 +1,4 @@
-"""Fix round 2 of field milestone F: R2-3 (docs/DESIGN.md 4.2, 4.13.3 FA4;
-.reviews/v0.3/F-dispositions.md, Codex round 2).
+"""R2-3 (docs/DESIGN.md 4.2, 4.13.3 FA4).
 
 The fork-boundary cache of S-m5 is keyed by (inode, size, mtime). A same-size rewrite whose mtime
 was restored leaves that fingerprint unchanged, but the existing prefix digest detects the

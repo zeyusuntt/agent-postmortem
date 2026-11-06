@@ -1,8 +1,8 @@
 """Part FC, P11 (field milestone F): `--help` lists the exit codes of `run`, `rescue plan`,
 `rescue status`, and `watch`, taken exactly from the contract that owns them (docs/DESIGN.md
-4.6/4.8 for `run`, 4.11 for the rescue commands, 4.12 for `watch`; .reviews/v0.3/F-plan.md FC).
+4.6/4.8 for `run`, 4.11 for the rescue commands, 4.12 for `watch`).
 
-The field case (econ): the exit codes of `rescue` were surprising and nothing said what they
+The exit codes of `rescue` were surprising and nothing said what they
 were; `scan --help` already ended in an `exit codes:` epilog. The expected texts below are the
 ones DESIGN 4.8 prints in its "Exit codes in --help" block, copied verbatim; a test pins that
 the block in DESIGN, this file, and the real `--help` output agree.
@@ -108,7 +108,7 @@ def test_p11_the_codes_match_the_contract_for_each_command():
     assert re.findall(r"exit (\d)", RUN) == ["0", "1", "2", "3", "4"]
     assert re.findall(r"exit (\d)", RESCUE_PLAN) == ["1", "2", "4", "0"]
     assert re.findall(r"exit (\d)", RESCUE_STATUS) == ["1", "2", "3", "4", "0"]
-    # 141 (field report 2026-11-03, review round 2): the reader of stdout closed the pipe
+    # 141: the reader of stdout closed the pipe
     assert re.findall(r"exit (\d+)", WATCH) == ["1", "141", "2", "3", "4", "0"]
 
 

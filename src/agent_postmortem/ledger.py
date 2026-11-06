@@ -195,7 +195,7 @@ def call_entries(call: ToolCall, transcript_name: str) -> CallLedger:
                 # single distinct candidate repository of those segments, or
                 # null when they name more than one; else the call's candidate.
                 # Segments of a command the lexer does not place have no known
-                # repository and leave the call's candidate (field report 2026-11-03).
+                # repository and leave the call's candidate.
                 repo = classified.repo
                 if classified.commit.segments and classified.commit.placed:
                     distinct = {seg.repo for seg in classified.commit.segments}
@@ -345,7 +345,7 @@ def _launch_found_unused(run: Run) -> bool:
 
 def unassignable_reason(run: Run, attempt: Attempt) -> str | None:
     """Why generation assignment could not place a workflow attempt (docs/DESIGN.md 4.7, field
-    milestone F P6, fix round 1 S-m4), checked in the order `generation_of` checks:
+    milestone F P6 S-m4), checked in the order `generation_of` checks:
     `no_launch_record` (the run has no generation and the parent holds no launch evidence for
     it), `launch_unusable` (no generation, but a launch was found and not used),
     `launch_times_unusable` (a generation's launch timestamp is missing or the

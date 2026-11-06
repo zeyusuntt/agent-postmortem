@@ -1,4 +1,4 @@
-"""`agent-postmortem doctor`: can alerts reach this session? (field report 2026-11-05, "no way to
+"""`agent-postmortem doctor`: can alerts reach this session? ("no way to
 tell quiet because healthy from quiet because broken"; docs/DESIGN.md 4.14.12). The plugin's normal
 success is silence, and its failures are silent too, so one command says which it is.
 
@@ -11,10 +11,12 @@ import io
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from live_helpers import FAKE_UUID, assistant_text
@@ -22,6 +24,8 @@ from test_worker_notice import PERMISSION, SHORT, Manager, _ago, _hook
 
 from agent_postmortem import doctor, hook_gate, stalls, state, workers
 from agent_postmortem.cli import main
+
+_WRAPPER = Path(__file__).resolve().parent.parent / "plugin" / "bin" / "agent-postmortem"
 
 
 def _versioned(m: Manager, version: str = "2.1.318") -> None:
@@ -281,7 +285,7 @@ def test_the_gate_opens_for_a_test_alert_in_a_session_with_no_gate_state(
     assert "ALERT TEST" in _hook(monkeypatch, capsys, m)
 
 
-# --- review round 1 of this batch ----------------------------------------------------------------
+# --- further cases ----------------------------------------------------------------
 
 
 def test_a_version_string_that_is_no_version_is_not_printed(tmp_path, capsys, monkeypatch):
@@ -450,7 +454,7 @@ def test_test_alert_json_is_json(tmp_path, capsys, monkeypatch, broken):
     assert code == (3 if broken else 0)
 
 
-# --- review round 2 of this batch ----------------------------------------------------------------
+# --- further cases ----------------------------------------------------------------
 
 
 @pytest.mark.parametrize("name", ["settings.json", "settings.local.json"])
@@ -557,7 +561,7 @@ def test_a_job_it_cannot_interpret_is_named(tmp_path, capsys, monkeypatch, body)
     assert "could not be read" in out and "none launched" not in out, out
 
 
-# --- review round 3 of this batch ----------------------------------------------------------------
+# --- further cases ----------------------------------------------------------------
 
 
 def test_project_settings_can_turn_the_plugin_off(tmp_path, capsys, monkeypatch):
@@ -1277,3 +1281,58 @@ def test_a_home_with_no_plugin_and_no_transcripts_is_told_in_that_order_by_json(
     assert main(["doctor", "--json"]) == 3
     rows = {row["name"]: row for row in json.loads(capsys.readouterr().out)["checks"]}
     assert rows["plugin"]["status"] == "FAIL" and rows["transcripts"]["status"] == "WARN"
+
+
+def test_the_wrapper_on_a_sessions_path_is_no_cli_for_the_hooks(tmp_path, capsys, monkeypatch):
+    """plugin/bin is on the Bash tool's PATH and not on a hook's, and it only runs the copy."""
+    m = _healthy(tmp_path, monkeypatch)
+    _no_cli_anywhere(tmp_path, monkeypatch)
+    wrapper = tmp_path / "market" / "plugin" / "bin"
+    shutil.copy(_WRAPPER, _bin_with_cli(wrapper))
+    monkeypatch.setenv("PATH", f"{os.environ['PATH']}{os.pathsep}{wrapper}")
+    code, out, _err = _run(m, tmp_path, capsys, monkeypatch, hook_cli_checked=True)
+    assert code == 3 and "hooks cli" in out, out
+
+
+def test_a_link_to_the_wrapper_elsewhere_is_no_cli_for_the_hooks_either(tmp_path, capsys, monkeypatch):
+    m = _healthy(tmp_path, monkeypatch)
+    _no_cli_anywhere(tmp_path, monkeypatch)
+    elsewhere = tmp_path / "elsewhere-bin"
+    elsewhere.mkdir()
+    (elsewhere / "agent-postmortem").symlink_to(_WRAPPER)
+    monkeypatch.setenv("PATH", f"{os.environ['PATH']}{os.pathsep}{elsewhere}")
+    code, out, _err = _run(m, tmp_path, capsys, monkeypatch, hook_cli_checked=True)
+    assert code == 3 and "hooks cli" in out, out
+
+
+def test_a_fifo_named_like_the_cli_does_not_hang_it(tmp_path, capsys, monkeypatch):
+    fifo = tmp_path / "agent-postmortem"
+    os.mkfifo(fifo)
+    fifo.chmod(0o755)
+    read: list = []
+    thread = threading.Thread(target=lambda: read.append(doctor._is_plugin_wrapper(fifo)), daemon=True)
+    thread.start()
+    thread.join(5)
+    assert read == [False], "opening a pipe with no writer never returns"
+
+
+def test_a_data_directory_link_to_the_wrapper_is_no_cli_for_the_hooks(tmp_path, capsys, monkeypatch):
+    m = _healthy(tmp_path, monkeypatch)
+    _no_cli_anywhere(tmp_path, monkeypatch)
+    folder = tmp_path / "plugins" / "data" / "agent-postmortem-agent-postmortem" / "bin"
+    folder.mkdir(parents=True)
+    (folder / "agent-postmortem").symlink_to(_WRAPPER)
+    code, out, _err = _run(m, tmp_path, capsys, monkeypatch, hook_cli_checked=True)
+    assert code == 3 and "hooks cli" in out, out
+
+
+def test_a_real_cli_beside_an_unrelated_hooks_folder_counts(tmp_path, capsys, monkeypatch):
+    m = _healthy(tmp_path, monkeypatch)
+    _no_cli_anywhere(tmp_path, monkeypatch)
+    project = tmp_path / "project"
+    _bin_with_cli(project / "bin")
+    (project / "hooks").mkdir()
+    (project / "hooks" / "run.sh").write_text("#!/bin/sh\n")
+    monkeypatch.setenv("PATH", f"{os.environ['PATH']}{os.pathsep}{project / 'bin'}")
+    code, out, _err = _run(m, tmp_path, capsys, monkeypatch, hook_cli_checked=True)
+    assert "hooks cli" not in out, out

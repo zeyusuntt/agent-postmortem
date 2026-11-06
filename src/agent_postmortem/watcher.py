@@ -1,7 +1,6 @@
-"""`hook stop-watch`: tells a session that has gone idle (docs/DESIGN.md 4.14.5; field reports
-2026-11-04, Zeyu's direction).
+"""`hook stop-watch`: tells a session that has gone idle (docs/DESIGN.md 4.14.5).
 
-The per-call hook needs a tool call or a prompt. The manager in the field report was idle all
+The per-call hook needs a tool call or a prompt. A manager can be idle all
 night, so a worker's permission prompt would have waited for morning there too. This is a Stop
 hook with `asyncRewake: true`: Claude Code runs it in the background, the session goes on, and
 its exit 2 wakes an idle session with its stderr as a system reminder. Nothing is armed by
@@ -38,7 +37,7 @@ from . import hook_gate, state, workers
 
 POLL_SECONDS = 20.0
 # Set by the run.sh of a plugin whose hooks.json starts this watcher. An older plugin's run.sh sets
-# nothing, so a newer CLI behind it knows no watcher runs (0.5.0 review)
+# nothing, so a newer CLI behind it knows no watcher runs
 PLUGIN_MARK = "AGENT_POSTMORTEM_WATCHER_HOOK"
 WAKE_COOLDOWN_SECONDS = 300.0
 DELIVERED_GRACE_SECONDS = 120.0  # the worker's own message usually wakes the manager first
@@ -132,7 +131,7 @@ class _Watch:
 
     def take_ownership(self) -> bool:
         """False when a watcher that started later already owns the session: this one was slow to
-        get here, and taking its place would end both (0.5.0 review)."""
+        get here, and taking its place would end both."""
         try:
             with state.cache_transaction(self.store_path) as data:
                 record = self.live._store_session(data, self.live.session_key(self.main_path))

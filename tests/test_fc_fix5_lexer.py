@@ -1,6 +1,5 @@
-"""Fix round 5 (W5-1 to W5-6) of field milestone F: focused unit tests of the lexer, the registered
-lookup, the word rewriter and the JSON pass behind `redact.scan_paths` (docs/DESIGN.md 5.1;
-.reviews/v0.3/F-dispositions.md, "Fix round 4 (W) review").
+"""Focused unit tests of the lexer, the registered
+lookup, the word rewriter and the JSON pass behind `redact.scan_paths` (docs/DESIGN.md 5.1).
 
 Every fixture is synthetic.
 """

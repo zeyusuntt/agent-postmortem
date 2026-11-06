@@ -1,9 +1,6 @@
-"""Fix round 10 (W10-1 to W10-6) of field milestone F: the path-start grammar after the round 9
-reviews (docs/DESIGN.md 5.1; .reviews/v0.3/F-dispositions.md, "Fix round 9 review";
-F-W9-review.md and F-codex-r9.md).
+"""The path-start grammar.
 
-Every exact input of the sonnet round 9 review (findings 1, 2, 4) and of Codex round 9
-(findings 1 to 3) runs through the sinks the reviewers list, at share and at local.
+Every exact input found so far runs through the sinks, at share and at local.
 
 Every fixture is synthetic. Private words are the ones a stranger must never read.
 """

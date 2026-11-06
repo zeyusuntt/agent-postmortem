@@ -331,7 +331,7 @@ def test_scan_ranks_and_flags_a_failed_lifecycle_run_as_needing_attention(
     _failed_run(tmp_path, monkeypatch, "b65")
     code, out = _run_cli(capsys, "scan", "--root", str(tmp_path / "root"), "--json")
     rows = json.loads(out)["rows"]
-    # rows are ordered by day and start time (release review of 0.3.0); the parent session starts
+    # rows are ordered by day and start time; the parent session starts
     # before the workflow it launched, so the workflow row is found by kind, not by position
     workflow_rows = [row for row in rows if row["kind"] == "workflow"]
     assert len(workflow_rows) == 1

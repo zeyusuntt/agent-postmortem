@@ -1,5 +1,5 @@
 """N4b-1: the private reader facts never reach report.export_run() (schema 2,
-docs/DESIGN.md 5.3b; .reviews/v0.3/N4-plan.md L1, L15). The byte goldens in
+docs/DESIGN.md 5.3b). The byte goldens in
 tests/test_schema2_goldens.py are the other half of this proof.
 """
 

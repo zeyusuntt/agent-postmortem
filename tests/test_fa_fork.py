@@ -1,5 +1,5 @@
 """Part FA4 (field milestone F, T4): a fork's inherited prefix belongs to the parent
-(docs/DESIGN.md 4.2; .reviews/v0.3/F-plan.md FA4).
+(docs/DESIGN.md 4.2).
 
 The field case: a forked session's transcript starts with a contiguous block of copied
 entries (417 in the real one) whose `sessionId` is the PARENT's. The reader treated them as

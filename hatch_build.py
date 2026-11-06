@@ -1,6 +1,6 @@
 """Hatchling build hook: a wheel built from a git checkout records which commit it came from
 (docs/DESIGN.md 8.1), so `agent-postmortem --version` can say `0.3.5 (live 7edc932,
-2026-10-30)` and a field report can name the build it ran.
+2026-10-30)` and a bug report can name the build it ran.
 
 Nothing is recorded, and the plain version is printed, for a release: a wheel built from the
 sdist (no git there, the release workflow's `uv build`), from the commit tagged `v<version>`, or

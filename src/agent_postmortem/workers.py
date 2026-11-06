@@ -1,5 +1,5 @@
-"""Background workers a session launched, and what their job files say (docs/DESIGN.md 4.14.5;
-field reports 2026-11-04, Zeyu's direction: Claude Code records the state, the plugin tells you).
+"""Background workers a session launched, and what their job files say (docs/DESIGN.md 4.14.5:
+Claude Code records the state, the plugin tells you).
 
 Claude Code keeps a background session's state in `~/.claude/jobs/<short id>/state.json` and
 tells nobody: a worker sat 8.5 hours on a permission prompt while the session that launched it
@@ -365,7 +365,7 @@ def due(told: dict, observed: list[dict], finishes: dict | None = None
     a line is due when the observed identity differs from it and means something. `finishes` holds
     how many times each was told delivering since its last trouble: a worker that wakes on its
     own cron finishes every hour, so its second finish says so and later ones are recorded
-    (field report 2026-11-04)."""
+."""
     lines: list[dict] = []
     quiet: dict[str, str] = {}
     finishes = finishes or {}
@@ -441,7 +441,7 @@ def line(worker: dict) -> str:
         if worker.get("stdin"):
             return (f"{who} stalled: idle {age} on a background command that waits on stdin, and "
                     f"nothing will wake it: claude attach {short}")
-        # field report 2026-11-04: only the command's own files are seen, and it may end yet
+        # only the command's own files are seen, and it may end yet
         return (f"{who} idle {age}: its background command's output has not changed. It may be "
                 f"hung or writing elsewhere, and only its end would wake the worker. Check before "
                 f"stopping it: claude attach {short}")

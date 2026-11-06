@@ -1,4 +1,4 @@
-"""Fix round 6 (W6-1) of field milestone F: hooks/model_allocation_guard.mjs writes its failure
+"""Hooks/model_allocation_guard.mjs writes its failure
 reason at the default share level, so it never echoes a path or a raw error message. The reason
 is a fixed sentence plus the class of the failure from a closed list (docs/DESIGN.md 5.1).
 

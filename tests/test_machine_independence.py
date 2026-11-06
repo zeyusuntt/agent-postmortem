@@ -291,6 +291,32 @@ def test_a_child_that_ignores_being_told_to_stop_does_not_outlive_the_deadline(t
     assert _gone(_pid_from(pidfile))
 
 
+def test_past_the_deadline_with_no_temp_folder_a_step_exiting_0_is_no_pass(tmp_path):
+    """The word that the deadline passed was a file in the temp folder, and writing it could fail."""
+    step = 'trap "exit 0" TERM; while :; do sleep 0.2; done'
+    done = subprocess.run([BASH, str(CI_LIKE), "--run-with-deadline", "1", BASH, "-c", step],
+                          env={**os.environ, "CI_LIKE_GRACE": "1", "TMPDIR": str(tmp_path / "absent")},
+                          capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+    assert done.returncode == 124, (done.stdout, done.stderr)
+
+
+def test_a_deadline_it_could_not_hear_is_refused_before_the_step_runs(tmp_path):
+    """a signal ignored when bash starts cannot be trapped, so an expired step that
+    exits 0 read as a pass."""
+    marker = tmp_path / "ran"
+    inner = (f'trap "" USR1; exec {BASH} "{CI_LIKE}" --run-with-deadline 1 {BASH} -c '
+             f"'echo ran > \"{marker}\"; trap \"exit 0\" TERM; while :; do sleep 0.2; done'")
+    done = subprocess.run([BASH, "-c", inner], env={**os.environ, "CI_LIKE_GRACE": "1"},
+                          capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+    assert done.returncode not in (0, 124), (done.stdout, done.stderr)
+    assert "USR1" in done.stderr and not marker.exists(), (done.stdout, done.stderr)
+
+
+@pytest.mark.parametrize("code", [0, 3, 200])
+def test_a_step_that_ends_in_time_keeps_its_exit_code(code):
+    assert _deadline(30, f"exit {code}").returncode == code
+
+
 def test_what_a_finished_step_left_running_is_stopped(tmp_path):
     """A runner ends a job's processes with the job, and this run goes on to delete the folder."""
     pidfile = tmp_path / "child"
@@ -345,7 +371,8 @@ def _gate(tmp_path, *argv: str, path: str | None = None) -> subprocess.Completed
                           stdin=subprocess.DEVNULL, timeout=60)
 
 
-@pytest.mark.parametrize("versions", ["", "   "], ids=["empty", "blank"])
+@pytest.mark.parametrize("versions", ["", "   ", "\t", "\n", " \t\n "],
+                         ids=["empty", "blank", "a tab", "a newline", "all of them"])
 def test_the_gate_refuses_to_test_no_version_at_all(tmp_path, versions):
     done = _gate(tmp_path, "--python", versions)
     assert done.returncode == 2, (done.stdout, done.stderr)
@@ -364,6 +391,19 @@ def test_the_gate_never_takes_a_lock_it_did_not_make(tmp_path, holder):
     assert done.returncode == 3, (done.stdout, done.stderr)
     assert str(lock) in done.stderr
     assert lock.is_dir()
+
+
+@needs_uv
+def test_a_failed_mktemp_after_the_lock_leaves_no_lock(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("uv", "git", "node", "cat", "rm", "mkdir"):
+        (bin_dir / tool).symlink_to(shutil.which(tool))
+    (bin_dir / "mktemp").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (bin_dir / "mktemp").chmod(0o755)
+    done = _gate(tmp_path, "--python", "3.13", path=str(bin_dir))
+    assert done.returncode == 2, (done.stdout, done.stderr)
+    assert not (tmp_path / "agent-postmortem-ci-like.lock").exists()
 
 
 @needs_uv

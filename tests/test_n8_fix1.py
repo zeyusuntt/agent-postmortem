@@ -1,4 +1,4 @@
-"""N8 fix round 1 (.reviews/v0.3/N8-dispositions.md): S1, S2, S3, C1, C2, S-m1, S-m2, S-m3, S-m5.
+"""N8: S1, S2, S3, C1, C2, S-m1, S-m2, S-m3, S-m5.
 
 S1    the AGENT PATHS cell is `N+` when any attempt's ledger is partial, a missing transcript included.
 S2    `rescue plan` and `rescue status` never say NOTHING TO RESCUE while the 4.13.1 risk population

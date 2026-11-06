@@ -1,6 +1,6 @@
-"""Fix round 9 (W9-7) of field milestone F: the output argparse writes by itself.
+"""The output argparse writes by itself.
 
-`.reviews/tooling/f/inventory_fix9.py` classifies the sites no `print` call shows: the usage line and
+The output inventory classifies the sites no `print` call shows: the usage line and
 the error line of `_Parser.error`, `--help`, and `--version`. Each is proven here: whatever the
 command line holds, none of these outputs echoes it, at share, at local and in the usage and help
 texts at every level. (`tests/test_n3b_parser_errors.py` proves the error line value by value.)

@@ -1,0 +1,18 @@
+#!/bin/sh
+# agent-postmortem for a session's Bash tool, when the plugin is the only install (docs/DESIGN.md 7.1).
+# Claude Code puts a plugin's bin/ at the end of that PATH and not on a hook's, so a CLI of the user's
+# own comes first and run.sh never reaches this. It runs the copy the plugin installs for its hooks,
+# and installs nothing. $CLAUDE_PLUGIN_DATA is not read: in a session's commands it can name another
+# plugin's directory.
+config="${CLAUDE_CONFIG_DIR%%,*}"
+[ -n "$config" ] || config="$HOME/.claude"
+for copy in "$config"/plugins/data/agent-postmortem-agent-postmortem/bin/agent-postmortem \
+    "$config"/plugins/data/agent-postmortem-*/bin/agent-postmortem \
+    "${XDG_STATE_HOME:-$HOME/.local/state}/agent-postmortem/plugin/bin/agent-postmortem"; do
+    # a copy linked back to this script would run it forever
+    if [ -f "$copy" ] && [ -x "$copy" ] && ! [ "$copy" -ef "$0" ]; then
+        exec "$copy" "$@"
+    fi
+done
+echo "agent-postmortem: the plugin has not installed its CLI yet. It does that at session start when uv is on PATH; or run: uv tool install agent-postmortem" >&2
+exit 127

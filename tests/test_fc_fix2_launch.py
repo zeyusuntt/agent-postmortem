@@ -1,5 +1,4 @@
-"""Fix round 2 of field milestone F: R2-4 (docs/DESIGN.md 4.7; .reviews/v0.3/F-dispositions.md,
-Codex round 2).
+"""R2-4 (docs/DESIGN.md 4.7).
 
 `no_launch_record` ("no launch of this run was found in the parent transcript") is for a run whose
 parent snapshot holds no relevant launch evidence. A launch that was found and deliberately not

@@ -1,9 +1,9 @@
-"""Fix round 7 (W7-1, W7-3, W7-5) of field milestone F: an untrusted path hides to the end of its
+"""An untrusted path hides to the end of its
 fragment or line with no early stop, Windows paths are path anchors, and the JSON-span pass is
-linear (docs/DESIGN.md 5.1; .reviews/v0.3/F-dispositions.md, "Fix round 6 and 6b review").
+linear (docs/DESIGN.md 5.1).
 
-Every exact input of Codex round 6 (F-codex-r6.md) and of the sonnet review (F-W6-review.md) runs
-through the sinks the reviewers list, at share and at local, unregistered and registered.
+Every exact input found so far runs through the sinks, at share and at local, unregistered and
+registered.
 
 Every fixture is synthetic. Private words are the ones a stranger must never read.
 """
@@ -44,7 +44,7 @@ def _clean7(r, text, private=PRIVATE7):
             assert word not in out, (sink, word, out)
 
 
-# --- W7-1: no early stop; the exact inputs of Codex round 6 finding 1 --------------------------------
+# --- W7-1: no early stop --------------------------------
 
 CODEX1 = [
     pytest.param("open /srv/Smith; Jones/notes.md now", f"open path-1{HIDDEN}",
@@ -140,7 +140,7 @@ def test_fc7_w1_a_registered_value_without_the_stop_character_is_unchanged(level
     _assert_golden(r, "open /srv/Smith/notes.md", "open path-1")
 
 
-# the separator scan of the sonnet review: every printable ASCII character, four spacings
+# the separator scan: every printable ASCII character, four spacings
 SEPARATORS = [
     c for c in map(chr, range(33, 127)) if c not in "/\\\"'`$"
 ]

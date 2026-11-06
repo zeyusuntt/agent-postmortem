@@ -1,4 +1,4 @@
-"""F2 (M1 review finding 2): a journal `started` entry whose `agentId`,
+"""F2: a journal `started` entry whose `agentId`,
 `key`, `label`, or `phase` is not a string must never crash load_run, the
 text report, or the JSON report. Before this fix, `_valid_agent_id(123, ...)`
 raised TypeError for a non-string agentId, and a non-string key could reach

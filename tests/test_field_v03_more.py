@@ -1,7 +1,5 @@
 """The remaining v0.3 field-triage clauses not yet covered by
-tests/test_field_v03.py (docs/DESIGN.md 4.13, 5.3b; `.reviews/v0.3/
-N0r-decisions.md` D14 to D17; `.reviews/v0.3/N0-codex.txt` finding 16;
-`.reviews/field-feedback-triage-2026-10-01.md`).
+tests/test_field_v03.py (docs/DESIGN.md 4.13, 5.3b).
 
 One test (or one small group sharing a fixture) per clause listed in
 DESIGN.md 4.13.9's "New tests, one per triage clause not yet covered"
@@ -431,7 +429,7 @@ def test_field_live_workflow_attempt_shows_end_no_result(tmp_path, monkeypatch, 
 def test_field_live_workflow_attempt_with_kill_sentinel_shows_end_killed_not_no_result(
     tmp_path, monkeypatch, capsys,
 ):
-    """docs/DESIGN.md 4.7 (N1N2 review finding 4, rejected with a contract
+    """docs/DESIGN.md 4.7 (rejected with a contract
     clarification: the no-result override only ever replaces whatever
     'completed' the transcript-only outcome fallback would otherwise claim).
     A transcript that already ended in the kill sentinel is authoritative

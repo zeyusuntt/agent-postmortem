@@ -1,4 +1,4 @@
-"""N8b K5 (docs/DESIGN.md 4.12, 4.13.8, 5.3b; .reviews/v0.3/N8-plan.md rev 3): watch's START and
+"""N8b K5 (docs/DESIGN.md 4.12, 4.13.8, 5.3b): watch's START and
 OK lines, the poll order, and DONE from lifecycle terminal evidence.
 
 Every test drives `watch` through `cli.main(["watch", ...])` against a run directory laid out

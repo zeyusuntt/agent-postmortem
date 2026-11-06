@@ -1,6 +1,5 @@
 """Tests for Attempt.reported (docs/DESIGN.md section 3/4.1) and the
-claim_contradiction detector (.reviews/proposals/2026-09-v0.2-guided-rescue.md
-section 4.3, unit M1c): a completed workflow attempt whose own self-reported
+claim_contradiction detector: a completed workflow attempt whose own self-reported
 result contradicts the outcome the journal recorded.
 
 Fixture-backed: tests/fixtures/runs/claim_contradiction carries eleven keys,
@@ -352,7 +351,7 @@ def test_text_report_renders_the_finding(capsys):
 # --- report_path is checked only for a run that ended within 72 hours -------
 #
 # A report written to a temp directory is routinely cleaned up days later; on
-# this machine 31 of 50 real claim_contradiction findings were report_path
+# one machine 31 of 50 real claim_contradiction findings were report_path
 # clauses on runs weeks old. The clause is evidence only while the file could
 # still be expected to exist (docs/DESIGN.md 4.3).
 

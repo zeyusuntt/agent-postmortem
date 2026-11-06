@@ -1,4 +1,4 @@
-"""N3b fix round 2, R2-3: the S13 dedupe of identical rendered evidence lines
+"""R2-3: the S13 dedupe of identical rendered evidence lines
 applies at share and local only. Raw keeps today's v0.2 count and order in
 FINDINGS, STORIES and the bug report, with and without --evidence. The
 expected lines below are literals of the v0.2 output for Codex's exact input

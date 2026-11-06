@@ -328,7 +328,7 @@ def test_redactor_no_redact_disables_pseudonyms_too():
 # substituted by the plain Redactor call itself: report_path is checked by
 # structural redact() alone before this fix, and a relative path or an
 # absolute path outside home and /tmp passed through unchanged (docs/
-# DESIGN.md 5.1, M1 review finding 1).
+# DESIGN.md 5.1).
 
 
 def test_pseudonyms_path_gets_its_own_namespace_numbered_in_order():

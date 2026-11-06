@@ -1,8 +1,7 @@
-"""Fix round 5 (W5-1 to W5-6) of field milestone F: what happens after the shell-word scanner
-finds a path (docs/DESIGN.md 5.1; .reviews/v0.3/F-dispositions.md, "Fix round 4 (W) review").
+"""What happens after the shell-word scanner
+finds a path (docs/DESIGN.md 5.1).
 
-Every exact input of the sonnet review (F-W-review.md findings 1 to 8) and of Codex round 4
-(F-codex-r4.md findings 1 to 4) runs through the sinks the reviewers list, at share and at local.
+Every exact input found so far runs through the sinks, at share and at local.
 
 Every fixture is synthetic. Private words are the ones a stranger must never read: `Client`,
 `Secret`, `Neil`, `deep`, `notes.md`.

@@ -110,17 +110,17 @@ def test_plugin_version_equals_package_version():
     assert plugin["version"] == package_version
 
 
-def test_pyproject_plugin_and_package_versions_are_all_0_5_1():
+def test_pyproject_plugin_and_package_versions_are_all_0_5_2():
     """docs/DESIGN.md 7.1's D1: the literal, not just mutual equality --
     a version bump that only kept two of the three in sync would still
     pass a pure-equality check."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert pyproject["project"]["version"] == "0.5.1"
+    assert pyproject["project"]["version"] == "0.5.2"
     plugin = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
-    assert plugin["version"] == "0.5.1"
+    assert plugin["version"] == "0.5.2"
     import agent_postmortem
 
-    assert agent_postmortem.__version__ == "0.5.1"
+    assert agent_postmortem.__version__ == "0.5.2"
 
 
 def test_pyproject_declares_agent_postmortem_as_primary_and_postmortem_as_alias():
@@ -141,11 +141,11 @@ def test_pyproject_declares_agent_postmortem_as_primary_and_postmortem_as_alias(
 # event -> (matcher or None, run.sh subcommand, timeout)
 _EXPECTED_HOOKS = {
     "SessionStart": [(None, "session-start", 90)],
-    # 4.14.5 (field reports 2026-11-04): the idle watcher, in the background; its exit 2 wakes
+    # 4.14.5: the idle watcher, in the background; its exit 2 wakes
     "Stop": [(None, "check", 10), (None, "stop-watch", 1209600)],
     "StopFailure": [(None, "check", 10)],
     "SessionEnd": [(None, "session-end", 20)],
-    # 4.14.5 (field report 2026-11-03, item 5): a background codex exec with no stdin redirect
+    # 4.14.5: a background codex exec with no stdin redirect
     "PreToolUse": [("^Bash$", "pre-bash", 5)],
     # docs/DESIGN.md 7.1 and 4.14.5: the Workflow launch hint, then the Agent/Task one
     "PostToolUse": [("^Workflow$", "workflow-launched", 10),
@@ -251,7 +251,7 @@ def test_rescue_skill_md_has_the_expected_frontmatter():
     assert "evidence" in body.lower()
 
 
-# `.reviews/proposals/2026-09-v0.2-guided-rescue.md` section 8.4's 7-step
+#'s 7-step
 # protocol, one required phrase per step so a rewrite of the skill's wording
 # cannot silently drop a step's own substance.
 _RESCUE_SKILL_STEP_PHRASES = (
@@ -912,3 +912,71 @@ def test_claude_plugin_validate_passes():
         capture_output=True, text=True, cwd=REPO_ROOT, timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# --- macOS can hold the first run of a new file for seconds -------------
+
+
+def _fake_cli_first_probe_stalls(marker_dir: Path) -> str:
+    """Stalls past the probe's deadline the first time only, as a file being scanned does."""
+    return f"""#!/usr/bin/env bash
+if [ "$1" = "hook" ] && [ "$2" = "capabilities" ]; then
+  if [ ! -e "{marker_dir}/seen" ]; then
+    echo seen > "{marker_dir}/seen"
+    sleep 60
+  fi
+  printf '{{"protocol": 1, "version": "0.1.0"}}\\n'
+  exit 0
+fi
+cat >/dev/null
+printf '{{"systemMessage": "the call ran"}}\\n'
+exit 0
+"""
+
+
+def test_a_probe_that_runs_out_of_time_gets_one_more_try(tmp_path):
+    bin_dir = tmp_path / "bin"
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    _write_fake_cli(bin_dir, "agent-postmortem", _fake_cli_first_probe_stalls(markers))
+    result = _run_run_sh("check", path_entries=[str(bin_dir)], plugin_data=tmp_path / "plugin-data",
+                         stdin="{}", timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"systemMessage": "the call ran"}
+
+
+def test_a_probe_answered_wrongly_gets_no_second_try(tmp_path):
+    bin_dir = tmp_path / "bin"
+    calls = tmp_path / "calls"
+    _write_fake_cli(bin_dir, "agent-postmortem",
+                    f'#!/usr/bin/env bash\necho call >> "{calls}"\nprintf "not json\\n"\nexit 0\n')
+    _run_run_sh("check", path_entries=[str(bin_dir)], plugin_data=tmp_path / "plugin-data", stdin="{}")
+    assert calls.read_text(encoding="utf-8").count("call") == 1
+
+
+@pytest.mark.parametrize("second_probe", [0, 1], ids=["answers at once", "takes a second"])
+def test_a_second_probe_comes_out_of_the_calls_own_time(tmp_path, second_probe):
+    """2 s of probes and the call's whole 8 s reached the hook's 10 s, and the
+    outer timeout can stop run.sh before it cleans up."""
+    bin_dir = tmp_path / "bin"
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    _write_fake_cli(bin_dir, "agent-postmortem", f"""#!/usr/bin/env bash
+if [ "$1" = "hook" ] && [ "$2" = "capabilities" ]; then
+  if [ ! -e "{markers}/seen" ]; then
+    echo seen > "{markers}/seen"
+    sleep 60
+  fi
+  sleep {second_probe}
+  printf '{{"protocol": 1, "version": "0.1.0"}}\\n'
+  exit 0
+fi
+echo started > "{markers}/started"
+sleep 60
+""")
+    started = time.monotonic()
+    result = _run_run_sh("check", path_entries=[str(bin_dir)], plugin_data=tmp_path / "plugin-data",
+                         stdin="{}", timeout=30)
+    took = time.monotonic() - started
+    assert result.returncode == 0 and (markers / "started").exists(), result
+    assert took < 10.0, f"{took:.1f} s against the hook's 10 s"

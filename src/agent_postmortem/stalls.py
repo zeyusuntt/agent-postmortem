@@ -1,6 +1,5 @@
-"""Background commands that stopped writing, and sessions idle on them (docs/DESIGN.md 4.14.4;
-field reports 2026-11-03 "a background codex exec hung 23h on stdin and nothing flagged it" and
-"no silent failures").
+"""Background commands that stopped writing, and sessions idle on them (docs/DESIGN.md 4.14.4:
+a background `codex exec` hung 23 h on stdin and nothing flagged it).
 
 Claude Code tells a session when one of its background commands ends, and nothing when one
 never ends: a `codex exec` waiting on a stdin nobody closes sat 26 hours under a worker whose
@@ -20,7 +19,7 @@ import os
 import stat
 from pathlib import Path
 
-# A command whose files have not changed for this long is silent (field report 2026-11-03; the
+# A command whose files have not changed for this long is silent (the
 # per-call hook and status say so, never more than once per command).
 SILENT_SECONDS = 1800.0
 # codex exec prints this line, then reads stdin to its end; under a stdin that never closes it
@@ -65,7 +64,7 @@ def command_state(task_id: str, shell: dict, now: float) -> dict:
     STDIN_SECONDS."""
     newest = None
     stdin_line = False
-    uninspected = False  # review round 1: an output that cannot be seen is no evidence of silence
+    uninspected = False  # an output that cannot be seen is no evidence of silence
     outputs = shell.get("outputs") if isinstance(shell.get("outputs"), list) else []
     for path in outputs:
         if not isinstance(path, str):
@@ -82,7 +81,7 @@ def command_state(task_id: str, shell: dict, now: float) -> dict:
         newest = info.st_mtime if newest is None else max(newest, info.st_mtime)
         last = _last_line(path, info.st_size) if info.st_size > 0 else None
         if last is _UNREADABLE:
-            uninspected = True  # it may hold the stdin line: tried again in 60 s (round 2)
+            uninspected = True  # it may hold the stdin line: tried again in 60 s
         elif last == STDIN_LINE:
             stdin_line = True
     launched = shell.get("ts")
@@ -95,7 +94,7 @@ def command_state(task_id: str, shell: dict, now: float) -> dict:
     # or one that could not be inspected now
     silent_seconds = None if shell.get("unknown_outputs") or not outputs or uninspected \
         else quiet
-    # field report 2026-11-04: under a real timeout, or marked: silence is its normal state, and
+    # under a real timeout, or marked: silence is its normal state, and
     # only the stdin rule still speaks
     by_design = shell.get("quiet") is True
     silent = waiting or (not by_design and silent_seconds is not None
@@ -112,13 +111,14 @@ def command_state(task_id: str, shell: dict, now: float) -> dict:
         if launched is not None and now - launched < 600 and not stdin_line:
             options.append(STDIN_SECONDS - quiet)
     if not silent and uninspected:
-        options.append(60.0)  # a file that could not be inspected now is tried again (round 1)
+        options.append(60.0)  # a file that could not be inspected now is tried again
     return {
         "task_id": task_id,
         "launched_seconds": round(now - launched) if launched is not None else None,
         "silent_seconds": round(silent_seconds) if silent_seconds is not None else None,
         "silent": silent,
         "waiting_on_stdin": waiting,
+        "end_only": shell.get("end_only") if isinstance(shell.get("end_only"), str) else None,
         "recheck_seconds": max(5.0, min(options)) if options else None,
     }
 

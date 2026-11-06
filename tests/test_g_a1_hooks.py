@@ -1,4 +1,4 @@
-"""G-A1 (fix round for G-A, docs/DESIGN.md 7.2): GA-2 a payload `finished` stays hook evidence and
+"""G-A1 (docs/DESIGN.md 7.2): GA-2 a payload `finished` stays hook evidence and
 the digest re-opens the unit when the notification arrives, GA-3 the fingerprint carries the
 current return decision and unreadable tokens, GA-6 an unknown state is not terminal, GA-8 a
 re-opened unit re-evaluates its finished evidence at once, GA-12 the sentinel and nested-launcher

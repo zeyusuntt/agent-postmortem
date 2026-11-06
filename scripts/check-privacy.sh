@@ -11,7 +11,10 @@
 # No flags means all three. Prints one line per hit and exits non-zero if
 # any rule finds something.
 #
+# It then runs scripts/check-deny-list.py over the same parts, unless CI is set.
+#
 # Env:
+#   PUBLIC_DENY_LIST           where the deny list is, when not in its default place.
 #   PUBLIC_NAME, PUBLIC_EMAIL  the expected public commit identity; when set,
 #                              --history also flags any other author name or
 #                              email in `git log --all --format=%an%n%ae`.
@@ -103,6 +106,22 @@ fi
 STATUS=0
 if ! "${PY_RUN[@]}" -m tests.privacy_rules "${PY_ARGS[@]}"; then
     STATUS=1
+fi
+
+# The deny list lives outside the repository (scripts/check-deny-list.py), so a CI runner has no
+# copy: there this says so and goes on. Everywhere else a missing list fails.
+if [ -n "${CI:-}" ]; then
+    echo "deny list: skipped, CI is set and the list is not on this runner; every publish runs scripts/check-deny-list.py first"
+else
+    DENY_ARGS=()
+    [ "$RUN_TREE" -eq 1 ] && DENY_ARGS+=(--tree)
+    [ "$RUN_HISTORY" -eq 1 ] && DENY_ARGS+=(--history)
+    if [ "$RUN_ARTIFACTS" -eq 1 ]; then
+        DENY_ARGS+=(--artifacts "$ARTIFACTS_DIR")
+    fi
+    if ! "${PY_RUN[@]}" "$ROOT_DIR/scripts/check-deny-list.py" "${DENY_ARGS[@]}"; then
+        STATUS=1
+    fi
 fi
 
 exit "$STATUS"

@@ -1,4 +1,4 @@
-"""G-B1 (v0.3.1): the fix round for the G-B review (GB-1, GB-3, GB-4, GB-8, GB-10, GB-12 and the
+"""G-B1 (v0.3.1) (GB-1, GB-3, GB-4, GB-8, GB-10, GB-12 and the
 identity form of corpus invariant 8). One test per accepted behavior; a row that only pins an
 existing behavior (a mutation survivor of the review) carries no xfail mark.
 """

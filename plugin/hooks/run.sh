@@ -33,8 +33,8 @@ export AGENT_POSTMORTEM_WATCHER_HOOK=1
 # under a 5 s hooks.json timeout, so the PATH probe (step 2 below) and the call share 4 s: 1 s
 # for the probe, 3 s for the call. Every other event keeps 2 s for the probe.
 case "$EVENT" in
-    post-tool|prompt-submit|pre-bash) PROBE_DEADLINE=1 ;;
-    *) PROBE_DEADLINE=2 ;;
+    post-tool|prompt-submit|pre-bash) PROBE_DEADLINE=1; PROBE_TRIES="1" ;;
+    *) PROBE_DEADLINE=2; PROBE_TRIES="1 2" ;;
 esac
 
 # docs/DESIGN.md 7.2's D6: nothing below may reach Claude Code's own
@@ -279,11 +279,20 @@ sys.exit(0 if ok else 1)
 # consume the real hook payload run.sh still needs to pass through).
 _probe_path_cli() {
     command -v agent-postmortem >/dev/null 2>&1 || return 1
-    out_file="$(_tmpfile)"
-    _run_with_deadline "$PROBE_DEADLINE" agent-postmortem hook capabilities >"$out_file" 2>/dev/null </dev/null
-    probe_output="$(cat "$out_file" 2>/dev/null)"
-    rm -f "$out_file" 2>/dev/null
-    _looks_like_capabilities_v1 "$probe_output"
+    # macOS can hold the first run of a new file for seconds (1 of 150 on a real machine, up to
+    # 3 s), which is just when a CLI was installed. A probe that ran out of time gets one more try;
+    # one that answered wrongly does not. The file is no longer new by then. Not on a per-call
+    # event: each tool call would pay for a CLI that hangs, and the next call catches up anyway.
+    for probe_attempt in $PROBE_TRIES; do
+        out_file="$(_tmpfile)"
+        _run_with_deadline "$PROBE_DEADLINE" agent-postmortem hook capabilities >"$out_file" 2>/dev/null </dev/null
+        probe_status=$?
+        probe_output="$(cat "$out_file" 2>/dev/null)"
+        rm -f "$out_file" 2>/dev/null
+        _looks_like_capabilities_v1 "$probe_output" && return 0
+        [ "$probe_status" -eq 137 ] || return 1
+    done
+    return 1
 }
 
 # Prints the resolved CLI (a path or "agent-postmortem") on stdout and
@@ -423,7 +432,7 @@ _is_own_link() {
         *) link_target="$(dirname "$1")/$link_target" ;;
     esac
     # physical directories, so a relative target that climbs out with .. is seen as outside
-    # cd -P: resolve each symlink before a following .., as the kernel does (batch 2 review)
+    # cd -P: resolve each symlink before a following .., as the kernel does
     target_dir="$(cd -P "$(dirname "$link_target")" 2>/dev/null && pwd -P)" || return 0
     data_dir="$(cd -P "$DATA_DIR" 2>/dev/null && pwd -P)" || return 0
     case "$target_dir/" in
@@ -533,6 +542,14 @@ esac
 # deadline, instead of waiting out the real 8/18/80s default.
 if [ -n "${AGENT_POSTMORTEM_HOOK_DEADLINE_SECONDS:-}" ]; then
     HOOK_DEADLINE="$AGENT_POSTMORTEM_HOOK_DEADLINE_SECONDS"
+fi
+
+# A probe's second try comes out of the call's own time: the hook's outer timeout does not move, and
+# it could stop this script before it cleans up. SECONDS is whole seconds, hence the one more. Only
+# where a second try exists: on a per-call event SECONDS can reach 1 within a millisecond.
+if [ "$PROBE_TRIES" != "1" ] && [ "$SECONDS" -ge "$PROBE_DEADLINE" ]; then
+    HOOK_DEADLINE=$((HOOK_DEADLINE - (SECONDS - PROBE_DEADLINE + 1)))
+    [ "$HOOK_DEADLINE" -ge 1 ] || HOOK_DEADLINE=1
 fi
 
 out_file="$(_tmpfile)"

@@ -90,7 +90,7 @@ def test_a_call_with_no_codex_imports_nothing_past_json():
     assert loaded == ["agent_postmortem", "agent_postmortem.entry", "agent_postmortem.pre_bash"]
 
 
-# --- review round 1 ------------------------------------------------------------------------------
+# --- further cases ------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -122,7 +122,7 @@ def test_round_one_false_warnings(monkeypatch, capsys, command):
     assert _pre(monkeypatch, capsys, command) == ""
 
 
-# --- review round 2 ------------------------------------------------------------------------------
+# --- further cases ------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -156,7 +156,7 @@ def test_round_two_false_warnings(monkeypatch, capsys, command):
     assert _pre(monkeypatch, capsys, command) == ""
 
 
-# --- review round 3 (each with the reviewer's reproduction) -------------------------------------
+# --- further cases -------------------------------------
 
 
 @pytest.mark.parametrize(

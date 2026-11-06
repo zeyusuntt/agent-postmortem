@@ -537,7 +537,7 @@ def test_scan_shows_dash_for_a_clean_runs_top_detector(tmp_path, capsys):
     )
     # the file's own mtime matches its one entry (2026-09-01), as a finished session's would; a
     # fresh mtime would make the session possibly running, which the --all row now says
-    # (release review of 0.3.0)
+    #
     old = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc).timestamp()
     os.utime(session_path, (old, old))
 

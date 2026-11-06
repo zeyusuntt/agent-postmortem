@@ -1,5 +1,5 @@
 """Part FB1 (field milestone F, T3): `run --here` prefers the caller's own session
-(docs/DESIGN.md 4.8, 4.13.6; .reviews/v0.3/F-plan.md FB1).
+(docs/DESIGN.md 4.8, 4.13.6).
 
 The field case: several sessions worked in one directory, `run --here` showed the one with
 the latest START, which was a short, idle session, not the one the caller was working in.

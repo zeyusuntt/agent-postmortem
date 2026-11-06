@@ -302,7 +302,7 @@ def validate_registry(data: object) -> dict | None:
     """
     if not isinstance(data, dict):
         return None
-    # N3a fix round 2, Finding 6: a plain `!= 1` comparison accepts both
+    # A plain `!= 1` comparison accepts both
     # `True` (bool is an int subclass in Python, and True == 1) and `1.0`
     # (float equality) as version 1. isinstance(x, bool) must be checked
     # before the int check, exactly as for an alias length below.
@@ -395,7 +395,7 @@ def _assign_all(
 # --- initialization state machine (P6) -----------------------------------------
 
 
-# N3a fix round 2 (continued), new Finding 1 (BLOCKER): how many times the
+# How many times the
 # state directory's own strict fsync is attempted before a registration
 # gives up. A transient failure (fails once, succeeds on the next attempt)
 # still succeeds; a persistent failure (fails on every attempt) does not
@@ -404,7 +404,7 @@ _DIRECTORY_FSYNC_ATTEMPTS = 2
 
 
 def _directory_is_durable(directory: Path, *, dir_fd: int | None = None) -> bool:
-    """N3a fix round 2 (continued), new Finding 1 (BLOCKER): a successful
+    """A successful
     read-back of the secret or the registry only proves the namespace
     change is visible right now -- it says nothing about whether the
     directory entry that makes it visible would survive a crash, because
@@ -420,8 +420,8 @@ def _directory_is_durable(directory: Path, *, dir_fd: int | None = None) -> bool
     False only once every attempt has failed (a persistent failure), which
     every caller here treats exactly like any other unavailable outcome:
     positional fallback, the real secret and registry left exactly as they
-    are. dir_fd: see state.lock_state_dir/LockedStateDir (N3a fix round 3,
-    new Finding 1) -- when given, the fsync runs on that verified directory
+    are. dir_fd: see state.lock_state_dir/LockedStateDir -- when given, the fsync runs on that
+    verified directory
     descriptor directly, never a path-based reopen."""
     for _ in range(_DIRECTORY_FSYNC_ATTEMPTS):
         try:
@@ -442,19 +442,18 @@ def _probe_registry(
     schema-level checks are both "the registry is unavailable" to anyone
     outside this module.
 
-    N3a fix round 2, Finding 3: a decode failure also includes
+    A decode failure also includes
     RecursionError -- pathologically nested JSON (for example 10,000 nested
     arrays) is well under MAX_BYTES but exhausts the decoder's recursion
     budget. That must classify the registry as invalid, the same as any
     other decode failure, not propagate out of this function.
 
-    N3a fix round 2, Finding 5: MAX_ENTRIES is also enforced here, on read,
+    MAX_ENTRIES is also enforced here, on read,
     not only by the write path (_write_if_within_bounds): an existing
     registry already over the entry bound -- however small its byte size --
     is unavailable the moment it is read.
 
-    dir_fd: see state.lock_state_dir/LockedStateDir (N3a fix round 3, new
-    Finding 1).
+    dir_fd: see state.lock_state_dir/LockedStateDir.
     """
     probe, raw = state.probe_registry_bytes(
         state.registry_path(directory), max_bytes=MAX_BYTES, dir_fd=dir_fd
@@ -478,7 +477,7 @@ def _initialize_or_probe(
 ) -> tuple[bytes | None, dict | None]:
     """Run P6's table once, assuming the caller already holds
     state.lock_state_dir(directory). dir_fd: see state.lock_state_dir/
-    LockedStateDir (N3a fix round 3, new Finding 1) -- when given, every
+    LockedStateDir -- when given, every
     secret/registry operation below runs relative to that verified
     directory descriptor instead of by path.
 
@@ -495,7 +494,7 @@ def _initialize_or_probe(
     completing the secret -- so a retried call after a mid-flight failure
     converges correctly without any special-cased recovery path.
 
-    N3a fix round 2, Finding 1 (BLOCKER): creating the registry can fail
+    Creating the registry can fail
     strictly after its own commit point (the registry's os.replace) with a
     state.PostCommitVerificationError. That means the file already has its
     new, correct content -- so instead of propagating (which would make the
@@ -504,7 +503,7 @@ def _initialize_or_probe(
     persistent failure): by then the just-committed file reads back through
     the normal P6 rows above, so no separate recovery path is needed.
 
-    N3a fix round 2 (continued), new Finding 1 (BLOCKER): a read-back alone
+    A read-back alone
     is not enough, for the registry or the secret -- it only proves the
     content is visible right now, not that the directory entry making it
     visible would survive a crash. Every path through this function that is
@@ -562,7 +561,7 @@ def _initialize_or_probe(
     # registry_probe is VALID and secret_probe is VALID: normal, but a prior
     # process's successful read-back here cannot distinguish a genuinely
     # durable commit from one whose own directory fsync failed right after
-    # the file became visible (N3a fix round 2 continued, new Finding 1).
+    # the file became visible.
     # Require a fresh, successful directory fsync before trusting this pair
     # enough to hand out stable aliases; a persistent failure here is
     # unavailable, exactly like any invalid file.
@@ -576,10 +575,10 @@ def _write_if_within_bounds(directory: Path, registry: dict, *, dir_fd: int | No
     over MAX_BYTES or MAX_ENTRIES, in which case nothing is written at all
     and this returns False (the caller treats that exactly like any other
     registration failure: fall back, leave the file untouched). May raise
-    state.PostCommitVerificationError (N3a fix round 2, Finding 1): the
+    state.PostCommitVerificationError: the
     write's own commit point already passed; the caller decides whether to
     recover rather than assume nothing changed. dir_fd: see state.
-    lock_state_dir/LockedStateDir (N3a fix round 3, new Finding 1)."""
+    lock_state_dir/LockedStateDir."""
     if count_entries(registry) > MAX_ENTRIES:
         return False
     encoded = _dumps(registry)
@@ -602,10 +601,9 @@ def _finalize_registration(
     return the {(kind, real_id): alias} mapping -- or None if this
     registration cannot complete (a bound would be exceeded, or a
     post-commit recovery attempt itself does not confirm the write).
-    dir_fd: see state.lock_state_dir/LockedStateDir (N3a fix round 3, new
-    Finding 1) -- threaded into every call below.
+    dir_fd: see state.lock_state_dir/LockedStateDir -- threaded into every call below.
 
-    N3a fix round 2, Finding 1 (BLOCKER): a state.PostCommitVerificationError
+    A state.PostCommitVerificationError
     from _write_if_within_bounds means the write's own commit point
     (os.replace) already passed -- aliases.json already holds `updated`.
     Re-probe the registry fresh, under the same lock: if it reads back
@@ -613,7 +611,7 @@ def _finalize_registration(
     written, aliases is still correct and this call succeeded; otherwise
     report failure rather than silently claim nothing changed.
 
-    N3a fix round 2 (continued), new Finding 1 (BLOCKER): content equality
+    Content equality
     alone is not enough either -- it only proves the registry is visible
     with the right bytes right now, not that its directory entry would
     survive a crash. Require a fresh, successful directory fsync too before
@@ -682,7 +680,7 @@ class AliasBook:
         if not self.available:
             return self._assign_positional(kind, real_id)
 
-        # N3a fix round 2, Finding 7: the slow path must apply register()'s
+        # The slow path must apply register()'s
         # own P2 validation before doing anything else. A kind alias() does
         # not recognize, or an id that is not canonical for its kind, is
         # never eligible for a stable alias at all -- sending it on to
@@ -691,7 +689,7 @@ class AliasBook:
         # (a raw KeyError). This is not a registration failure, just an
         # identity that was never going to get a stable alias, so it does
         # not take the lock and does not count against slow_path_count or
-        # degrade the rest of the book (contrast Finding 8 below).
+        # degrade the rest of the book (contrast the slow-path failure below).
         if kind not in KINDS or not is_canonical_id(kind, real_id):
             return self._assign_positional(kind, real_id)
 
@@ -713,13 +711,13 @@ class AliasBook:
             self._aliases[key] = alias
             return alias
         except Exception:
-            # N3a fix round 2, Finding 3: an ordinary bug anywhere in
+            # An ordinary bug anywhere in
             # probing, assignment, or writing (not just the state/disclosure
             # errors this module itself defines) must still fall back,
             # never raise out of alias(). KeyboardInterrupt/SystemExit are
             # not ordinary Exceptions and still propagate.
             #
-            # N3a fix round 2, Finding 8: a genuine slow-path failure means
+            # A genuine slow-path failure means
             # this book can no longer vouch for any alias it already handed
             # out from memory either -- a mix of stable and positional
             # aliases within one render is exactly what P8 forbids. Degrade
@@ -753,7 +751,7 @@ class AliasBook:
         return name
 
     def _degrade_and_assign_positional(self, kind: str, real_id: str) -> str:
-        """N3a fix round 2, Finding 8: flip available to False and replace
+        """Flip available to False and replace
         every alias this book had already handed out from memory with a
         positional one, in the order those identities were first
         registered (self._aliases already holds them in that order, since
@@ -919,7 +917,7 @@ def register(
             if aliases is None:
                 return _fallback_book(canonical)
     except Exception:
-        # N3a fix round 2, Finding 3: fall back on any ordinary exception
+        # Fall back on any ordinary exception
         # from probing, assignment, or writing -- not just the specific
         # state/disclosure error types this module already knew about.
         # require_canonical_id above still raises ValueError before the

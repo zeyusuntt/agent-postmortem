@@ -1,5 +1,5 @@
 """`status` and `scan` say what a blocked background session waits for, whose it is and what
-unblocks it (field reports 2026-11-04; docs/DESIGN.md 4.7, 4.14.4). Also the two false alarms of
+unblocks it (docs/DESIGN.md 4.7, 4.14.4). Also the two false alarms of
 that day: a Monitor asked to arm a deadline, and a deliberately silent wait told as hung.
 
 Synthetic data only: the fake session id, paths under tmp_path, invented worker names.

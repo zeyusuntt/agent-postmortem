@@ -1,5 +1,4 @@
-"""Fix round 1 of field milestone F: S1 and S-m1 (docs/DESIGN.md 5.1, FA1;
-.reviews/v0.3/F-dispositions.md).
+"""S1 and S-m1 (docs/DESIGN.md 5.1, FA1).
 
 S1 (privacy blocker): at share, a token under /tmp, /private/tmp or home that encloses a
 registered value got its structural form, and when that form left the registered value in

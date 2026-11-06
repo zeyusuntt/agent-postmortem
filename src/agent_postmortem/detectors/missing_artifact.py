@@ -129,7 +129,7 @@ def _title(path: str, state: str) -> str:
 
 
 _TEMPLATE_RE = re.compile(r"[<>*{}$]")
-# field report 2026-11-05: `reply-N.json for N 1 to 4` names no one file. A capital placeholder as a
+# `reply-N.json for N 1 to 4` names no one file. A capital placeholder as a
 # whole word of the file name; `README.md`, `Xray-N1.json` and `run-X7.log` are names.
 _PLACEHOLDER_RE = re.compile(r"(?<![A-Za-z0-9])(?:N{1,3}|X{1,3}|K|ID)(?![A-Za-z0-9])")
 

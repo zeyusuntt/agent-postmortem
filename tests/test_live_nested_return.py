@@ -1,5 +1,4 @@
-"""docs/DESIGN.md 4.14.3, 4.14.4, 4.14.8 (field report 2026-10-31 "resumed subagents stay RUNNING
-for 7 days after they returned"): a foreground subagent launched by another subagent of the
+"""docs/DESIGN.md 4.14.3, 4.14.4, 4.14.8: a foreground subagent launched by another subagent of the
 session (meta `parentAgentId`, spawn depth 2) returns into its launcher's transcript, as a plain
 `[Subagent hand-back]` tool_result, and the main transcript gets no notice for it. The live reads
 took a return from the main transcript only, so `status` kept such a child RUNNING forever, the
@@ -320,7 +319,7 @@ def test_an_older_baseline_is_extended_only_over_a_complete_read(tmp_path, monke
     assert _states(main_path)[child] == "returned"
 
 
-# --- review round 1 ------------------------------------------------------------
+# --- further cases ------------------------------------------------------------
 
 
 def test_an_unreadable_launcher_keeps_the_upgrade_pending(tmp_path, monkeypatch, capsys):
@@ -434,7 +433,7 @@ def test_a_meta_file_still_being_written_is_read_again(tmp_path):
     assert follower.foreground_done(child) is not None
 
 
-# --- review round 2 ------------------------------------------------------------
+# --- further cases ------------------------------------------------------------
 
 
 def _week_old_nested_claim(tmp_path, parent: str, child: str) -> Path:
@@ -576,7 +575,7 @@ def test_a_null_tool_use_result_with_the_hand_back_text_is_no_return(tmp_path):
     assert _states(main_path)[child] == "running"
 
 
-# --- review round 3 ------------------------------------------------------------
+# --- further cases ------------------------------------------------------------
 
 
 def _failing_stat_for(target: Path):
@@ -649,7 +648,7 @@ def test_a_present_agent_id_that_is_not_an_id_is_no_return():
     assert live.launch_end(block, {"status": "completed"}) == ("completed", child)
 
 
-# --- review round 4 ------------------------------------------------------------
+# --- further cases ------------------------------------------------------------
 
 
 def test_main_notice_releases_pending_meta(tmp_path, monkeypatch):

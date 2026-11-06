@@ -1,7 +1,7 @@
-"""N4 fix round, Fix A (reader, discovery, population): C1 (an orphan session meta
+"""N4, Fix A (reader, discovery, population): C1 (an orphan session meta
 file), C2 (a read-time decode or I/O failure), S1 (a workflow transcript no journal
 started event names), S2 (an unkeyed workflow attempt in the population), and the
-parent, journal, and meta read guards (.reviews/v0.3/N4-dispositions.md).
+parent, journal, and meta read guards.
 
 Fixtures are synthetic; every wf_ id used here is in tests/synthetic-ids.txt.
 """

@@ -1,8 +1,7 @@
 # agent-postmortem design (v0.1 contract)
 
 Status: binding for every implementer. v0 written 2026-09-16; v0.1 revised
-2026-09-22 after a cross-model design review (43 findings, dispositions in
-section 12). Change this file in the same commit as any code that departs
+2026-09-22 (decisions in section 12). Change this file in the same commit as any code that departs
 from it.
 
 ## 0. The problem, in one paragraph
@@ -631,7 +630,7 @@ applied before any accumulator is updated: events, markers, usage, tool calls,
 the ledger, launches, notifications, TaskStops, kill sentinels, discovery
 diagnostics, identity and version fields, every timestamp (`first_ts`,
 `last_ts`, `started_at`), the undecodable-line counts, and the `--here` cwd set.
-**Hook identity (0.4, field report 2026-10-30 "status and run disagree").** From
+**Hook identity (0.4).** From
 Claude Code 2.1.305 a fork's copied block carries the fork's OWN `sessionId` (2.1.312
 also opens it with a `history-suppression` entry, `cause: fork_inherit`), so the rule
 above finds nothing; only the hook attachments inside the block still name the session
@@ -645,7 +644,7 @@ the file grows); one naming the stem, or none that early, means no hook-identifi
 and the `sessionId` rule's answer stands. Until one of those is known (a file shorter than the
 span with no hook line yet) the answer is unsettled, so `ParentIndex` and the live follower,
 which keep a settled boundary for good, look again as the file grows: a fork read while its
-copied block was still arriving would otherwise stay at boundary 0 (review of batch 1). Lines between the last foreign hook line and the
+copied block was still arriving would otherwise stay at boundary 0. Lines between the last foreign hook line and the
 first own one are the fork's (1 to 3 lines short of the uuid-shared block in the 3 forks
 whose parent is on disk). On the reporting session it removed a launch copied from the
 dispatcher: `status` stopped counting that subagent as running and `run` stopped saying
@@ -794,7 +793,7 @@ attempt and are not affected.
 | permission_denied (G7, v0.3.1) | minor | both | one finding per attempt, the main thread of a session included, that holds at least one anchored `permission_denied` hit (4.13.2): an `is_error` tool result whose text starts with a runtime denial sentence | count, auto_mode, user, permission_rule, safety_check | none |
 | missing_artifact | critical | both | first user message names an absolute path it must write and the path does not exist at scan time; outside allowed roots: info 'unverified' | paths, verified | R-ASSERT-ARTIFACT |
 | attempt_failed | major/minor | both | a workflow attempt's `outcome` is `failed` (major when no later attempt of the key completed -- whether or not one was even tried; minor when a later attempt did complete); a session subagent's `return_state` is `reported_failed` (G1c, v0.3.1: one major finding, title `<label> failed: <cause phrase>`, `launch_result_failed` when a synchronous launch result decided it and `task_notification_failed` when a notification did, `retry_now` `unknown`, `reset_time` null, evidence the deciding result or notification `file:line`; `reported_killed` adds no finding) | cause, retry_now, reset_time | R-USAGE-LIMIT when cause is a usage limit |
-| claim_contradiction | major | workflow | a `completed` attempt's own dict `reported` reports a failure: `tests_failed`/`suite_failed` > 0 (`tests.failed` or `tests.failures` read as `tests_failed`), `ok`/`ready` false, `status` of exactly `failed`, `failure`, `error` or `errored` (`status_failed`; field report 2026-11-05: none of 722 real results here said so, or used the nested form), `blockers_count` > 0, or a set `report_path` absent on disk (a relative path is unverified, never counted; the path is checked only when the run ended at most 72 hours ago or its end time is unknown, since temp reports are cleaned up later); (G3, v0.3.1) or, when no tests, suite, ok, ready or blockers clause holds, a returned result whose top level carries a failure count of its own (`self_reported_failure`) or `blocked: true` (`self_reported_blocked`) | clauses, claims, and for the G3 clauses `self_reported_failure_counts`, `self_reported_blocked` | none |
+| claim_contradiction | major | workflow | a `completed` attempt's own dict `reported` reports a failure: `tests_failed`/`suite_failed` > 0 (`tests.failed` or `tests.failures` read as `tests_failed`), `ok`/`ready` false, `status` of exactly `failed`, `failure`, `error` or `errored` (`status_failed`: none of 722 real results here said so, or used the nested form), `blockers_count` > 0, or a set `report_path` absent on disk (a relative path is unverified, never counted; the path is checked only when the run ended at most 72 hours ago or its end time is unknown, since temp reports are cleaned up later); (G3, v0.3.1) or, when no tests, suite, ok, ready or blockers clause holds, a returned result whose top level carries a failure count of its own (`self_reported_failure`) or `blocked: true` (`self_reported_blocked`) | clauses, claims, and for the G3 clauses `self_reported_failure_counts`, `self_reported_blocked` | none |
 | workflow_failed (v0.3, N2, 4.13.3, implemented in N2) | major | workflow | the run's own `Lifecycle.terminal` is `failed` -- the harness itself reported this workflow failed, independent of whatever the journal says | none | none (section 9 names no rule for this detector) |
 
 **A `reported_killed` child adds no finding, and the session header can stay CLEAN (GA-10, v0.3.1).**
@@ -872,14 +871,13 @@ How the derived inputs are read (N5b):
   any other `OSError`, a `ValueError`, or a path that is not absolute.
   `claim_contradiction` still ignores a relative `report_path` (no finding,
   as before); `missing_artifact`'s grammar only matches absolute paths that start a token and are
-  no template (v0.4, 4.14.2 R4; field report 2026-11-05: a capital placeholder as a whole word of the
+  no template (v0.4, 4.14.2 R4: a capital placeholder as a whole word of the
   file name, `reply-N.json`, `part_X.md`, `item-ID.json`, is one too).
 - A finding whose absence is `absent_now` titles itself "`<path>` is absent
   now; the tool cannot tell whether it existed when the run ended"; one
   whose absence is `unknown` titles itself "`<path>` could not be checked
-  now; the tool cannot tell whether it existed when the run ended". **(0.4,
-  field report 2026-10-30 "removing a merged worktree turns its reports into
-  false alarms")** An `absent_now` path inside one of the attempt's own
+  now; the tool cannot tell whether it existed when the run ended". **(0.4: removing a merged worktree must not turn its reports into
+  false alarms)** An `absent_now` path inside one of the attempt's own
   working directories (`facts.cwds`) that was removed after the run, absent
   now while its parent is present (`severity.removed_dir`, `working_dir_gone`,
   through the same recorded `absence` probe; a path with no existing parent,
@@ -948,20 +946,18 @@ requires. 4.13.2 is the full contract.
 silent_retry's title counts restarts, not attempts: N attempts is N-1
 restarts ("restarted 1 time" for 2 attempts, "restarted 2 times" for 3),
 since the thing a reader cares about is how many times the runtime silently
-started over, not the length of the attempts list (M1 review finding 5).
+started over, not the length of the attempts list.
 
 attempt_failed's cause (4.2) requires the marker fragment to START the last
 assistant entry's own text (`str.startswith`, not membership anywhere in
 it): an ordinary sentence that happens to quote a marker in passing ("I saw
 API Error: Server error mid-response in a log") must come back
-unattributed, never misattributed to that marker's cause (M1 review finding
-3). A usage-limit `reset_time` is captured only when the text starts with
+unattributed, never misattributed to that marker's cause. A usage-limit `reset_time` is captured only when the text starts with
 that marker, and is kept to at most 40 characters drawn from
 `[0-9A-Za-z:., ]`, anything else stripped, so a corrupted or unexpected
 remainder can never ride into the title or exported metrics unfiltered.
 
-attempt_failed's title tail names three states, not two (M1 review finding
-4): no later attempt exists for the key at all ("the key was not retried",
+attempt_failed's title tail names three states, not two: no later attempt exists for the key at all ("the key was not retried",
 major); a later attempt exists but none of them completed ("retried, no
 later attempt completed", major -- a `failed, started, failed` sequence and
 a `failed, started` sequence whose second attempt is still open both land
@@ -1071,7 +1067,7 @@ wins:
    "silence unknown" and the severity is info. **(0.4)** "logged as a user
    interrupt" says what the transcript recorded, as the runtime title does;
    before, a reader of a major unattributed finding could not tell what the
-   mislabel was (field report 2026-09-30).
+   mislabel was.
 
 **(v0.3, N8, 4.13.8) Precursor wording.** For cause `runtime`, and for
 `unattributed` with a known silence, when the attempt's last tool activity
@@ -1108,7 +1104,7 @@ render time.
 transcript named by the journal was unreadable (not merely absent), more
 than 5 percent of a transcript's lines were undecodable, a timestamp
 diagnostic affected an attempt's first or last event, a `started` event
-carried a non-string `key` or `agentId` (M1 review finding 2), or (v0.3, N2,
+carried a non-string `key` or `agentId`, or (v0.3, N2,
 4.13.3, implemented in N2) a workflow run's own `Lifecycle.terminal` is
 `unknown` -- a conflict, an unrecognized launch status, an ambiguous
 launch, an unreadable parent transcript, or an incomplete generation is
@@ -1207,8 +1203,7 @@ do, just no longer through a detector severity.
 
 ### 4.7 Report contract
 
-`run` text output (rewritten by unit M3a; see `.reviews/proposals/
-2026-09-v0.2-guided-rescue.md` section 6.1 for the design this implements)
+`run` text output
 leads with the verdict and the work at risk, not a findings dump:
 
 ```
@@ -1236,7 +1231,7 @@ STORIES (<n>)   details: --verbose   evidence: --evidence
 ```
 
 Header: the verdict word rules are unchanged (4.6). A session run's header
-word is `SESSION`, not `RUN`. **(0.4, field report 2026-10-30)** When the verdict is
+word is `SESSION`, not `RUN`. **(0.4)** When the verdict is
 FAILED because Claude Code reported the workflow failed (4.13.3) and every agent's last
 attempt completed, the account's second sentence is "Claude Code reported the workflow
 failed, though every agent's last attempt completed: check what the workflow itself
@@ -1286,7 +1281,7 @@ parent session." (`human`); "`<U>` were interrupted, cause unattributed."
 `metrics.cause`, first-seen order, each rendered `<phrase> (<count>)`);
 "`<W>` of agent time went to retries and attempts that ended without a result."
 (agent time: `wasted_time`'s own `wasted_seconds` metric, a sum across keys, so parallel attempts each
-count and it is not wall-clock time; field report 2026-11-05; formatted with
+count and it is not wall-clock time; formatted with
 `detectors.base.format_duration`; field milestone F, FA5: omitted at 0, under the
 one wasted-time rule stated at 4.3's `wasted_time` row).
 Session: "session ran `<T>`; `<N>` subagents, `<K>` interrupted (`<U>`
@@ -1301,7 +1296,7 @@ ended without a result." follows when the session's `wasted_seconds` is above 0
 
 WORK AT RISK (N5c-1; plan S4, S11): computed from the write ledger and the
 repository groups (4.13.1), not from `AttemptFacts`. The block is its first line,
-then indented lines in this order. Exact strings (the owner reviews them):
+then indented lines in this order. Exact strings:
 
 - `WORK AT RISK  none: no attempt was killed, failed, or left unfinished.` when
   the risk population is empty (and complete), and `WORK AT RISK  none: the
@@ -1618,7 +1613,7 @@ ALL TIME      <same shape>
   full list: agent-postmortem scan --all
 ```
 
-**The caller's own runs (0.4, field report 2026-10-30 "no way to tell whose or which project's
+**The caller's own runs (0.4 "no way to tell whose or which project's
 run it is").** A triage row's run id is followed by ` (this session)` for the session that
 `CLAUDE_CODE_SESSION_ID` names (its transcript stem) and ` (started by this session)` for a
 workflow directory under that session (`cli._caller_mark`). The marker is computed from the
@@ -1661,25 +1656,25 @@ killed or failed attempt is known to have written a path and the run ended
 within 72 hours (or its end time is unknown); it never names an
 instruction file or `apply`.
 
-**Stalled background sessions (field reports 2026-11-03, item 3 of "no silent failures").** A
+**Stalled background sessions.** A
 worker that never reports is the blind spot of "check a worker when it says done", so NEEDS
 ATTENTION also lists every background session `status`'s BACKGROUND list reads as `stalled`
 (4.14.4, the same rule and the same jobs list, beside the projects root `--root` names), first:
 `<sid>  idle <age>  STALLED  <k> background command(s) silent <q>, waiting on stdin; nothing will
 wake it` or, with no wait on stdin, `... silent <q>; may be hung or writing elsewhere, and only its
-end would wake it` (field report 2026-11-04: a healthy run writing to a folder of its own read as
+end would wake it` (a healthy run writing to a folder of its own read as
 "writes nothing"), next command `agent-postmortem status <sid>`. It is read at scan time, never from
 the scan cache, and regardless of `--since`, since the session is stuck now; `--here` keeps only
 a job whose `cwd` is the caller's directory or under it, and `--kind workflow` lists none. A
 stalled session that is already a candidate is listed once, as STALLED, its own reason kept
-after `(also: ...)` and its caller marker kept (or taken from its session id, review round 2),
+after `(also: ...)` and its caller marker kept (or taken from its session id),
 and leaves LIVE NOW; the header's `N` counts it when it is no scanned run
 (a worker with no subagent and no workflow is none). `scan --json` gains `stalled`, present only when a
 session is stalled (every other scan document keeps its shape): `{session, idle_seconds,
 commands, waiting_on_stdin, silent_seconds, next_command}` per session. The exit
 code is unchanged (`tests/test_stalls.py`).
 
-**Blocked and failed background sessions (field reports 2026-11-04: "NEEDS ATTENTION (0 of 14
+**Blocked and failed background sessions ("NEEDS ATTENTION (0 of 14
 runs) nothing needs attention" with a worker blocked all night).** NEEDS ATTENTION also lists every
 background session whose job is blocked on a person (`permission`, `question`, `waiting-prompt`,
 `error`, `unknown`, 4.14.5) or `failed` within the last day: `<sid>[ (dispatched by this session)]
@@ -1699,7 +1694,7 @@ header is followed by the one line `  nothing needs attention`, so the group is 
 a bare header. When any scanned run was read only in part (`(INCOMPLETE)`, 4.6), that line reads
 `  nothing needs attention in what could be read`, and with or without candidates the group ends
 `  <i> of <N> runs could only be read in part, so it/they may hide more: agent-postmortem scan --all`
-(field report 2026-11-05: `--all` said so and the default view did not; the exit code already did); with no LIVE NOW run the LIVE NOW group is omitted entirely, header
+(`--all` said so and the default view did not; the exit code already did); with no LIVE NOW run the LIVE NOW group is omitted entirely, header
 included.
 
 **LIVE NOW (field milestone F, FB2).** After NEEDS ATTENTION and before LAST 7
@@ -1717,7 +1712,7 @@ of <n>, use --limit N or --all for more` inside its parentheses (`LIVE NOW (<n> 
 LAST 7 DAYS and ALL TIME are the same
 stratified totals `--all` prints, computed over a run's `ended_at` (or
 `started_at` when `ended_at` is `None`, or, for a run with neither, the newest
-modification time of its files: 0.4, field report 2026-10-30, where an undated empty
+modification time of its files: 0.4, where an undated empty
 workflow counted under `SINCE <today>` but not under LAST 7 DAYS, `tests/
 test_scan_totals_window.py`) falling in the window; the
 per-detector breakdown is shown only under `--all`, to keep the default
@@ -2269,7 +2264,7 @@ never-raise contract every other part of this file follows. `apply` and
 
 Section `[[adopted]]` (v0.2, unit M6, section 9): one or more tables, each
 `rule = "R-..."`, `date = "YYYY-MM-DD"`, `target = "..."` (free text: where
-the owner put the rule, never checked against the filesystem). `Config.
+the user put the rule, never checked against the filesystem). `Config.
 adopted` is a tuple of `AdoptedRule(rule, date, target)`. A malformed table,
 a `rule` naming an id `rules.RULES` does not have, or a `date` that does not
 parse as a calendar date, each add one warning and are dropped; every other
@@ -2407,7 +2402,7 @@ After every unit, `BRIEF FOR A RELAUNCH`: which attempts were killed (agent,
 attempt, kill time, silence) and which failed (`attempt_failed`'s own cause,
 `retry_now`, `reset_time`, 4.2/4.3), then the paths the whole run's attempts
 wrote, for a workflow (a relaunch re-runs the workflow), or, for a session, only the rescue
-units' own attempts, after a resume included (0.4, field report 2026-09-30 "rescue plan ...
+units' own attempts, after a resume included (0.4 "rescue plan ...
 attributes other agents' files to it": a session's other subagents were separate tasks, and
 the brief had told a relaunched agent to build on two files they wrote;
 `tests/test_rescue_brief_scope.py`) (every such attempt's confirmed writes, not only the
@@ -2643,9 +2638,7 @@ text line does when applicable).
 
 **The `/rescue` skill** (`plugin/skills/rescue/SKILL.md`, registered the
 same way `/postmortem` is, under the plugin's `skills/` directory): what the
-tool can and cannot do in one paragraph, then the 7-step protocol from
-`.reviews/proposals/2026-09-v0.2-guided-rescue.md` section 8.4 verbatim in
-substance (get the packet with `rescue plan <run-id> --local --evidence`
+tool can and cannot do in one paragraph, then a 7-step protocol (get the packet with `rescue plan <run-id> --local --evidence`
 (N3c; it was `--no-redact` before) and read the line right after the disclosure
 line: stop on `POSSIBLY LIVE`; on `YOUR CURRENT SESSION` (FB3) do not stop but check
 the listed files itself, read-only, before relaunching; on `NOTHING TO RESCUE YET:
@@ -2667,11 +2660,11 @@ workflow run, designed to be the command a Claude Code Monitor runs: it
 prints one line per event a person would act on and nothing otherwise, then
 a terminal DONE or LIMIT line, and exits. Since v0.3 (N8b) it also prints one `START` line
 first and one `OK` line per returned result, so a quiet run is distinguishable from a dead
-watcher. **(field report 2026-11-03)** Every line is flushed as it is printed: a Monitor reads
+watcher. Every line is flushed as it is printed: a Monitor reads
 stdout through a pipe, where Python buffers by block, so an unflushed START, KILL or OK reached
 it only when watch exited at the end of the run (`tests/test_watch_pipe.py` reads START and OK
 through a pipe while the run is open). `watch --session` (4.14.3) flushes the same way. A reader
-that closes the pipe therefore stops watch at the next line (review round 2): both forms exit
+that closes the pipe therefore stops watch at the next line: both forms exit
 141 (128 + SIGPIPE, as a shell reports it) with nothing on stderr, stdout pointed at the null
 device first so the interpreter's own exit flush cannot fail a second time. A reader that stays
 open without reading blocks watch once the pipe is full, as it blocks any writer (the earlier
@@ -2923,16 +2916,15 @@ the same redaction as the text lines.
 `watch` command the moment a workflow is registered, so arming a Monitor
 never depends on a person remembering to; `watch` itself arms nothing.
 
-## 4.13 v0.3 evidence model (contract; implemented in N1 to N8, commits 31a2c24..87b4cca; the N9 synthetic release gate is implemented; the advisory corpus check was run with the owner's authorization; N7 step 3 is deferred past v0.3 by the owner's decision C)
+## 4.13 v0.3 evidence model (contract; implemented in N1 to N8; the N9 synthetic release gate is implemented; N7 step 3 is deferred past v0.3)
 
-Source: `.reviews/proposals/2026-10-01-v0.3-evidence-model.md`, revision 3.
 Each subsection below names the milestone that implements it. Until that
 milestone lands, the behavior described elsewhere in this document (the
 sections above, and section 9) applies unchanged; when a milestone lands it
 edits the older sections it replaces in the same commit, so DESIGN.md never
 carries two true descriptions of the same behavior at once.
 
-### 4.13.1 Write evidence ledger (N4) (implemented in N4) (commits 707aa96..6e0bc61)
+### 4.13.1 Write evidence ledger (N4) (implemented in N4)
 
 Each attempt gets a write ledger, held alongside its `AttemptFacts` (4.1).
 One ledger entry is produced per (tool call, target); a call that names no
@@ -3040,7 +3032,7 @@ grammar below) takes the `repo` of its one entry from the commit segments
 instead of from the call's own candidate: the single distinct candidate (C-10:
 the segment's candidate base with its `-C` options applied) when every commit
 segment yields the same one, else null. Commit segments of a command the lexer does not
-place (`CommitFacts.placed` false, field report 2026-11-03 below) have no known base, so
+place (`CommitFacts.placed` false below) have no known base, so
 such a call keeps its own candidate. A targetless call (rows 2, 3, 6) gives
 exactly one `possible` entry, never one per repository. The ledger's `reasons` are the closed codes below, each when
 its producer fired, deduplicated, in the fixed order of that list; a ledger
@@ -3611,7 +3603,7 @@ call counts no id at all, even when another commit segment qualifies.
 Everything else is an ordinary segment. No substring fallback: `commit_ids` is
 empty for every call that is not a commit call.
 
-**(field report 2026-11-03, "watch under Monitor delivers nothing until the run ends", its
+**("watch under Monitor delivers nothing until the run ends", its
 COMMITS part)** The call-level placement requirement above is replaced by a judgment of each
 segment, the way FA6 (below) judges presence, because an assignment or an expansion in another
 segment hid a literal commit: the field commit ended `L=logs/x && ... > $L/a.log && SKIP=mypy
@@ -3624,13 +3616,13 @@ skipped, and makes the call count no id when its words spell `commit` and its fi
 not an ordinary program (a literal name other than `git`, `mise`, `env`, `bash`, `sh` and
 the opaque first words: `echo commit > $L/note` is skipped, `git commit -m "$MSG"` and `$GIT
 commit` poison), or when it holds a substitution, whatever its first word, and that text
-spells `commit` (review round 2: `echo "$(git commit -q -m b)"` poisons). A substitution is a
+spells `commit` (`echo "$(git commit -q -m b)"` poisons). A substitution is a
 `$(` or backtick in a word outside single quotes and not escaped, a `<(` or `>(` outside any
 quotes, a `$(` or backtick in a redirect target (kept without its quotes, so counted even when
 single-quoted), or the lexer's `command_substitution`, `process_substitution` or `paren`
-reason; `echo '$(git commit -q)'` is data (review round 3). An ANSI-C quote `$'...'` counts
+reason; `echo '$(git commit -q)'` is data. An ANSI-C quote `$'...'` counts
 as an opener, since the lexer does not model it (it ends `$'can\'t'` at the escaped quote,
-where bash does not) and nothing after it can be judged (review round 4). A heredoc with an unquoted
+where bash does not) and nothing after it can be judged. A heredoc with an unquoted
 delimiter whose body has a `$(` or backtick and spells `commit` poisons the call from every
 segment, reason or none, since the lexer gives the body's reason to the segment it is building
 when the body is read (the next one in `cat <<EOF | cat`), and quotes in the body stop
@@ -3649,7 +3641,7 @@ now). Every segment of a command the lexer does not place carries `repo` null, e
 absolute `-C` or a `cd` inside a wrapper (the lexer places no base there), and
 `CommitFacts.placed` false; the ledger keeps the call's own candidate (above). A commit hidden in an opaque segment that does
 not spell `commit` (`$CMD`, a script) is not counted, as a script's commit is not for a placed
-command: the count stays a lower bound. On this machine's 30 days of transcripts (5,838 calls
+command: the count stays a lower bound. On one machine's 30 days of transcripts (5,838 calls
 that spell `commit`) 79 calls gain their ids, none loses one, and the calls whose output has a
 summary line but read no id go from 97 to 18 (an expansion in the commit itself, a quiet flag,
 no literal commit segment). `tests/test_e48_commit_ids_behind_a_prefix.py`; the E48 rows of
@@ -3701,7 +3693,7 @@ and `false && git commit -q -m x; true` both complete OK without the commit havi
 run), so presence is all that is claimed, and every public sentence says
 "contains a commit command", never "ran" or "printed". One level of
 `bash -c STRING` is searched as above, the wrapper segment and the inner
-candidate each judged the same way. **(0.4, field report 2026-10-30 "COMMITS 0 for an
+candidate each judged the same way. **(0.4 "COMMITS 0 for an
 agent that committed")** A run-as-is prefix leaves the segment a commit command:
 leading `NAME=VALUE` words, `env` followed by `NAME=VALUE` words only, and `mise exec|x
 [tool@version ...] --` (`commands._run_as_is_command`; a `NAME=VALUE` word is an assignment only at
@@ -3712,7 +3704,7 @@ and every other opaque first word (`eval`, `time`, `nohup`) still read as no com
 field commit was `SKIP=mypy mise exec -- git commit -m ...` followed by `git log -1
 --format='%h %s'`, so it printed no summary line: its agent read `COMMITS 0` and now
 reads `?`. A1's id grammar was left unchanged then (such a segment stayed unplaced, since an
-assignment can name another repository); since the field report of 2026-11-03 it reads the id
+assignment can name another repository); it reads the id
 behind any run-as-is prefix and counts none when a word assigns a `GIT_` variable (above). The attempt fact is
 `commit_commands_without_id` (4.1, 4.2): the count of shell CALLS, never
 segments, with completion `completed_ok` that contain at least one such segment and
@@ -3722,8 +3714,7 @@ counts none).
 
 What an id means: a commit id in `AttemptFacts.commits` is an **unverified,
 summary-shaped output line** selected from a completed result whose command
-text contains a qualifying commit segment (judged per segment since the field report of
-2026-11-03, above). It is not attributed to
+text contains a qualifying commit segment (judged per segment, above). It is not attributed to
 git, and nothing more is claimed: not that the commit segment ran, not that
 it succeeded. An id can be false in every way text-only evidence allows: the
 commit segment may never have run (short-circuited by `&&` or `||`, or
@@ -3741,7 +3732,7 @@ appeared in the result of a command whose text contains a commit".
 `repo` of a commit segment is the candidate of `repo` resolution above (C-10:
 the segment's candidate base with its `-C` options applied in order).
 
-### 4.13.2 Marker provenance (N1) (implemented in N1) (commits 31a2c24..7f3a643)
+### 4.13.2 Marker provenance (N1) (implemented in N1)
 
 The reader builds typed `MarkerHit` records while parsing, after tool calls
 are paired (4.2):
@@ -3846,7 +3837,7 @@ for the negative case, no finding. Plus one entry with two `tool_result`
 blocks, one positive and one negative, yielding two hits with distinct
 `tool_use_id`.
 
-### 4.13.3 Run lifecycle (N1 parent index, N2 lifecycle) (implemented in N1 and N2) (commits 31a2c24..7f3a643)
+### 4.13.3 Run lifecycle (N1 parent index, N2 lifecycle) (implemented in N1 and N2)
 
 **Launches and results (N1).** (implemented in N1.) A launch is an assistant `tool_use` block
 with name `Workflow` and a string `id`. Its result is the `tool_result`
@@ -4016,9 +4007,7 @@ when activity is recent. An attempt still open in a workflow journal reads
 END `no result` instead of whatever `completed` the transcript-only outcome
 fallback would otherwise claim (4.7), never a transcript that already ended
 in the kill sentinel: that is authoritative evidence of a kill and keeps
-reading `killed`, not overridden to `no result` **(fixed after cross-model
-review, N1N2 review finding 4: this summary sentence previously read as an
-unconditional override, which 4.7's own fuller wording never claimed)**.
+reading `killed`, not overridden to `no result`.
 
 **Parent index cache (N1).** (implemented in N1.) Per process, keyed by the parent path. The
 index stores: the byte offset just after the last newline it parsed
@@ -4041,8 +4030,7 @@ build (the initial build is not a rebuild). N1 acceptance tests: a
 suffix-only append parses only the new lines; a rewrite inside the prefix
 followed by an append rebuilds; a partial final line is not parsed until its
 newline arrives; truncation rebuilds; replacement (new inode) rebuilds; a
-same-size rewrite rebuilds. **(fixed after cross-model review, N1N2 review
-findings 1/7)** The index also carries `inspection_complete` (the Run
+same-size rewrite rebuilds. The index also carries `inspection_complete` (the Run
 lifecycle paragraph's own completeness flag below), updated inside this
 same incremental pass rather than by a second, independent full read: a
 per-line decode failure or `_entry_shape_ok` violation flips it False as
@@ -4054,7 +4042,7 @@ the index's prior state otherwise untouched, exactly like the existing
 itself never raises for a parent read or decode failure. `_reset_state`
 resets `inspection_complete` to True before a rebuild-from-zero reparses
 the whole file, the same way it resets the other per-content accumulators.
-**(fixed after cross-model review round 2, new finding 1)** A read failure
+A read failure
 in any of those same steps also sets an internal, non-public flag that
 forces the *next* access to do a full reinspection from byte 0, regardless
 of what the ordinary inode/size/prefix-hash comparison above would
@@ -4069,7 +4057,7 @@ checked) stays separate from this transient I/O-availability flag: the flag
 clears the moment a reinspection's own read succeeds, and
 `inspection_complete` is restored to True only once that full reinspection
 has checked every retained line again and found nothing wrong.
-**(fixed after cross-model review round 2, original finding 1)** Per
+Per
 section 2's "a bad line becomes a diagnostic string on the Run, never an
 exception", every line that flips `inspection_complete` False also records
 one stable diagnostic on the index's own `diagnostics` (folded into the
@@ -4098,7 +4086,7 @@ notification; two conflicting notifications. N2 asserts the complete
 zero-generation legacy run (resolved and unresolved journal), an older
 failed generation followed by an unfinished resume, and a session (null).
 
-### 4.13.4 Severity inputs and rule table (N5) (implemented in N5) (commits fdcdc37..73149a6)
+### 4.13.4 Severity inputs and rule table (N5) (implemented in N5)
 
 Severity becomes a function of recorded inputs, each with an explicit
 unknown value, never a function of which detector fired alone. Inputs
@@ -4193,7 +4181,7 @@ every detector's own severity inputs and rule alongside its existing row
 (`severity.py` holds the same rows in code); tests pin each row and each
 `unknown` branch, and a mutation script kills a change to any of them.
 
-### 4.13.5 Disclosure levels (N3) (implemented in N3) (commits 2082790..f7f5ae9)
+### 4.13.5 Disclosure levels (N3) (implemented in N3)
 
 | Level | Names | Paths | Evidence | Structural redaction |
 |---|---|---|---|---|
@@ -4373,7 +4361,11 @@ every detector's own severity inputs and rule alongside its existing row
   the same rule. A path the tool itself knows (the config file and each
   `[[repos]]` path in a config warning, an `OSError`'s file name in the
   state-file error, the hook template path) is redacted as one value before
-  it is joined into the sentence, so a space in it leaks no tail. For free
+  it is joined into the sentence, so a space in it leaks no tail. One exception:
+  `apply`'s hook template outside home prints below `raw` as
+  `.../<file name>`, not `path-N`, since it is this package's own file and
+  `node path-1` tells no one what to register, with a line saying the full path
+  prints with `--raw`. For free
   text (a transcript excerpt at `local`, exception text, a rescue excerpt, a
   declared check at `local`) the one scanner of 5.1 finds a path inside a
   complete shell word (quotes, escapes, a backslash-newline continuation,
@@ -4396,7 +4388,7 @@ every detector's own severity inputs and rule alongside its existing row
   (exit 1) print fixed text around spans of what the user supplied (`path-N`,
   `uuid:<last 4>`, `agent-N`, `value-N`, numbered across one command) and
   say what was expected, at `share` and `local`; at `raw` they print as v0.2
-  did. **(0.4, field report 2026-09-30)** "no run matches" repeats a typed
+  did. **(0.4)** "no run matches" repeats a typed
   argument that has a public run id's shape (`wf_...`, `s_...`, which `scan`
   prints) as typed, since a span the person never typed (`value-1`) left them
   unsure what was looked up, and it ends with the line `next: agent-postmortem
@@ -4473,7 +4465,7 @@ every detector's own severity inputs and rule alongside its existing row
   directory, never takes the lock, and never prints the diagnostic, so its
   text (and the README block, 8.2) is the same on every machine.
 
-### 4.13.6 Identity (N6) (implemented in N6) (commits 9f0cdec..6d930f8)
+### 4.13.6 Identity (N6) (implemented in N6)
 
 - `scan` rows: a project column, rendered `project:<alias>` in `share`
   (4.13.5's registry alias, at least 12 hex), the real directory name in
@@ -4531,7 +4523,7 @@ every detector's own severity inputs and rule alongside its existing row
   candidate run ids; an alias matching no run is exit 2, the same as any
   other unresolved `RUN_ID`.
 
-### 4.13.7 Performance (N7) (implemented in N7, step 1 only; step 3 deferred past v0.3 by the owner's decision C, 2026-10-05) (commits 67f231a..2975843)
+### 4.13.7 Performance (N7) (implemented in N7, step 1 only; step 3 deferred past v0.3)
 
 Measured under the profiler on this machine: `scan` over 197 runs took
 22.6 s, of which 14.4 s was transcript parsing and 4.5 s was detector
@@ -4549,10 +4541,10 @@ discovery repeated once per run. Steps, in order:
    to see whether step 3 is still needed.
 3. Implemented in v0.4 as 4.14.9's run cache, keyed on exact file signatures rather than the
    72-hour terminal-run rule below, because runs touched in the last 72 hours cost 43 of 97.5 s
-   of CPU on the reference machine. Deferred past v0.3 (owner's decision C in N7-plan.md, 2026-10-05: a cold
+   of CPU on the reference machine. Deferred past v0.3 (a cold
    scan of 238 real runs takes about 26 s, but a safe cache is a full
    subsystem and a defect in it shows a stale verdict without any sign; the
-   targeted cold-path work C names, such as parsing a parent transcript once
+   targeted cold-path work, such as parsing a parent transcript once
    instead of twice, is a follow-up after the v0.3 field round). The design
    it would follow: only if `scan` is still above 8 s cold after steps 1 and
    2, add a semantic run cache, separate from hook state (7.5) with its own lock,
@@ -4571,7 +4563,7 @@ on a warm `scan` is 0 for every cached run) rather than wall-clock seconds;
 wall-clock time is reported by the corpus check (4.13.9) but never gates a
 test.
 
-### 4.13.8 Smaller items (N8) (implemented in N8) (commits 2672ecc..87b4cca)
+### 4.13.8 Smaller items (N8) (implemented in N8)
 
 - `rescue plan` (4.11): units and the relaunch brief are built from the
   unit's own ledger (4.13.1); `STEPS` names no `<none>` command; the
@@ -4611,7 +4603,7 @@ test.
   a `python subprocess` or `perl alarm` form instead); a new target kind
   `"agent prompt"`; `rules propose --run <id>` scopes proposal to one run.
 
-### 4.13.9 Verification (synthetic release gate implemented in N9; the advisory corpus check run with the owner's authorization on 2026-10-04 and 2026-10-05) (commits f58f8b2..7fa6516)
+### 4.13.9 Verification (synthetic release gate implemented in N9; the advisory corpus check run on 2026-10-04 and 2026-10-05)
 
 Release gate: synthetic fixtures and deterministic fake-git boundary
 tests. Each field-verified case from the triage becomes a fixture named
@@ -4701,7 +4693,7 @@ fixture is named after -- not a fixture-setup error -- is what fails; a
 fixture that errors during setup rather than failing its own assertion
 does not count as acceptance evidence for that fixture.
 
-**The advisory corpus check.** A private corpus check over this machine's
+**The advisory corpus check.** A private corpus check over one machine's
 own runs, asserting the governing invariants: no detector hit from payload
 (4.13.2); no `CLEAN` run whose newest generation has an accepted failed
 notification (4.13.3); no "none" `WORK AT RISK` line with a `partial`
@@ -4743,13 +4735,13 @@ release gate.
 | Partial ledgers everywhere make the output noisy | the line says what the person can do in one command; the corpus check reports how often each reason fires so the grammar can be extended where it pays |
 | Schema 3 breaks consumers | the `schema` key; the only known consumer is this repo's own skills and tests, updated in the same milestone |
 
-### 4.13.11 Contract corrections from review round 3 (binding; each milestone folds its items into the sections they name when it lands) (folded: N3 in N3c, N4 in N4, N5 in N5, N6 in N6, N7 step 1 in N7; N7 step 3 and its warm-scan test are deferred past v0.3 by the owner's decision C)
+### 4.13.11 Contract corrections (binding; each milestone folds its items into the sections they name when it lands) (folded: N3 in N3c, N4 in N4, N5 in N5, N6 in N6, N7 step 1 in N7; N7 step 3 and its warm-scan test are deferred past v0.3)
 
-These items answer `.reviews/v0.3/N0r-codex.txt` findings 6 to 14. Where
+Where
 an item and any earlier sentence of this document disagree (including
 4.11, 4.12, 4.13, and 5.3b), the item wins until its milestone folds it in.
 
-**N4, ledger (findings 6, 7).** (Folded into 4.13.1 in N4, commits 707aa96..6e0bc61.)
+**N4, ledger.** (Folded into 4.13.1 in N4.)
 - The simple write form requires the redirect: `simple := WORD+ redirect`.
   A command with no redirect, no final `| tee`, and none of the other named
   forms is `opaque_command`.
@@ -4773,7 +4765,7 @@ an item and any earlier sentence of this document disagree (including
   and the timestamps are strictly increasing in launch-line order, every
   attempt of the run is unassignable (reason `unassignable_attempt`).
 
-**N3, disclosure (findings 8, 9).** (Folded into 4.13.5 and 7.5 in N3c, commits 2082790..f7f5ae9;
+**N3, disclosure.** (Folded into 4.13.5 and 7.5 in N3c;
 kept here as the record of the correction.)
 - Aliases come from a persistent registry `aliases.json` in the state
   directory (mode 0600, written under the state lock, beside the
@@ -4792,7 +4784,7 @@ kept here as the record of the correction.)
 - In `local`, an evidence or path value outside both the repository and
   the home directory renders as `path-N`.
 
-**N5, schema and rendering (findings 10, 11, 12, 14).** (Folded into 4.13.4, 4.7, 4.11, and 5.3b in N5, commits fdcdc37..73149a6.)
+**N5, schema and rendering.** (Folded into 4.13.4, 4.7, 4.11, and 5.3b in N5.)
 - Schema 3 types: `finished` is `bool | null` on every row type (null for a
   session); workflow `activity` is `recent | stale | unknown`;
   `agent_type` is `str | null`; `lifecycle.generations` is `int >= 0`;
@@ -4814,7 +4806,7 @@ kept here as the record of the correction.)
   the real value (a planted label, phase title, repo path, raw agent id, and
   session UUID) is absent. A sink that emits nothing fails the test.
 
-**N6, identity (finding 14).** (Folded into 4.13.6 in N6, commits 9f0cdec..6d930f8.) Containment for `--here`: `caller_cwd` is
+**N6, identity.** (Folded into 4.13.6 in N6.) Containment for `--here`: `caller_cwd` is
 the process's working directory; each `candidate_cwd` is one value from
 the run's cwd set (4.13.6). Both are made absolute and normalized with
 `os.path.normpath`; the run matches when any candidate satisfies
@@ -4832,16 +4824,13 @@ set holds `/` or the home directory matches every caller below it; that is the
 rule as written here, and whether it should stay is a product question, not
 something N6 changes.
 
-**N7, performance (finding 13).** (Folded into 4.13.7 in N7 step 1, commits 67f231a..2975843; step 3 and its `RUN_CACHE_ENABLED` flag are deferred past v0.3 by the owner's decision C (N7-plan.md, 2026-10-05): no `agent_postmortem.perf` module or flag exists, and the warm-scan test was held as one strict xfail that names that decision. v0.4 implements step 3 as 4.14.9's run cache, with `--no-cache` in place of a flag; the warm-scan test passes unmarked and no strict xfail remains.) The warm-scan cache test is to run only when
-`agent_postmortem.perf.RUN_CACHE_ENABLED` is true (N7 sets it only if it
-builds the step-3 cache) and is skipped otherwise; step 3 is decided by the
-measurement N7 records. The detector-discovery count test calls
+**N7, performance.** (Folded into 4.13.7 in N7 step 1. v0.4 implements step 3 as 4.14.9's run cache, with `--no-cache` to turn it off; the warm-scan test passes unmarked.) The detector-discovery count test calls
 `detectors._reset_registry()` (a documented test hook) before counting.
 
 ## 4.14 Live mode (v0.4, branch `live`; contract, implemented in the commits that name it)
 
 Why: an after-the-fact check may never be run, and the run that needed it has already used the
-bad result. Phase 0 (`.reviews/live/CORPUS.md`, outside the public tree) measured 170 failure
+bad result. Phase 0 measured 170 failure
 episodes on one machine: Claude Code 2.1.314 surfaces 101 of them by itself (stall restarts,
 usage-limit and API-error stops, background-session states), and 68 of the other 69 can be
 settled at the moment an agent returns. Live mode is that check, delivered to the main agent
@@ -4882,7 +4871,7 @@ line names no evidence location of its own: its next step is the read-only comma
 | R4 `output_missing_at_return` | same | `missing_artifact`'s path from the subagent's first prompt does not exist at return. (v0.4) The shared path rule requires the path to start a token and skips templates (`<case>`, `{id}`, `*`, `$VAR`): on the corpus, 130 of 165 matches were a slash inside a relative path or a placeholder. A period that ends the sentence right after the path no longer hides it (the rule had missed "write findings to /tmp/x/review.md."); the `codex_write_denied` fixture's prompt is such a sentence, so its run gains one info `missing_artifact` finding in the goldens | `CLAIM` |
 | R5 `unexplained_kill` | a session subagent's transcript ends in the kill marker and nothing in the session explains it | 4.4's `parent_stop` and `human` rules both fail (no TaskStop, no session interrupt within 30 s); the native notice and the marker both read as a user stop (#84346) | `KILL` |
 | R6 `left_changes` | a killed, stalled or failed attempt, any kind, whose ledger (4.13.1) names written paths or commits | the attempt's own ledger, counted, never listed in share | second line of `KILL` / `FAILED` |
-| R7 (not built as a wait notice) | `Stop` in a headless session while `background_tasks` lists running work | measured, not needed: on 2.1.314 a `claude -p` run whose main agent ends its turn right after launching a background subagent stays alive and receives that subagent's notification on its own (fault injection, `.reviews/live/RESULTS.md`), so a sentence telling it to wait repeats native behavior (4.14.6 rule 1). Work that never ends gets no notification at all: the Stop-time deadline request (4.14.5, field report 2026-11-03) covers a running shell command | none (`DEADLINE` from 4.14.5) |
+| R7 (not built as a wait notice) | `Stop` in a headless session while `background_tasks` lists running work | measured, not needed: on 2.1.314 a `claude -p` run whose main agent ends its turn right after launching a background subagent stays alive and receives that subagent's notification on its own (fault injection), so a sentence telling it to wait repeats native behavior (4.14.6 rule 1). Work that never ends gets no notification at all: the Stop-time deadline request (4.14.5) covers a running shell command | none (`DEADLINE` from 4.14.5) |
 
 Not built, with the measurement that decided it: a free-text claim check on a subagent's report
 ("tests pass", "committed", "wrote X") held on hand review in at most 2 of 52 regex hits over
@@ -4929,7 +4918,7 @@ LIMIT  <hours>h reached.
   missing or `completed` status is a return, `failed`, `killed` or `stopped` an ending. The main transcript is scanned for three line
   kinds only (an Agent or Workflow `tool_use`, its `tool_result`, a task notification), found by
   a byte test before any JSON parse.
-- Nested children (0.4, field report 2026-10-31 "resumed subagents stay RUNNING for 7 days
+- Nested children (0.4 "resumed subagents stay RUNNING for 7 days
   after they returned": 4 rows `RUNNING ... quiet 7d` while `run` read all 16 completed). A
   foreground child launched by another subagent of the session returns into that launcher's
   transcript, as a plain `tool_result` starting `[Subagent hand-back]` (`markers.SUBAGENT_HAND_BACK`)
@@ -5045,14 +5034,14 @@ BACKGROUND <m> sessions on this machine: <n> working, <n> stalled, <n> blocked, 
   BLOCKED      <n> more in other sessions, for over 3 days (--json lists them)
 ```
 
-Blocked rows (field reports 2026-11-04). `<why>` is the class's words (4.14.5): `waiting for a
+Blocked rows. `<why>` is the class's words (4.14.5): `waiting for a
 permission approval[ (approve <tool>)]`, `waiting for an answer`, `waits for its first prompt`,
 `stopped on an API error`, `the reason is not recorded`. A blocked job that delivered counts as
 `delivered` in the BACKGROUND line and has its own row, since a finished worker waiting on a
 decision read the same as one stuck all night. `dispatched by this session` comes from the
 session's own launches (`MainFacts.workers`, by the job's `createdAt`), and those rows come first.
 Another session's blocked row older than 72 h folds into the count. In a session that is itself a
-background worker (field report 2026-11-04: "BACKGROUND 25 sessions" in a worker that owns none of
+background worker ("BACKGROUND 25 sessions" in a worker that owns none of
 them) the text lists only the rows it launched and the count line ends `; this session launched
 <n>, scan lists the rest`, unless a `claude --bg` call's result named fewer ids than it launched, its
 call aged out unanswered, or it is past the 128-launch bound, when any row may be its own and all
@@ -5062,7 +5051,7 @@ id, with the `claude attach` or `claude logs` that helps, are shown from `--loca
 own words are shown at no level. `--json` adds `class` and `mine` to each listed entry, and `label`
 and `short` from `--local`.
 
-Subagent notices (field report 2026-11-04: a subagent read RUNNING after the harness said it
+Subagent notices (a subagent read RUNNING after the harness said it
 finished). A subagent resumed by a message ends with a notice naming only its task, no tool-use id,
 and the live read now takes that as its latest end when the task is a subagent this session launched
 (a queue or `task-notification` entry whose whole text is the one envelope, as ever). A user entry
@@ -5071,7 +5060,7 @@ takes such an ending from before the upgrade into the baseline. Without it the
 first notice stood, which the transcript had grown past, so it read as resumed and running. `run`'s
 evidence model keeps its own rule (4.13.3): a notice with no tool-use id is not accepted there.
 
-Workflows (0.4, field report 2026-10-30 "status lists every workflow with a watch hint and no
+Workflows (0.4 "status lists every workflow with a watch hint and no
 verdict": 27 lines for one session, ended ones included). A workflow's end is read from its
 LATEST launch (a resume names a new task, so a run that failed and was resumed reads by the
 resume; on the reporting session 3 such runs read completed): the status of the task
@@ -5087,7 +5076,7 @@ the run loaded. `--json` workflow entries carry `ended` and the `run`
 command only once an end is known, so an open workflow keeps `{run_id, next_command}`
 (`tests/test_status_workflows.py`).
 
-Background commands (0.4, field report 2026-11-02 "status does not see a background codex exec
+Background commands (0.4 "status does not see a background codex exec
 worker": a session whose one worker was a `codex exec` run by the Bash tool in the background
 printed "0 subagents" and nothing else, which reads as covering that worker). A command is any
 tool result in the main transcript naming a `backgroundTaskId` (`run_in_background`, or a call
@@ -5114,11 +5103,10 @@ timeout moved to the background, its result time less the result's `timedOutAfte
 count line, only when the session has any; it says status checks only whether they still write
 (below), because nothing here reads what a command did. `--json` carries `commands`: `{counts: {running,
 completed, failed, killed, stopped[, ended]}, oldest_running_seconds}`. Hook messages and the resume sentence never mention a command's end: Claude Code tells the agent each end itself (4.14.6
-rule 1); the per-call hook tells a command that stopped writing (4.14.5, field report 2026-11-03)
+rule 1); the per-call hook tells a command that stopped writing (4.14.5)
 (`tests/test_status_commands.py`).
 
-Silent commands and stalled sessions (field reports 2026-11-03 "a background codex exec hung
-23h on stdin and nothing flagged it" and "no silent failures"). A worker launched `codex exec
+Silent commands and stalled sessions. A worker launched `codex exec
 ... "$(cat prompt)" > review.md 2> review.log` in the background with no stdin redirect, ended
 its turn two minutes later ("waiting on the Codex review") and sat idle 26 h: codex had printed
 "Reading additional input from stdin..." (the log's one line) and waited on a stdin nobody
@@ -5134,8 +5122,8 @@ segment (an unquoted `(` that is no `$(`, `<(` or `>(`: `time (cd x && ...)`, `t
 ...)`), a `{ ...; }` group or shell control flow (`if`, `for`,
 `while`, `case`, ...), a launch result that names no task output file (an older Claude Code),
 and a launch whose call is no longer kept (only the newest 64 calls wait for their result) mark
-the command's outputs as not watchable (review rounds 1 to 3). `>& file` is read as `&> file`;
-`2>&1`, `>&-` and `>&1-` are no outputs (review round 4). The session keeps the time of its last `system/turn_duration` entry
+the command's outputs as not watchable. `>& file` is read as `&> file`;
+`2>&1`, `>&-` and `>&1-` are no outputs. The session keeps the time of its last `system/turn_duration` entry
 (the turn's end) and of its last user, assistant, attachment or queue entry (the live reads'
 byte prefilter keeps attachments and queue entries for it), and what it armed to wake itself,
 each from the call's own successful result (a failed CronCreate arms nothing, a failed
@@ -5160,12 +5148,12 @@ that surely ran in this shell (a whole segment, not after `&&` or `||`, not pipe
 or glob an unquoted `$NAME` would expand; `+=` and `printf -v` leave the variable unknown), and
 nothing backgrounded anywhere in the command,
 in a known directory and not a FIFO. Anything else is False, a forking wrapper too: a wrong False costs one line told, which says it may be fine, and a
-wrong True silences the only alarm for a real hang), or carrying the marker `# postmortem: silent-wait` is quiet by design (field report 2026-11-04: following the advice would have killed
+wrong True silences the only alarm for a real hang), or carrying the marker `# postmortem: silent-wait` is quiet by design (following the advice would have killed
 a deliberate wait): only its stdin line can make it silent. The `quiet` reading is taken once, when the command is read, and stored. So a command an older build
 read keeps that build's reading while its facts version stands: the `python3 -c` timer (0.5.1) left `MAIN_FACTS_VERSION` at 10, so one already running at the upgrade may be told once as
 silent. Moving the version would make every session read its main transcript again (4.14.5, the known limit) to spare that one line. A session is **STALLED** when this read of its transcript completed without a failure and
-reached the end of the file (never from cached facts alone, nor past a line still being written,
-review rounds 2 and 3), its turn ended at least 30 min ago with
+reached the end of the file (never from cached facts alone, nor past a line still being written),
+its turn ended at least 30 min ago with
 nothing since, no subagent of its own is running or waiting and no workflow of its own
 is open, nothing it armed can still wake it, at least one command is silent or waits on stdin,
 and it is a live background session: `~/.claude/sessions/<pid>.json` names it with `kind`
@@ -5176,7 +5164,7 @@ reused would read as live; the job state, which the daemon settles when a backgr
 dies, is the second, independent witness. When both are stale (a crashed worker whose job still
 reads `working` and whose pid now belongs to another process), the session reads STALLED: it is
 then a dead worker that will never report, which is what the reading is for, and its next step
-(`status <sid>`) shows it (review round 3, declined as a defect; to the manager). An interactive session's idle turn is
+(`status <sid>`) shows it. An interactive session's idle turn is
 the person's, and a server it runs is silent by design, so it is never STALLED. `--json`
 `commands.running` lists `{launched_seconds, silent_seconds, silent, waiting_on_stdin}` per
 running command and `stalled` is null or `{idle_seconds, commands, waiting_on_stdin,
@@ -5189,7 +5177,7 @@ is read for it, and only when its transcript too is 30 min old and its process i
 background session (the live sessions read once per call), each through its own snapshot without
 a BACKGROUND list of its own. `status` reads at most 5 per call, starting at a place that moves
 every minute so that every such job is reached; `scan` reads them all, after `--here` has kept
-only the jobs in the caller's directory (review rounds 1 and 2). Over 30 days here, 62 background sessions had 46 idle periods of 30 min or more with a
+only the jobs in the caller's directory. Over 30 days here, 62 background sessions had 46 idle periods of 30 min or more with a
 command still running: 23 ended with that command's own end notice, 23 with something else (a
 message, a prompt), none never; so STALLED can fire at most about 1.5 times a day across all
 workers, and at most the first 23 could be wrong, and only had their command's files also stood
@@ -5207,7 +5195,7 @@ text starting with a runtime error marker, and each such result is kept in the l
 signature. `BACKGROUND` counts job files changed in the last 24 h, and every `working` or
 `blocked` one; the job's `detail` text, `needs` free text and `output.result` are never printed.
 
-Disclosure (0.4, field reports 2026-10-30 "redacted agent ids cannot be traced back" and
+Disclosure (0.4 and
 "status shows a blocked background session that cannot be identified"): at the default level
 every row names its alias, and when any subagent or background row was listed the output ends
 with one unindented line, `(--local prints agent ids and background session names)`. At
@@ -5236,8 +5224,7 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
 - `UserPromptSubmit` → `run.sh prompt-submit`, timeout 5: the fallback for an ending that
   happened while the agent sat idle waiting for the person;
 - `PostToolUse` matcher `^(Agent|Task)$` → `run.sh agent-launched` (below);
-- `PreToolUse` matcher `^Bash$` → `run.sh pre-bash`, timeout 5 (below; field report
-  2026-11-03). run.sh gives it the per-call budget: 1 s for the PATH probe, 3 s for the call.
+- `PreToolUse` matcher `^Bash$` → `run.sh pre-bash`, timeout 5 (below). run.sh gives it the per-call budget: 1 s for the PATH probe, 3 s for the call.
 - `Stop` → `run.sh stop-watch`, `async: true`, `asyncRewake: true`, timeout 1209600 (below; field
   reports 2026-11-04). Its exit 2 wakes an idle session.
 
@@ -5318,13 +5305,23 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   the resume sentence included, and never stops a check; Stop's own claims can fail without
   holding back its notification.
 - Workflows are not read here; `watch <run>` and Stop keep them (4.14.10).
-- **Silent background commands (field report 2026-11-03, item 2 of "no silent failures").** The
+- **Silent background commands.** The
   same check tells a background command of the session that is silent or waits on stdin
   (4.14.4's rules), once per command (delivery key `cmd:<task id>:silent`, claimed with the
   endings in one write), as `COMMAND <task id> (launched <age> ago) has written nothing for <q>.
   Claude Code tells you when it ends, never that it hangs: if it is stuck, stop it (TaskStop
   <task id>) and rerun it with </dev/null and a timeout.`, or for a wait on stdin `COMMAND <task
-  id> (launched <age> ago) waits on stdin, which nothing will close: ...`. The line is fixed
+  id> (launched <age> ago) waits on stdin, which nothing will close: ...`. A command whose last
+  pipe stage holds everything until its input ends (`tail` with at most a count from the end, `sort`
+  but not `-m`, `tac` and `wc`, each reading the pipe and no file; `commands.writes_only_at_its_end`;
+  397 of 2696 real background commands end in `| tail`)
+  with no redirect of its own to watch shows nothing until it ends, so its files say little: at the
+  same mark it reads `COMMAND <task id> (launched <age> ago) has shown nothing for <q>, but it ends in
+  `tail`, which prints only when it ends, so that may be fine. If it should be done by now, stop it
+  (TaskStop <task id>) and rerun with </dev/null, a timeout and its output in a file.`, and
+  `status`'s COMMANDS row adds `tail prints only at its end`. It is not
+  quiet by design: a `codex exec | tail` that waits on stdin looks the same and has no other alarm.
+  The line is fixed
   words, the native task id (which the agent needs for TaskStop and already holds from its
   launch result) and two ages, so it skips the redactor, which would hide `/dev/null` as a
   path. The gate opens for it on a background launch (`"backgroundTaskId"` joins the marks) and
@@ -5334,10 +5331,10 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   60 s on while one of its files cannot be inspected (stat'd or read). Endings and command lines share the
   400-character budget: with commands to tell, the endings leave 45 characters for a closing
   `... and <n> more: agent-postmortem status`, and only the commands whose lines fit are claimed,
-  so the rest are told at the next call, which the gate opens for (review round 1 of item 2). The
+  so the rest are told at the next call, which the gate opens for. The
   fit is decided again inside the claim's lock, after another channel may have won an ending:
   a command whose line no longer fits is handed back (`claim_deliveries(unclaim=...)`), never
-  recorded as told (review round 2). A
+  recorded as told. A
   session with no subagent, which the gate answered at once before, now pays one read of its
   transcript's last 64 KB per call and writes no gate state until that tail names a background
   command (the field worker had no subagent). An idle session makes no call, so this reaches a
@@ -5369,7 +5366,7 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   of that session is running, `AGENT_POSTMORTEM_WATCH_HINT=0` disables it. For a foreground Agent
   call (the `tool_response` carries the child's result) the hook also runs R3 and R4 at once and
   appends the CLAIM sentence when one holds.
-- `hook check` at Stop reminds a background session once (field report 2026-11-04: two of three
+- `hook check` at Stop reminds a background session once (two of three
   workers with subagents never ran `status` before reporting, since the rule lives only in a
   CLAUDE.md): when its subagents and workflows have all ended and no `status`, `scan`, `run` or
   `watch` of this tool ran since the last ending, "<n> subagents [and <m> workflows] finished and
@@ -5379,8 +5376,7 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   reads nothing for it. An interactive session has a person reading and gets none.
 - `hook check` at Stop asks for a deadline, unless the session is a background session on a
   Claude Code that can run the watcher above with waking on: the watcher then tells it when a
-  command goes silent, and this request would ask an agent to arm by hand what the plugin does
-  (field report 2026-11-04). It also says nothing for a command under its own perl alarm or when
+  command goes silent, and this request would ask an agent to arm by hand what the plugin does. It also says nothing for a command under its own perl alarm or when
   one of the listed tasks is a Monitor of this
   session (the payload can list a Monitor as a plain `shell` task, so `MainFacts.monitors` knows
   them from the session's own Monitor calls) or a wake it armed can still fire. Otherwise (field
@@ -5407,14 +5403,14 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   not), and only options timeout is known to take (attached `-sCONT` and the abbreviation
   `--sig=CONT` are parsed; an unknown option is not bounded), ends on its own and is not asked
   about (`timeout 1 true; tail -f x`, `timeout 0 x`, `timeout 1 true "$(sleep 9)"`, `timeout
-  -s CONT 1 x` and `timeout 1 true > fifo` are; review rounds 1 to 3); a subagent task notifies by itself. It runs for a session with no subagent too (the
+  -s CONT 1 x` and `timeout 1 true > fifo` are); a subagent task notifies by itself. It runs for a session with no subagent too (the
   field worker), before the 7.2 check of the session's units, and joins that check's
   `additionalContext` within the 400 characters, in full or in a short form ("DEADLINE <ids>:
   still running; before stopping, arm a deadline that wakes you ..."); when neither fits nothing
   is claimed and the next Stop asks. The request is rendered inside the claim from the keys this
   call won, so it never names a task another call asked about; and when the unit check cannot
-  run (a locked or unreadable store) the request still goes out on its own (review rounds 1 and 2 of item 1;
-  `tests/test_stop_deadline.py`).
+  run (a locked or unreadable store) the request still goes out on its own
+  (`tests/test_stop_deadline.py`).
 - `hook session-start` with `source` `resume` adds `hookSpecificOutput.additionalContext` (beside
   the 7.2 digest `systemMessage`) when this session's own subagents never returned or were
   interrupted and no live channel said so yet: "<n> subagent(s) of this session never returned
@@ -5424,7 +5420,7 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   claims each ending's own key (`<agent>@<final entry ms>:end`, the watch's) through the locked
   gate, so it neither repeats an ending the watch reported nor hides a later one. The first-
   launch hint is claimed through the same gate (key `hint`). `source` `startup` adds nothing.
-- `hook pre-bash` (PreToolUse, matcher `^Bash$`, timeout 5; field report 2026-11-03, item 5):
+- `hook pre-bash` (PreToolUse, matcher `^Bash$`, timeout 5):
   before a Bash call with `run_in_background` runs, a `codex exec` (or `codex e`) segment that
   is the segment's command (after assignments, `env`, `nohup`, `nice`, `time`, `command`,
   `exec`, `builtin`, `timeout`/`gtimeout` with their own options, clustered or not, their
@@ -5443,13 +5439,13 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
   call gets nothing: the Bash tool's stdin ends at once there (276 of 276). A command with a `{ ...; }` group or a subshell is not judged: its stdin may come from the
   group, and a false warning would tell the agent to stop a run that is fine (the later checks,
   4.14.4 and item 2, still cover it). A newer plugin in front of an older CLI on PATH that has no
-  `hook pre-bash` stays silent, as for every hook a release adds (4.14.11; review round 1, to the
+  `hook pre-bash` stays silent, as for every hook a release adds (4.14.11, to the
   release). Unlike every other live hook it speaks to a subagent too, since the warning is about
   the caller's own call. The
   console entry answers it without importing the CLI, and a command that does not contain
   `codex` without importing anything past `json` (`tests/test_pre_bash.py`).
-- Workers a session launched (field reports 2026-11-04; the owner's direction: "agent可以主动查看。
-  而不是被动的", and "为什么agent没有自主调用这个插件？"). Claude Code records a background session's
+- Workers a session launched: the alert must reach the manager by itself, with nothing for it to
+  arm or remember. Claude Code records a background session's
   state in `~/.claude/jobs/<short id>/state.json` and tells nobody: a worker sat 8.5 h on a
   permission prompt, `ListAgents` showed it idle, `claude agents` needs a person at a terminal,
   and `notify_when_idle` covers idle or exit, not blocked. The test for this feature: a manager
@@ -5538,7 +5534,7 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
     another version opens the gate once, for a launch from before this feature that its tail no
     longer holds. A session with no gate state, whose launch is past its last 64 KB and that
     launches nothing new, stays unlinked: a stated limit, for the upgrade only.
-- `hook stop-watch` (field reports 2026-11-04), the channel for a session that makes no call: the
+- `hook stop-watch`, the channel for a session that makes no call: the
   field manager was idle all night, so the per-call line alone would have waited for morning.
   With `asyncRewake: true` Claude Code runs the hook in the background and its exit 2 wakes an
   idle session with its stderr as a system reminder ("Stop hook feedback"; 2.1.314 and later,
@@ -5561,7 +5557,7 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
     late carries its own earlier time; the next Stop starts the next watcher), its parent is
     gone, a newer watcher owns the session (a token in the session's record, checked at every
     poll and inside the claim; one that was slow to start never takes the place of a watcher that
-    started after it, 0.5.0 release review), or nothing is left to watch: no worker working or blocked (a
+    started after it), or nothing is left to watch: no worker working or blocked (a
     blocked one already told and older than 72 h does not count) and no untold command that can
     still go silent.
   - The worst failure is money, a session woken over and over, so the rule is the opposite of
@@ -5591,7 +5587,7 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
     a day, run.sh says "agent-postmortem on PATH is older than this plugin, so its newer hooks stay
     silent; run: uv tool upgrade agent-postmortem". A bundled CLI is upgraded instead (4.14.11).
     A probe that printed nothing says nothing about its age, so it gets no hint.
-  - Where the Stop deadline request is retired (0.5.0 release review). Only where the watcher
+  - Where the Stop deadline request is retired. Only where the watcher
     would catch the hang: a background session on a Claude Code with `asyncRewake`, waking on, run
     by a run.sh that sets `AGENT_POSTMORTEM_WATCHER_HOOK=1`, and only for a command whose output
     the watcher can read. An older plugin's run.sh sets no mark, so a newer CLI behind it, or a
@@ -5600,9 +5596,9 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
     have failed, or names a directory that is not there, since its silence is never judged. A directory
     marketplace reads run.sh live while a running session keeps its hooks.json, so there a session
     started before the watcher existed has the mark and no watcher until it restarts.
-  - Known limit (0.5.0 release review, follow-up): a new `MAIN_FACTS_VERSION` makes every session
+  - Known limit: a new `MAIN_FACTS_VERSION` makes every session
     read its main transcript again from byte 0, and `_read`'s deadline bounds only the subagent
-    reads. On this machine that read costs about 0.03 s per MB, so a per-call hook passes its 3 s
+    reads. On one machine that read costs about 0.03 s per MB, so a per-call hook passes its 3 s
     near 110 MB, is killed before it saves, and says nothing at that call and the next. `status`
     and the watcher have no deadline and save what they read, which ends it. A resumable main read
     would close it.
@@ -5618,7 +5614,7 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
    with 4.12's bounded retry: a line held back for 12 polls is printed then).
    A session's endings are not spaced: a resumed agent's next return is a new ending, and a KILL
    that a later `completed` notice turns into an R3 CLAIM is told as both (rule 3); each is told
-   once (0.4.0 release review).
+   once.
 3. Dedupe across re-arms and across channels: `watch --session`, the `agent-launched`,
    `post-tool` and `prompt-submit` hooks and the resume sentence share one delivery key per
    ending (4.14.3), claimed under the store lock. `check` (the 7.2 Stop hook) joins that gate
@@ -5631,12 +5627,12 @@ hooks that fire anyway, and nothing has to be armed. hooks.json gains:
    window could still repeat it once; the hooks of one session never run beside its Stop.
 4. A hint at most once per session; none while the session is watched.
 5. Only checks with measured precision ship; quiet time is never an alert, with one exception
-   (field report 2026-11-03, at the person's request: "no silent failures"): a background
+   (no silent failures): a background
    shell command, which no native watchdog covers, whose files stopped changing (4.14.4's
    silence and stdin rules) is told once by the per-call hook (4.14.5) and shown by `status`
    and, for an idle background session, by `scan` (4.7), since a session idle on it is woken by
    nothing. A command under a real timeout, or carrying `# postmortem: silent-wait`, is silent
-   by design: only the stdin rule speaks for it (field report 2026-11-04).
+   by design: only the stdin rule speaks for it.
 6. Every line names one agent, what it left behind, and one next step, a read-only command. The
    one exception is a worker's line (4.14.5), whose next step is `claude attach <short>`, since
    approving a prompt is the only action that helps, and which the tool itself never runs.
@@ -5690,7 +5686,7 @@ entry of another version, or with none, is read again from byte 0. Per session: 
 taken under (`baseline_rule`, 4.14.5), the hint flag, the watch pid. Entries older than 7 days are pruned on write. Like `state.json`
 it may hold raw locators and is never printed.
 
-### 4.14.9 Scan performance (closes 4.13.7 step 3; fixes the 0.3.5 field reports)
+### 4.14.9 Scan performance (closes 4.13.7 step 3)
 
 Measured before (0.3.5, 363 runs, 3.9 GB, load average 46): `scan --json` 109 s wall, 82 s CPU,
 nothing printed until the end; `--since` read and parsed every run before filtering; the
@@ -5703,7 +5699,7 @@ triage footer said `ALL TIME` under `--since`.
    read (a run cannot start after its last write; the day absorbs clock and zone skew). The
    started-at filter still applies to the rest, so the result is the same set as before; a run
    with no `"timestamp"` in the first 64 KB of any of its files has an unknown start, which
-   `--since` keeps, so it is read. Known gap (0.4.0 release review, follow-up): a run whose
+   `--since` keeps, so it is read. Known gap: a run whose
    timestamped user or assistant entries yield no event (an assistant entry with empty content)
    also has an unknown start once read, but the prefilter skips it. The
    triage totals line says `SINCE <D>` in place of `ALL TIME`.
@@ -5821,7 +5817,7 @@ triage footer said `ALL TIME` under `--since`.
 | `claude -p` | `post-tool` at the next tool call, `check` at Stop, `agent-launched` for a foreground subagent | the existing finding notifications and R3, R4 on a foreground return; a headless run already waits for its background work (R7 not built) |
 | Background shell commands (a `codex exec` worker, a long build) | `status` only, one count line (4.14.4) | nothing: the native end is counted and the line says their output is not checked; Claude Code tells the agent each end itself |
 
-### 4.14.12 `doctor` (field report 2026-11-05)
+### 4.14.12 `doctor`
 
 The plugin's normal success is silence, and its failures are silent too: every hook exits 0, so a
 missing plugin, an old Claude Code or an unwritable state directory look like nothing to report.
@@ -5837,7 +5833,7 @@ WARN; a settings file that is there and cannot be read is a WARN at the end, sin
 that turns the hooks off, and an absent one is nothing), `hooks cli` (FAIL when the plugin is installed
 and its hooks have no CLI, in run.sh's order: the data directory a hook is given, below the plugins
 folder, or with none there the XDG state directory, then `PATH` by name, leaving out the folder of a
-throwaway uvx environment, which only that command sees. This process's own `$CLAUDE_PLUGIN_DATA` is not
+throwaway uvx environment, which only that command sees, and the plugin's own `bin/` (7.1). This process's own `$CLAUDE_PLUGIN_DATA` is not
 read: in a session's commands it can name another plugin's directory, seen on a real machine),
 `claude code` (from what the transcript records), `transcripts` (the config's own folder not there yet is a WARN, since nothing failed to read; a `--root` that is not there is a FAIL),
 `job files`, `state` (a real transaction on the live store; WARN, since a per-call line still goes out
@@ -5881,7 +5877,7 @@ nothing to compare is `INFO`: no comparison was made, and that says nothing abou
 wrote nothing on a repeat run, and made no connection through a proxy trap (2026-11-05); a first run
 ever with a new `CLAUDE_CONFIG_DIR` writes that folder's first-run `.claude.json`.
 
-### 4.14.11 Plugin CLI version (fixes the 0.3.5 field report)
+### 4.14.11 Plugin CLI version
 
 `run.sh` installed its bundled CLI only when none resolved, so after a plugin upgrade the bundled
 CLI stayed on the old version (0.3.3 under plugin 0.3.5 on the reference machine). Now, on
@@ -5949,7 +5945,7 @@ are two spellings of the same user-chosen name for one agent and share the
 `type-N`); `render_trend_text` and `trend.to_json` register each row's rule
 target as `target-N`. They also register every child attempt's own
 `report_path` claim (`reported.claims.report_path`), when it is a non-empty
-string, as `path-N` (M1 review finding 1) -- see below for why this
+string, as `path-N` -- see below for why this
 namespace is substituted differently from the other five. `export_run`
 (v0.2, F4 hardening) additionally registers every attempt's own
 `facts.paths_written`, `facts.in_flight[].path`, and `facts.cwds` as
@@ -6017,8 +6013,7 @@ unchanged. This is why `report_path` needed its own namespace instead of
 joining the other five: it must never appear raw by default in any of the
 places a metrics value or a reported field can render, which the five
 title-only categories are deliberately never asked to guarantee.
-**One free-text path scanner built on shell words (field milestone F, FA1 and
-fix round 4).** A path in free text is found inside a complete shell word, and
+**One free-text path scanner built on shell words.** A path in free text is found inside a complete shell word, and
 once a word holds a path every character of the word from the path start to its
 end is rendered as one path. No regular expression splits a path at a quote, an
 escape or a space. `redact.py` holds one scanner; every free-text output
@@ -6335,9 +6330,9 @@ escape or a space. `redact.py` holds one scanner; every free-text output
   `../x`, `src/a.py`, `modified:   Client Secret/x.md`, `pathspec 'x'`) is shown,
   by design: only an absolute, a Windows, a namespace, a home, a `$PWD` or a
   registered path is a start, because hiding every relative name would black out
-  most command excerpts. The owner confirmed this contract on 2026-10-05: `share`
+  most command excerpts. By contract, `share`
   prints no transcript text (no excerpt and no command; 4.13.5), so a relative
-  name reaches only `local` and `raw`, the levels the owner reads, and `local`
+  name reaches only `local` and `raw`, the levels the user reads, and `local`
   already shows paths relative to the repository (F fix 8, W8-8). Also recorded (F fix 8, W8-7): a possessive plural before a
   path that holds an in-word apostrophe (`the clients' files at /srv/a Bob's x`);
   a single segment under the root after a colon (`Error:/Client Docs/x`); a doubled
@@ -6479,7 +6474,7 @@ pseudonyms `key-1`..`key-N`, numbered in order of first appearance within one re
 within it (a result key is a user-authored identifier like a label); at local and raw `keys` lists
 the real names; `reported` is not a structured name field, so the whole thing goes through the plain Redactor
 via `redact_value`, the same as an evidence line or a metrics value -- a
-`report_path` claim is the one exception (M1 review finding 1): the plain
+`report_path` claim is the one exception: the plain
 Redactor call itself substitutes it with its `path-N` pseudonym (5.1),
 registered by `_register_names` before export runs, so it never appears raw
 either; `reported_line`, being reader-internal only, is never
@@ -6638,7 +6633,7 @@ table ever disagree, run the read again before trusting either one.
   uses, windowed to `--weeks` on each side of `adopted_at` instead of
   unbounded). `consider_removing`: the `rule_id`s whose `after.rate` is not
   lower than `before.rate` with both windows non-empty. `reviews` is `[]`
-  (and `consider_removing` `[]`) when the owner has adopted nothing, in
+  (and `consider_removing` `[]`) when the user has adopted nothing, in
   config or in the state store's legacy `applied` entries.
 - **`rescue plan --json`** (`rescue.plan_to_json`, v0.2, unit M4): top-level
   `{schema, run, nothing_to_rescue, units, brief, exit_code}`. `run`:
@@ -6663,7 +6658,7 @@ table ever disagree, run the read again before trusting either one.
   `checks` is a list of declared checks, each its own `check-N` pseudonym by
   default (F7 hardening; the whole command hidden, not only an embedded
   path), raw under `--no-redact`; at `local` each is the real command after the
-  free-text path scanner of 5.1 (round 4), so `checks[]`, `steps[].text`,
+  free-text path scanner of 5.1, so `checks[]`, `steps[].text`,
   `steps[].command` and `last_counted_run.command` show no absolute path.
   Each `steps[]` entry:
   `{grade, text, command}` (`command` is null only for a `"decide"` step that names no
@@ -7146,6 +7141,31 @@ N5.
   over commit author fields against the configured public identity. It
   additionally greps for `$(id -un)`. CI runs it on the tree; the author
   runs it before every push.
+- `scripts/check-deny-list.py` stops a publish on any name that must never
+  appear in public. The list cannot be in a public
+  repository, so it lives at `~/.config/public-deny-list/terms`
+  (`$PUBLIC_DENY_LIST` overrides): one literal a line, matched as a word without
+  regard to ASCII case, or `re:` and a pattern over bytes, used as written, which
+  can also match inside a word. A literal is a word when no ASCII letter touches
+  it or where a name starts a new word, so `abc` hits `abc-tool`, `abc_tool`, `abc2`,
+  `AbcTool` and `abcTool`, not `abCde`, `abcde` or `xabc` (false stops on other
+  repositories, 2026-11-05). It searches the tracked tree
+  (the file on disk and the staged one, and names); every object reachable from
+  any ref, which is what a push can carry, with replacement refs ignored,
+  including blobs of deleted files and binary ones, file names in trees, and
+  messages and authors in commits and tags; every ref name; and every member
+  of the built wheel and sdist, with names, and all an archive carries beside
+  them but a wheel's compressed data, where a short entry could match by chance.
+  In history a path is searched one folder or file name at a time, as trees hold
+  it, so an entry with a `/` in it is only sure to match in the tree. Exit 0 means it
+  searched and found nothing, and says how much it searched; 1 is a hit. Exit 2
+  means it could not search, which is never a pass: a list that is missing,
+  empty or holds a bad pattern, no tracked files or history, or a missing
+  wheel or sdist. Output names the place and the entry's number, never the
+  entry, the text around it, or a name that holds a hit. `check-privacy.sh`
+  runs it over the same parts, except where `CI` is set: a runner has no list,
+  so it prints that it skipped, and each publish runs it directly first; so does
+  `ci-like.sh`, outside its runner's empty home. Tests use synthetic entries only.
 - Public history is produced by `scripts/export-public.sh`: the destination
   is resolved to an absolute path through its (already-existing) parent
   directory before the script changes to the repository root, so a relative
@@ -7176,15 +7196,16 @@ N5.
   `os.system`, `os.exec*`/`os.spawn*`, `os.popen` -- with its module and
   line. The exact set found must equal an explicit, justified allowlist (a
   handful of `state.py` calls confined to the state directory, observe.py's
-  one documented `subprocess.run` plus its `shutil.which`, cli.py's one write-only `os.open`
+  one documented `subprocess.run` plus its `shutil.which`, doctor.py's one fixed read of the
+  native session list (4.14.12), cli.py's one write-only `os.open`
   of the null device, duplicated onto stdout once watch's reader has closed the pipe (4.12),
   and read-only
   (`'r'`/`'rb'`) `Path.open()` calls everywhere else); anything found that is
   not on the list fails the test, and an allowlist entry the sweep no longer
   finds fails it too, so the list can never silently go stale. A second test
   structurally confirms no call outside `state.py` ever opens a path in a
-  writing mode, or calls anything other than observe.py's own justified
-  `subprocess.run`/`shutil.which` -- a write to a caller-named path (a
+  writing mode, or calls anything other than the justified `subprocess.run`/`shutil.which` of
+  observe.py and doctor.py -- a write to a caller-named path (a
   run/transcript path) outside the state directory therefore cannot exist
   without also breaking it.
 - `tests/test_rendered_privacy.py` (release finding F14) renders one
@@ -7267,6 +7288,7 @@ slug `-home-user-project`, synthetic wf ids listed in
 plugin/.claude-plugin/plugin.json  name, version (== package version), description, author, homepage, repository, hooks, skills
 plugin/hooks/hooks.json
 plugin/hooks/run.sh
+plugin/bin/agent-postmortem
 plugin/skills/postmortem/SKILL.md
 plugin/README.md
 ```
@@ -7276,8 +7298,20 @@ Install: `/plugin marketplace add zeyusuntt/agent-postmortem`, then
 entry carry the same one-line description (the positioning line), and the marketplace has a
 description of its own. `claude plugin validate --strict ./plugin` and `claude plugin validate
 --strict .` (the marketplace file) pass in CI when the `claude` binary is available; the one
-remaining plugin directory note, no icon, does not change the result (the icon is an owner
-launch step, because the directory fixes it at the first portal save).
+remaining plugin directory note, no icon, does not change the result (the icon is a launch
+step, because the directory fixes it at the first portal save).
+
+`plugin/bin/agent-postmortem` is the CLI for a plugin-only user's Bash tool
+(`/postmortem`, and every hook line that names `agent-postmortem`, assumed one on `PATH`, and the copy
+the plugin installs for its hooks is not). Claude Code puts a plugin's `bin/` at the end of the Bash
+tool's `PATH` and not on a hook's (2.1.318, measured with a throwaway plugin), so a CLI of the user's
+own comes first and run.sh never reaches it. This POSIX shell script runs the first executable
+`<config>/plugins/data/agent-postmortem-*/bin/agent-postmortem`, else run.sh's XDG fallback, passing
+arguments, stdin and the exit code through, with the official marketplace's copy first and never a copy
+linked back to itself. With none it exits 127 with one line on stderr saying what
+to do. It installs nothing, so 7.3 stays the plugin's one network action. `$CLAUDE_PLUGIN_DATA` is not
+read, since in a session's commands it can name another plugin's directory, and `doctor`'s `hooks cli`
+row does not count this folder.
 
 hooks.json, every command quoted with `${CLAUDE_PLUGIN_ROOT}`:
 
@@ -7313,6 +7347,11 @@ captured into a shell variable along the way (D10):
    `protocol` field is the integer `1` (not `1.5`, not `"1"`, not `true`)
    within 2 s (1 s for post-tool and prompt-submit, 4.14.5; the console entry
    answers `hook capabilities` without importing the CLI);
+   A probe that ran out of time gets one more try, and one answered wrongly does not: macOS can hold
+   the first run of a new file for seconds (1 of 150 on a real machine, up to 3 s), just when a CLI was
+   installed. Not on post-tool, prompt-submit or pre-bash: each tool call would
+   pay for a CLI that hangs, and the next call catches up. The second try comes out of the call's own
+   deadline, so the hook's outer timeout still holds;
 3. otherwise exit 0 with, once per day, `{"systemMessage": "agent-postmortem
    CLI not found; run: uv tool install agent-postmortem"}`.
    Resolution runs a second time only after the 7.3 install could have run
@@ -7612,8 +7651,7 @@ validated before being trusted with anything (release hardening, F12):
   registers its unit and still gets the watch hint below, just without a
   stored `transcript_dir`.
 
-Unit M5 (.reviews/proposals/2026-09-v0.2-guided-rescue.md section 7; full
-contract in 4.12): once a run id could be read (the same `runId`/regex
+Unit M5 (full contract in 4.12): once a run id could be read (the same `runId`/regex
 extraction above), the hook additionally emits, on top of the registration
 side effect, exactly
 
@@ -7788,7 +7826,7 @@ the identical directory, the same `_acquire_lock` with `StateLocked` after
 `LOCK_TIMEOUT_SECONDS`) without touching `state.json` at all, so
 `agent_postmortem.disclosure` can read or write the secret and the
 registry under the same serialization `state.json`'s own writers get.
-**(N3a Codex round 4, MAJOR 1)** The order on this path is: the state
+The order on this path is: the state
 directory is opened (`O_RDONLY|O_NOFOLLOW|O_DIRECTORY`) and verified first;
 `state.lock` is then opened relative to that verified descriptor
 (`O_CREAT|O_RDWR|O_NONBLOCK|O_NOFOLLOW`, mode 0600, `dir_fd=`), verified,
@@ -7830,7 +7868,7 @@ mismatch raises `StateError` before either file is touched, which
 `agent_postmortem.disclosure`'s fallback turns into a positional render,
 exactly like any other unavailable outcome.
 
-**(N3a fix round 3, new Finding 1)** `lock_state_dir()` keeps the verified
+`lock_state_dir()` keeps the verified
 state-directory descriptor open for the entire lock scope, instead of
 closing it right after this check and yielding only the path: every
 secret, registry, temp-file, rename, unlink, and directory-fsync operation
@@ -7940,7 +7978,7 @@ over `MAX_BYTES` or `MAX_ENTRIES` (both module constants, 50,000 entries /
 4 MiB) when it is read, and a write that would newly take the registry
 over either bound, is `agent_postmortem.disclosure`'s fallback (4.13.5's
 "stable aliases unavailable"): a positional alias for the whole render.
-**(N3a fix round 2, new Finding 5)** that fallback does not uniformly mean
+that fallback does not uniformly mean
 the real files are untouched: a pre-commit failure or a pre-existing
 unavailable state (every row of the table above) leaves the real secret
 and registry exactly as they were, byte-for-byte and mtime untouched, but
@@ -7976,14 +8014,14 @@ later events go positional).
 
 ### 8.1 Package
 
-`pyproject.toml`: name `agent-postmortem`, version `0.5.1`, console scripts
+`pyproject.toml`: name `agent-postmortem`, version `0.5.2`, console scripts
 `agent-postmortem` and `postmortem`, `requires-python >= 3.11`, no runtime
 dependencies, `[project.optional-dependencies].dev = ["pytest>=8",
 "ruff>=0.6"]`, classifiers, URLs (Homepage, Issues, Changelog). The wheel
 ships `agent_postmortem/demo/**` and `agent_postmortem/hooks/*.mjs`.
 
 **Build identity (0.4).** Every build from the working branch reported the released version,
-so neither a session nor a field report could tell which code it ran. A wheel built from a git
+so neither a session nor a bug report could tell which code it ran. A wheel built from a git
 checkout also ships `agent_postmortem/_build_info.json` (`branch`, short `commit`, commit `date`,
 `dirty`: a tracked file differed from HEAD), written by the hatchling build hook `hatch_build.py`
 (`[tool.hatch.build.targets.wheel.hooks.custom]`), and `--version` prints `agent-postmortem
@@ -7991,7 +8029,7 @@ checkout also ships `agent_postmortem/_build_info.json` (`branch`, short `commit
 printed, for a wheel built from the sdist (the release workflow's `uv build`, where there is no
 git), from the commit tagged `v<version>`, or for an editable install; a malformed stamp is
 ignored. The package version, the plugin manifest and `hook capabilities` stay the plain
-release version (`0.5.1`): run.sh compares `hook
+release version (`0.5.2`): run.sh compares `hook
 capabilities` with the manifest of the INSTALLED plugin copy and reinstalls a bundled CLI that
 differs (4.14.11), so a version that moved ahead of the cached manifest would have the bundled
 CLI replaced by the release from PyPI. `tests/test_build_identity.py`.
@@ -8022,8 +8060,7 @@ from a zip is extracted to a temporary directory by
 `importlib.resources.as_file(...)`, which accepts a directory only from
 Python 3.12 on; on Python 3.11 `demo` exits 2 with one line saying to
 install the wheel instead (the tool writes nothing outside its state
-directory, 5.4, so it does not copy the tree itself; release review of
-0.3.0, finding 1; that refusal exits 2). Once the packaged run is loaded, `demo`'s exit code is derived exactly the way `run`'s is (D5): 3
+directory, 5.4, so it does not copy the tree itself; that refusal exits 2). Once the packaged run is loaded, `demo`'s exit code is derived exactly the way `run`'s is (D5): 3
 for a critical finding, 4 for status INCOMPLETE, else 0 -- never a
 hardcoded 0 regardless of what the packaged run's own findings are.
 **(v0.3, N5)** from N5 on, read "3 for verdict FAILED" in place of "3 for a
@@ -8098,7 +8135,7 @@ what a pseudonym is, the one network action), how it was built, limits
 
 ## 9. Rules library (v0.2, unit M6: proposals only)
 
-**(0.4, field report 2026-09-30 "rules propose: slow, history-wide")** `rules propose` without
+**(0.4)** `rules propose` without
 `--run` reads the fleet through scan's run cache (`cli._facts_of_ref`, 4.14.9): a run whose
 inputs are unchanged is not loaded, and the cached facts carry each finding's rule ids
 (`rule_ids`, every finding, shown or silenced; scan cache schema 2), which with the run id and
@@ -8247,7 +8284,7 @@ row for an undated run has `first` and `last` null and prints no dates.
 and an unmatched one exit 2, as for `run`.
 
 **`rules review [--root PATH] [--weeks N] [--json] [--no-redact]`.** Reads
-the rules the owner has adopted -- `[[adopted]]` config tables (4.10) plus
+the rules the user has adopted -- `[[adopted]]` config tables (4.10) plus
 any legacy state-store `applied` entry (7.5), deduplicated on (rule_id,
 date, target) so declaring the same adoption in both places is not counted
 twice -- and for each prints its backing detector(s)' rate over runs of the
@@ -8280,22 +8317,10 @@ under the default redaction: a review's own `target` field renders through
 a client or project name and must not survive by default here the way
 trend's richer, human-facing text still lets it.
 
-## 10. Build execution (as executed)
+## 10. Build execution
 
-Two Workflow runs, every green increment committed on branch `v0.1`. Each
-milestone was one test-first unit: a sonnet agent wrote the failing
-fixtures and tests, ran only the touched test files while iterating, then
-ran the full suite once green, and committed only once that full suite was
-clean. The review step ran from the main session, not from inside either
-Workflow run: this was a cross-model review -- Codex reviewed the
-milestone's diff (written to `.reviews/`), Claude's own code-reviewer
-reviewed it again, and the main session read every finding, verified each
-one against the code (several times against this project's own real data)
-before accepting or rejecting it, and recorded the disposition in
-`.reviews/<milestone>-review.md`; a sonnet agent then applied the accepted
-fixes, ran the full suite again, and committed each fix. Milestone 3 grew
-large enough to split into two commits, 3a and 3b, reviewed separately;
-every other milestone kept a one-to-one mapping to the stage list below.
+Two Workflow runs, test-first: each milestone's failing fixtures and tests came first, and the
+full suite was green before every commit. Milestone 3 was large enough to split into 3a and 3b.
 
 Workflow A (core): (M1) privacy scrub of the tree and markers, synthetic-id
 allowlist, privacy test over tracked files; (M2) models, reader session
@@ -8305,33 +8330,29 @@ and trend, report and export allowlist, pseudonyms; (M4) state store v2
 with locking and migration. Workflow B (product): (M5) hook subcommands and
 benchmark; (M6) plugin files, run.sh, skill, marketplace; (M7) packaging,
 demo, CI, release workflow, CHANGELOG, CONTRIBUTING, templates; (M8) README
-and docs. Then the main session runs acceptance (section 11) and the public
-export.
+and docs. Then acceptance (section 11) and the public export.
 
-## 11. Acceptance on this machine
+## 11. Acceptance
 
 1. Full suite green; `tests/test_privacy.py` green over tracked files and
    the built wheel.
-2. `agent-postmortem scan` covers 110 workflow runs and 51 sessions in under
-   30 s; the owner's reference run (its id lives in the untracked file
-   `.reviews/acceptance.local`, never in the repo) still reports 4 agents, 10
-   attempts, 6 retries.
-3. A session in which the owner pressed Escape reports info, not major; a
-   workflow retry reports cause runtime, major.
+2. `agent-postmortem demo` runs from an empty directory, and the demo run
+   reports its retries.
+3. A synthetic session in which the user pressed Escape reports info, not
+   major; a synthetic workflow retry reports cause runtime, major.
 4. Plugin installed from the local marketplace in a new session: a small
    Workflow run that retries produces a verdict line on the next turn; a
    clean run produces nothing; `hook check` p95 under 500 ms with nothing
    new.
 5. `scripts/check-privacy.sh` passes on the exported public repository,
    including every ref and commit author field.
-6. `uvx --from dist/agent_postmortem-0.1.0-py3-none-any.whl agent-postmortem
-   demo` runs from an empty directory.
+6. `uvx --from dist/<the built wheel> agent-postmortem demo` runs from an
+   empty directory.
 7. CI green on the first push; `claude plugin validate ./plugin` passes.
-8. The push happens only after the owner confirms.
 
-## 12. Design review dispositions (2026-09-22)
+## 12. Design decisions (2026-09-22)
 
-Accepted in full: session-native model with `Run.main` separate from
+Decided: session-native model with `Run.main` separate from
 agents; session-specific summary and wasted_time metrics; retries declared
 not observable in sessions; envelope events; dedup before event emission
 with the counted fallback; stratified totals and trends; `NotARun`
@@ -8365,11 +8386,7 @@ Deferred to v0.2: interaction mode for `-p` sessions; byte-offset resume of
 partially read transcripts (fingerprints plus one-time parsing of finished
 units meet the budget); execution epochs for resumed subagents.
 
-### M7 review dispositions (2026-09-23)
-
-From real-data observations after the M6 fix, not from the milestone's own
-code review (whose accepted findings are folded directly into 4.4/5.4/8.1/
-8.2/8.3 above and carry no separate log entry here):
+### Decisions from real data (2026-09-23)
 
 - D-A: `hook check`'s unknown-finalization fallback (7.2) fired on a
   workflow that was still actively running, because three Stop checks

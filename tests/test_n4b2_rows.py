@@ -1,8 +1,7 @@
 """N4b-2 coverage group 6 (ledger entries per call): the truth table rows 1, 7
 and 8 and the use of N4a's classification for rows 2 to 6, the completion
 mapping (L7), file tools (L10), the evidence line and entry order (L11), and
-the `repo` of each kind of entry (docs/DESIGN.md 4.13.1; .reviews/v0.3/N4-plan.md
-L6, L7, L10, L11).
+the `repo` of each kind of entry (docs/DESIGN.md 4.13.1).
 
 Every row asserts the whole entry, all six fields.
 """

@@ -85,7 +85,9 @@ def _package_outside_home(tmp_path, monkeypatch):
     None,
     "--local",
 ])
-def test_apply_hook_note_outside_home_is_path_n_below_raw(flag, tmp_path, monkeypatch, capsys):
+def test_apply_hook_note_outside_home_names_only_the_file_below_raw(flag, tmp_path, monkeypatch, capsys):
+    """Field report 2026-11-05: `node path-1` told no one which file to register. It is this package's
+    own file, the same name a home install shows, and its folders stay hidden."""
     hooks = _package_outside_home(tmp_path, monkeypatch)
     target = tmp_path / "t" / "CLAUDE.md"
     target.parent.mkdir()
@@ -93,14 +95,16 @@ def test_apply_hook_note_outside_home_is_path_n_below_raw(flag, tmp_path, monkey
     flags = [flag] if flag else []
     _code, out, _err = h.cli(capsys, "apply", "R-MODEL-ALLOCATION", "--target", target, *flags)
     note = out.partition("Hook template:")[2]
-    assert "Hook template: path-" in out
-    assert "node path-" in note
-    assert "model_allocation_guard.mjs" not in note and PKG_DIR not in out
+    assert "Hook template: .../model_allocation_guard.mjs" in out
+    assert "node .../model_allocation_guard.mjs" in note
+    assert "path-" not in note and PKG_DIR not in out
     assert str(hooks) not in out
+    assert "full path prints with --raw" in note
     for token in note.split():
         assert not (token.startswith("/") and len(token) > 1), token
     _code, raw, _err = h.cli(capsys, "apply", "R-MODEL-ALLOCATION", "--target", target, "--raw")
     assert f"Hook template: {hooks / 'model_allocation_guard.mjs'}" in raw
+    assert "full path prints with --raw" not in raw
 
 
 @pytest.mark.parametrize("flag", [None, "--local"])

@@ -287,7 +287,7 @@ def attribute_interrupt(run: Run, attempt: Attempt, parent_index) -> tuple[str, 
        "agent_id" or a "task_id" field both work the same way here), or any
        TaskStop lands within PARENT_STOP_WINDOW_SECONDS before the kill.
     2. human: a parent kill sentinel lands within
-       PARENT_SENTINEL_WINDOW_SECONDS of the kill, either side (the owner's
+       PARENT_SENTINEL_WINDOW_SECONDS of the kill, either side (the user's
        Escape and the child's own kill timestamp are two different files'
        clocks, not a strict before/after).
     3. runtime: workflow kind only, and this attempt's key has a later

@@ -597,7 +597,7 @@ class Lifecycle:
     activity: str  # 'recent' | 'stale' | 'unknown' (stat failed)
     generations: int  # >= 0; 0 for a run with no associated launch
     diagnostics: list[str]  # [] when none fired
-    # Internal only (N1N2 review finding 2, fixed after cross-model review):
+    # Internal only (fixed after cross-model review):
     # not one of the five public fields docs/DESIGN.md 4.1/5.3b document for
     # Lifecycle, so it is excluded from equality/repr (never breaks a test
     # or caller that compares/prints a Lifecycle built without naming it)

@@ -1,4 +1,4 @@
-"""Fix round 7 (W7-1, W7-3) of field milestone F: a seeded generator of private names that hold what
+"""A seeded generator of private names that hold what
 POSIX and Windows names hold, including every early stop the round-6 rule trusted.
 
 A real directory or file name holds words, spaces, parentheses, `&`, `;`, `|`, `<`, `>`, a colon and

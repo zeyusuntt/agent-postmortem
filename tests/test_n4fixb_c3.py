@@ -1,6 +1,6 @@
 """Fix B, C3: one `possible` entry per targetless shell call. `repo` is the single
 candidate when every commit segment yields exactly one distinct candidate, else
-null (docs/DESIGN.md 4.13.1; .reviews/v0.3/N4-dispositions.md C3)."""
+null (docs/DESIGN.md 4.13.1)."""
 
 from __future__ import annotations
 

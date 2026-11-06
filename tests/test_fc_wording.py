@@ -1,5 +1,5 @@
 """Part FC, P5 to P8 and P10 (field milestone F): wording that told the reader something false
-or too little (docs/DESIGN.md 4.7, 4.9, 4.3; .reviews/v0.3/F-plan.md FC).
+or too little (docs/DESIGN.md 4.7, 4.9, 4.3).
 
 - P5: `WORK AT RISK  none:` for an empty population no longer claims that "killed or failed
   attempts wrote no paths" when nothing was killed or failed.

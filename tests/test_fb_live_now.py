@@ -1,5 +1,5 @@
 """Part FB2 (field milestone F, P1): LIVE NOW is its own group in `scan`
-(docs/DESIGN.md 4.7, 5.3b; .reviews/v0.3/F-plan.md FB2).
+(docs/DESIGN.md 4.7, 5.3b).
 
 The field case: five projects reported that a clean session still being worked in showed up
 under NEEDS ATTENTION just because it was "possibly live", pushing real problems down and

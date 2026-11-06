@@ -1,4 +1,4 @@
-"""N8 fix round 2 (.reviews/v0.3/N8-dispositions.md, "Codex round 2"): R2-1.
+"""N8: R2-1.
 
 R2-1  a finished run whose every attempt completed and whose risk population is EMPTY but not
       complete prints NO KILLED OR FAILED ATTEMPT: the tool could not establish which attempts

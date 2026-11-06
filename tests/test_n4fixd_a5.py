@@ -1,4 +1,4 @@
-"""Fix D (Codex round 2: A2 and A4 corrections), Amendment A5: a bad timestamp makes an
+"""Fix D (A2 and A4 corrections), Amendment A5: a bad timestamp makes an
 attempt unassignable (R2-1); a malformed result's own runId involves that run (R2-2); a
 rejected launch is not proof that no run exists (R2-3); a result's digest does not depend
 on the physical order of launch and result (R2-4). docs/DESIGN.md 4.13.1 and 4.13.3.
@@ -41,7 +41,7 @@ from tests.test_n4fixc_a4 import (
     _sec,
 )
 
-FIX = "Fix D (Codex round 2: A2 and A4 corrections) RED: "
+FIX = "Fix D (A2 and A4 corrections) RED: "
 
 
 def _load_with_parent(tmp_path, monkeypatch, entries, run_id=RUN_A):

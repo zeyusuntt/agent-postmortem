@@ -3,8 +3,7 @@
 
 Both commands are read-only and stateless. Neither writes a file, runs a
 check, or touches git beyond what `observe.py` already does. The main
-Claude session or the human performs every action (`.reviews/proposals/
-2026-09-v0.2-guided-rescue.md` section 3): this module only reads
+Claude session or the human performs every action: this module only reads
 transcripts, observes repo state through `observe.observe_groups`, and prints
 facts. Per R8, it never claims to have confirmed something by running it --
 it reports what it observed and names what it could not.

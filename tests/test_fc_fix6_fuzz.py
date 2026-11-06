@@ -1,8 +1,8 @@
-"""Fix round 6 (W6-2) of field milestone F: a seeded generator of UNQUOTED private directory names.
+"""A seeded generator of UNQUOTED private directory names.
 
 A directory or file name of a real project holds words, spaces, parentheses, `&`, a semicolon,
 brackets, an apostrophe and a dot. This generator writes such a name the way a transcript prints it,
-with no quoting and no escaping at all (the shape the review rounds 4 and 5 broke), puts it in a
+with no quoting and no escaping at all (a shape that once broke it), puts it in a
 sentence, and checks at share and local, unregistered and registered, that no marker survives any
 sink. A name never holds an operator followed by a space (`; `, `| `, `& `, `) `): by DESIGN 5.1 that
 is where a span stops, so what follows it is not part of the name. A failing seed prints the text.

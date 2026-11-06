@@ -1,6 +1,4 @@
-"""Fix round 5 (W5-1 to W5-4) of field milestone F through the rescue, check and name sinks the
-reviewers list (docs/DESIGN.md 5.1, 4.11; .reviews/v0.3/F-dispositions.md, "Fix round 4 (W)
-review"): the new inputs reach rescue text and JSON excerpts, declared checks at local and the
+"""Through the rescue, check and name sinks (docs/DESIGN.md 5.1, 4.11): the new inputs reach rescue text and JSON excerpts, declared checks at local and the
 local name values.
 
 Every fixture is synthetic.

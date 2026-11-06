@@ -200,7 +200,7 @@ def test_malformed_top_level_registry_shapes_are_rejected(data):
 
 @pytest.mark.parametrize("version", [True, 1.0])
 def test_non_int_version_equal_to_one_is_rejected(version):
-    """N3a fix round 2, Finding 6: `data.get("version") != 1` accepts both
+    """Finding 6: `data.get("version") != 1` accepts both
     `True` (bool is an int subclass in Python, True == 1) and `1.0` (float
     equality). Only the exact int 1 is version 1. (`False` and the string
     "1" are already rejected by the plain `!=` check today, for an
@@ -217,7 +217,7 @@ def test_version_not_equal_to_one_is_rejected(version):
     these two already fail validate_registry's plain `!=` comparison today
     (False == 0, "1" != 1 as a string/int comparison) and must keep doing
     so once the stricter `type(version) is int and version == 1` check
-    (finding 6) replaces it."""
+ replaces it."""
     reg = disclosure.empty_registry()
     reg["version"] = version
     assert disclosure.validate_registry(reg) is None
@@ -392,7 +392,7 @@ def test_secret_wrong_size_is_invalid(tmp_path):
 
 
 def test_secret_probe_metadata_comes_from_the_open_descriptor_not_the_path(tmp_path, monkeypatch):
-    """N3a fix round 2, Finding 9: probe_secret must classify and read the
+    """Probe_secret must classify and read the
     secret from the descriptor it already opened, never from a second,
     separate look at the path -- otherwise a TOCTOU swap of the file right
     after open would be observed. Swap the path's content and mode
@@ -424,7 +424,7 @@ def test_secret_probe_metadata_comes_from_the_open_descriptor_not_the_path(tmp_p
 def test_create_secret_fails_before_commit_when_the_open_descriptor_reports_the_wrong_mode(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, Finding 11 (test half, paired with Finding 1): inject
+    """Inject
     a wrong mode on the just-opened descriptor (simulating a filesystem
     that silently granted a different mode than requested) and assert the
     call fails before the secret is left on disk -- proving the mode check
@@ -461,8 +461,7 @@ def test_create_secret_fails_before_commit_when_the_open_descriptor_reports_the_
 def test_write_registry_bytes_fails_before_commit_when_the_temp_descriptor_reports_the_wrong_mode(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, Finding 11 (test half, paired with Finding 1),
-    registry side: same proof as the secret above, against the temp file's
+    """Registry side: same proof as the secret above, against the temp file's
     own descriptor. Mutation M18 (remove this check) fails this test; the
     unmodified implementation passes it."""
     path = tmp_path / "aliases.json"
@@ -611,7 +610,7 @@ def test_registry_wrong_schema_is_invalid_via_disclosure_probe(tmp_path):
 
 
 def test_registry_recursion_error_is_invalid_via_disclosure_probe(tmp_path):
-    """N3a fix round 2, Finding 3: `_probe_registry` only catches
+    """Finding 3: `_probe_registry` only catches
     `UnicodeDecodeError`/`JSONDecodeError` around `json.loads`. 10,000
     nested JSON arrays are only 20,000 bytes -- well under MAX_BYTES -- but
     raise `RecursionError` while parsing. That must classify the registry
@@ -632,7 +631,7 @@ def test_registry_recursion_error_is_invalid_via_disclosure_probe(tmp_path):
 
 
 def test_registry_probe_metadata_comes_from_the_open_descriptor_not_the_path(tmp_path, monkeypatch):
-    """N3a fix round 2, Finding 9, registry side: same proof as the secret
+    """Registry side: same proof as the secret
     test above. Mutation M16 (state.fstat(fd) -> path.stat()) fails this
     test; the unmodified implementation passes it."""
     path = tmp_path / "aliases.json"
@@ -657,7 +656,7 @@ def test_registry_probe_metadata_comes_from_the_open_descriptor_not_the_path(tmp
 
 
 def test_write_registry_bytes_does_not_clobber_a_preexisting_predictable_temp_name(tmp_path):
-    """N3a fix round 2, Finding 10: the registry's own temp file name is
+    """The registry's own temp file name is
     predictable (prefix plus this process's pid). Pre-create a sentinel at
     that exact name and prove the writer never opens it non-exclusively: it
     must retry with a numeric suffix instead, leaving the sentinel
@@ -701,7 +700,7 @@ def test_write_registry_bytes_failure_leaves_no_temp_file_and_no_change(tmp_path
 
 
 # ============================================================================
-# N3a fix round 2: Finding 1 (BLOCKER) and Finding 2 (short write)
+# A failed durable write, and a short write
 # ============================================================================
 
 
@@ -752,8 +751,7 @@ def test_write_registry_bytes_treats_a_persistent_zero_length_write_as_an_error(
 def test_write_registry_bytes_completes_a_short_write_instead_of_reporting_it_as_valid(
     tmp_path, monkeypatch
 ):
-    """Registry-side companion to the secret's short-write test above (N3a
-    fix round 2, Finding 2): now that the registry write goes through the
+    """Registry-side companion to the secret's short-write test above: now that the registry write goes through the
     same raw os.write() loop as the secret, a short underlying write is
     completed rather than silently accepted as a truncated file."""
     path = tmp_path / "aliases.json"
@@ -777,7 +775,7 @@ def test_write_registry_bytes_completes_a_short_write_instead_of_reporting_it_as
 def test_secret_directory_fsync_failure_after_commit_does_not_lie_about_what_happened(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2 (continued), new Finding 1 (BLOCKER): this test used
+    """This test used
     to assert that a *persistent* directory-fsync failure after creating
     the secret still returned available=True, on the theory that
     create_secret() itself had already committed and a read-back proves
@@ -811,7 +809,7 @@ def test_registry_post_commit_reverification_glitch_does_not_lie_about_what_happ
     implementation's re-probe of the real file finds it valid and returns
     the committed result.
 
-    N3a fix round 2 (continued), new Finding 6: the post-commit check this
+    The post-commit check this
     glitch targets is now state._verify_registry_after_commit (reopened
     with O_NOFOLLOW), not the old by-path _verify_mode call -- updated to
     monkeypatch the call site write_registry_bytes actually makes."""
@@ -836,7 +834,7 @@ def test_registry_post_commit_reverification_glitch_does_not_lie_about_what_happ
 def test_persistent_post_commit_directory_fsync_failure_falls_back_and_does_not_loop_forever(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2 (continued), new Finding 1 (BLOCKER): a cold-start
+    """A cold-start
     registration (absent registry, absent secret) whose post-commit
     directory fsync keeps failing on every attempt must fall back
     (available=False) -- the old assertion that this "still recovers" was
@@ -864,7 +862,7 @@ def test_persistent_post_commit_directory_fsync_failure_falls_back_and_does_not_
 def test_persistent_directory_fsync_failure_on_an_already_valid_pair_falls_back(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2 (continued), new Finding 1 (BLOCKER), the other half:
+    """The other half:
     the BLOCKER is not limited to the cold-start creation path -- P6's own
     "normal" row (both files already valid) must also require a fresh,
     successful directory fsync before handing out stable aliases, because a
@@ -893,7 +891,7 @@ def test_persistent_directory_fsync_failure_on_an_already_valid_pair_falls_back(
 def test_finalize_registration_persistent_directory_fsync_failure_after_recovery_falls_back(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2 (continued), new Finding 1 (BLOCKER), the registry-
+    """The registry-
     rename half named explicitly in the review: 'the same issue exists
     after a registry rename: _finalize_registration accepts parsed-dict
     equality after PostCommitVerificationError without establishing
@@ -930,7 +928,7 @@ def test_finalize_registration_persistent_directory_fsync_failure_after_recovery
 def test_transient_directory_fsync_failure_during_cold_start_still_returns_stable_aliases(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2 (continued), new Finding 1 (BLOCKER): a transient
+    """A transient
     directory-fsync failure (fails once, succeeds on the very next attempt)
     must still produce a fully available, stable-alias book -- proving the
     fix actually retries rather than giving up after a single attempt."""
@@ -1030,7 +1028,7 @@ def test_finalize_registration_transient_directory_fsync_failure_after_recovery_
 
 
 # ============================================================================
-# N3a fix round 2 review (fix2): Findings 1 and 2, mutation-coverage gaps
+# Mutation-coverage gaps
 #
 # Every existing fsync-failure test above either forces a different,
 # unrelated fsync (a content-level write, which is pre-commit) or
@@ -1151,7 +1149,7 @@ def test_write_registry_bytes_surfaces_a_real_post_commit_mode_mismatch(tmp_path
 def test_write_registry_bytes_post_commit_check_rejects_a_symlink_swapped_in_after_replace(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, new Finding 6 (MINOR): '_verify_mode uses
+    """New Finding 6 (MINOR): '_verify_mode uses
     Path.stat(). A same-principal race after os.replace can swap
     aliases.json for a symlink to a mode-0600 target, and this check
     follows it.' Build a target that would itself pass every mode/owner
@@ -1161,7 +1159,7 @@ def test_write_registry_bytes_post_commit_check_rejects_a_symlink_swapped_in_aft
     reject this, by reopening the final path with O_NOFOLLOW rather than
     following the symlink via a separate stat() call.
 
-    N3a fix round 3, new Finding 3 / mutation N20: the review found that
+    the review found that
     the symlink target here (the old "elsewhere" content) differed from
     the content just committed, so the exact-content check alone already
     rejected it -- removing only O_NOFOLLOW still passed. The target is
@@ -1188,7 +1186,7 @@ def test_write_registry_bytes_post_commit_check_rejects_a_symlink_swapped_in_aft
 def test_post_commit_verifier_rejects_a_non_regular_descriptor_even_when_mode_and_content_match(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 3, new Finding 3 / mutation N21: isolate the
+    """isolate the
     regular-file check in _verify_registry_after_commit on its own, without
     depending on a real FIFO's blocking-open behavior (new Finding 2's fix
     for that is a separate item below). A real, regular, mode-0600 file
@@ -1211,7 +1209,7 @@ def test_post_commit_verifier_rejects_a_non_regular_descriptor_even_when_mode_an
 def test_post_commit_verifier_rejects_a_wrong_owner_even_when_type_mode_and_content_match(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 3, new Finding 3 / mutation N22: isolate the owner
+    """isolate the owner
     check on its own. A regular, mode-0600 file whose content is exactly
     `expected` passes every other check; only the descriptor's tampered uid
     can still reject it."""
@@ -1228,7 +1226,7 @@ def test_post_commit_verifier_rejects_a_wrong_owner_even_when_type_mode_and_cont
 def test_post_commit_verifier_rejects_a_content_mismatch_even_when_type_mode_and_owner_match(
     tmp_path,
 ):
-    """N3a fix round 3, new Finding 3 / mutation N23: isolate the
+    """isolate the
     exact-content check on its own. A regular, mode-0600, this-uid file
     whose bytes simply differ from `expected` passes every other check;
     only the content comparison can still reject it."""
@@ -1241,7 +1239,7 @@ def test_post_commit_verifier_rejects_a_content_mismatch_even_when_type_mode_and
 
 
 def test_post_commit_reopen_does_not_block_on_a_fifo_swapped_in_after_the_rename(tmp_path):
-    """N3a fix round 3, new Finding 2 (MAJOR): _verify_registry_after_commit
+    """_verify_registry_after_commit
     reopens the final path with O_RDONLY|O_NOFOLLOW but, before this fix,
     without O_NONBLOCK. If the final registry is replaced by a FIFO right
     after os.replace(), opening it for read blocks indefinitely waiting for
@@ -1402,7 +1400,7 @@ def test_fsync_failure_during_initial_registry_write_is_recovered_by_next_run(tm
 
 
 def test_replace_failure_during_initial_registry_write_is_recovered_by_next_run(tmp_path, monkeypatch):
-    """N3a fix round 3, new Finding 1: register() always holds a verified
+    """register() always holds a verified
     directory descriptor now, so the registry's own atomic commit goes
     through os.rename(..., src_dir_fd=..., dst_dir_fd=...), not os.replace
     (see write_registry_bytes's own docstring for why) -- both are
@@ -1521,7 +1519,7 @@ def test_alias_is_stable_across_two_separate_registration_calls(tmp_path):
 def test_register_called_twice_with_identical_identities_writes_nothing_the_second_time(
     tmp_path, monkeypatch
 ):
-    """N3a review Finding 5: when every identity in the batch was already
+    """When every identity in the batch was already
     registered, `changed` is False and _write_if_within_bounds must never
     even be invoked -- not just "the file ends up unchanged". Fail loudly
     if a future refactor drops the `changed` gate."""
@@ -1705,7 +1703,7 @@ def test_registry_at_byte_limit_falls_back_and_leaves_file_untouched(tmp_path):
 
 
 def test_registry_over_entry_bound_is_invalid_on_read_even_under_byte_bound(tmp_path, monkeypatch):
-    """N3a fix round 2, Finding 5: `_write_if_within_bounds` only checks
+    """Finding 5: `_write_if_within_bounds` only checks
     MAX_ENTRIES when a *new* identity would change the registry; a registry
     that is already over the bound on disk -- well under MAX_BYTES -- must
     also be unavailable the moment it is read, before any write is even
@@ -1834,7 +1832,7 @@ def test_slow_path_on_a_fallback_book_does_not_increment_the_counter(tmp_path, m
 
 
 def test_slow_path_with_a_non_canonical_id_is_positional_and_does_not_touch_the_registry(tmp_path):
-    """N3a fix round 2, Finding 7: AliasBook.alias() must apply register()'s
+    """AliasBook.alias() must apply register()'s
     own P2 canonical-id check before doing anything else on the slow path.
     An id that is not canonical for its kind is never eligible for a stable
     alias -- it must not be HMACed, must not be written, and must not even
@@ -1853,7 +1851,7 @@ def test_slow_path_with_a_non_canonical_id_is_positional_and_does_not_touch_the_
 
 
 def test_slow_path_with_an_unknown_kind_is_positional_not_a_keyerror(tmp_path):
-    """N3a fix round 2, Finding 7: a kind alias() does not recognize (not
+    """A kind alias() does not recognize (not
     one of agent/session/project) must get a positional name, never a raw
     KeyError from indexing the registry's per-kind tables with a key that
     was never one of them."""
@@ -1867,14 +1865,12 @@ def test_slow_path_with_an_unknown_kind_is_positional_not_a_keyerror(tmp_path):
 
 
 def test_slow_path_failure_degrades_the_whole_book_atomically(tmp_path, monkeypatch):
-    """N3a fix round 2, Finding 8: a slow-path failure must not leave a mix
+    """A slow-path failure must not leave a mix
     of stable and positional aliases in one book (docs/DESIGN.md 7.5a/P8).
     The agent already registered with a stable alias must lose it the
     moment a later identity's slow-path registration fails: the whole book
     degrades atomically (available=False, every already-known identity
-    renamed positionally in registration order), not just the new one.
-    Replaces the old test that accepted the mixed stable/positional state
-    (N3a fix round 2, per the approved plan)."""
+    renamed positionally in registration order), not just the new one."""
     book = disclosure.register([("agent", _agent_id(1))], state_dir=tmp_path)
     assert book.available is True
     stable_alias_1 = book.alias("agent", _agent_id(1))
@@ -1921,7 +1917,7 @@ def test_creating_the_secret_fsyncs_the_state_directory_afterwards(
             events.append("fsync_dir")
 
     monkeypatch.setattr(state, "create_secret", spy_create)
-    # N3a fix round 2, Finding 1: the directory fsync after create_secret()
+    # The directory fsync after create_secret()
     # is now the strict, disclosure-specific sibling of the best-effort
     # _fsync_dir state.json's own writer keeps.
     monkeypatch.setattr(state, "_fsync_dir_strict", spy_fsync_dir)
@@ -1934,14 +1930,12 @@ def test_creating_the_secret_fsyncs_the_state_directory_afterwards(
 
 
 # ============================================================================
-# N3a fix round 2 review (new Findings 2, 3, 4): mutation-coverage gaps with
+# Mutation-coverage gaps with
 # no code defect behind them. Each check these tests exercise already
 # exists in the shipped implementation (added to close the original
 # review's findings 1, 3, and 4); the gap was that no test exercised it
 # against the exact mutation the reviewer tried, so every one of these
-# passes unmodified against the current source. .reviews/v0.3/
-# N3a-fix3-report.md records, for N03, N04, and N08 through N15, which test
-# below fails when that specific check is removed from a throwaway copy.
+# passes unmodified against the current source.
 # ============================================================================
 
 
@@ -1951,7 +1945,7 @@ def test_creating_the_secret_fsyncs_the_state_directory_afterwards(
 def test_finalize_registration_requires_fallback_when_post_commit_file_is_invalid(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, new Finding 2 / mutation N03: after
+    """after
     PostCommitVerificationError, _finalize_registration must re-probe the
     real file on disk and reject it if invalid -- never trust the aliases
     it already computed in memory. Make the write actually commit invalid
@@ -1980,7 +1974,7 @@ def test_finalize_registration_requires_fallback_when_post_commit_file_is_invali
 def test_finalize_registration_requires_fallback_when_post_commit_file_is_a_different_valid_registry(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, new Finding 2 / mutation N04: the re-probed registry
+    """the re-probed registry
     must be byte-for-byte (as parsed dicts) equal to what this call just
     computed, not merely "some other valid registry". A mutation that
     re-probes but drops the equality comparison (N04) wrongly accepts a
@@ -2082,7 +2076,7 @@ def _track_disclosure_probing(monkeypatch) -> dict:
 def test_state_directory_wrong_mode_is_rejected_before_either_disclosure_file_is_probed(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, new Finding 3 / mutation N08: force the best-effort
+    """force the best-effort
     repair chmod to fail (as it would against attacker-controlled metadata
     a chmod cannot fix), then tamper the freshly opened descriptor's own
     fstat to report a mode other than 0700. register() must fall back
@@ -2106,7 +2100,7 @@ def test_state_directory_wrong_mode_is_rejected_before_either_disclosure_file_is
 def test_state_directory_wrong_owner_is_rejected_before_either_disclosure_file_is_probed(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, new Finding 3 / mutation N09."""
+    """"""
     directory = tmp_path / "agent-postmortem"
     directory.mkdir(mode=0o700)
     monkeypatch.setattr(
@@ -2124,7 +2118,7 @@ def test_state_directory_wrong_owner_is_rejected_before_either_disclosure_file_i
 def test_lock_file_wrong_mode_is_rejected_before_either_disclosure_file_is_probed(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, new Finding 3 / mutation N10."""
+    """"""
     directory = tmp_path / "agent-postmortem"
     directory.mkdir(mode=0o700)
     lock_path = directory / "state.lock"
@@ -2145,7 +2139,7 @@ def test_lock_file_wrong_mode_is_rejected_before_either_disclosure_file_is_probe
 def test_lock_file_wrong_owner_is_rejected_before_either_disclosure_file_is_probed(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, new Finding 3 / mutation N11."""
+    """"""
     directory = tmp_path / "agent-postmortem"
     directory.mkdir(mode=0o700)
     lock_path = directory / "state.lock"
@@ -2164,7 +2158,7 @@ def test_lock_file_wrong_owner_is_rejected_before_either_disclosure_file_is_prob
 def test_lock_file_not_a_regular_file_is_rejected_before_either_disclosure_file_is_probed(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, new Finding 3 / mutation N12."""
+    """"""
     directory = tmp_path / "agent-postmortem"
     directory.mkdir(mode=0o700)
     lock_path = directory / "state.lock"
@@ -2185,7 +2179,7 @@ def test_lock_file_not_a_regular_file_is_rejected_before_either_disclosure_file_
 def test_state_directory_symlink_swapped_in_after_the_lock_is_acquired_is_rejected(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 2, new Finding 3 / mutation N13: _verify_disclosure_
+    """_verify_disclosure_
     prerequisites must open the state directory itself with O_NOFOLLOW|
     O_DIRECTORY, never trust _ensure_state_dir's earlier, separate lstat
     check -- a same-principal race can swap the directory for a symlink in
@@ -2206,7 +2200,7 @@ def test_state_directory_symlink_swapped_in_after_the_lock_is_acquired_is_reject
         os.rename(str(directory), str(directory) + ".real")
         os.symlink(str(elsewhere), str(directory))
 
-    # N3a Codex round 4: the directory is now opened and verified before the
+    # The directory is now opened and verified before the
     # lock, so the window this test targets (after _ensure_state_dir's lstat
     # check, before the directory's own O_NOFOLLOW open) sits right after
     # _ensure_state_dir returns.
@@ -2222,7 +2216,7 @@ def test_state_directory_symlink_swapped_in_after_the_lock_is_acquired_is_reject
 def test_state_directory_renamed_to_a_symlink_after_prerequisite_verification_never_touches_the_alternate_directory(
     tmp_path, monkeypatch
 ):
-    """N3a fix round 3, new Finding 1 (BLOCKER, re-rated MAJOR and fixed the
+    """New Finding 1 (BLOCKER, re-rated MAJOR and fixed the
     robust way per the dispositions): the verified state-directory identity
     must not be discarded before disclosure access. Before this fix,
     _open_verified_state_dir fstats the directory and the lock file
@@ -2294,7 +2288,7 @@ def test_state_directory_renamed_to_a_symlink_after_prerequisite_verification_ne
 
 
 def test_dir_fd_unsupported_platform_fails_closed_to_a_positional_book(tmp_path, monkeypatch):
-    """N3a fix round 3, new Finding 1 (BLOCKER), the dispositions' own
+    """The dispositions' own
     closing instruction: 'fail closed if os.supports_dir_fd lacks a needed
     function.' A platform whose os module cannot actually honor dir_fd for
     the operations disclosure files need (os.open, os.unlink, os.rename)
@@ -2459,7 +2453,7 @@ def test_fsync_directory_uses_the_given_dir_fd_not_the_path(tmp_path):
 
 
 def test_register_falls_back_on_a_plain_runtime_error_from_probing(tmp_path, monkeypatch):
-    """N3a fix round 2, new Finding 4 / mutation N14: register()'s own
+    """register()'s own
     try/except must catch an ordinary Exception, not only the disclosure/
     state error types this module already knows about -- a future refactor
     that narrows it (N14) would let a plain bug escape uncaught instead of
@@ -2477,7 +2471,7 @@ def test_register_falls_back_on_a_plain_runtime_error_from_probing(tmp_path, mon
 
 
 def test_slow_path_runtime_error_degrades_the_whole_book_atomically(tmp_path, monkeypatch):
-    """N3a fix round 2, new Finding 4 / mutation N15: the AliasBook slow
+    """the AliasBook slow
     path's try/except must likewise catch an ordinary Exception and degrade
     the whole book atomically (docs/DESIGN.md 7.5a/P8), not just fall back
     for the one identity that triggered it -- replays
@@ -2503,7 +2497,7 @@ def test_slow_path_runtime_error_degrades_the_whole_book_atomically(tmp_path, mo
 
 
 # ============================================================================
-# N3a fix round 2 review, new Finding 5 (MAJOR): the untouched-state promise
+# The untouched-state promise
 # must be qualified, not contradicted, after a post-commit failure
 # ============================================================================
 
@@ -2543,7 +2537,7 @@ def test_register_docstring_qualifies_the_untouched_state_promise():
 
 # ============================================================================
 # N3a fix3 review, new finding (MAJOR): 7.5a must not call the post-commit
-# registry check "by-path" -- item d (Finding 6) replaced that check with a
+# registry check "by-path" -- item d replaced that check with a
 # reopen of the final path under O_NOFOLLOW, verified from the descriptor, so
 # the contract text describing it as "by-path" now contradicts the code and
 # its own neighboring paragraph.
@@ -2584,7 +2578,7 @@ def test_design_doc_post_commit_reverification_mentions_o_nonblock():
 def test_held_lock_and_verified_directory_name_the_same_directory_when_replaced_after_locking(
     tmp_path, monkeypatch
 ):
-    """N3a Codex round 4, MAJOR 1: a principal able to rename entries in the
+    """MAJOR 1: a principal able to rename entries in the
     state directory's parent replaces the directory with a second real,
     valid 0700 directory right after the lock is acquired. The lock held
     must be the state.lock inside the directory whose descriptor every
@@ -2633,7 +2627,7 @@ def test_held_lock_and_verified_directory_name_the_same_directory_when_replaced_
 
 
 def test_lock_file_symlink_is_refused_on_the_disclosure_path(tmp_path, monkeypatch):
-    """N3a Codex round 4, MAJOR 1 fix: state.lock is opened relative to the
+    """MAJOR 1 fix: state.lock is opened relative to the
     verified directory with O_NOFOLLOW. A state.lock that is a symlink to an
     otherwise valid 0600 file elsewhere would pass every fstat check if it
     were followed, while serializing on a different file than the one
@@ -2657,7 +2651,7 @@ def test_lock_file_symlink_is_refused_on_the_disclosure_path(tmp_path, monkeypat
 def test_held_lock_matches_the_verified_directory_when_replaced_just_before_the_directory_open(
     tmp_path, monkeypatch
 ):
-    """N3a Codex round 4, MAJOR 1, the reviewer's own window: the directory
+    """MAJOR 1, the reviewer's own window: the directory
     is replaced by a second real, valid 0700 directory after the path setup
     but right before the directory is opened for verification. Whatever
     directory ends up verified, the lock held must be that directory's own

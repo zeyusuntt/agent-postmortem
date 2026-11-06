@@ -1,5 +1,5 @@
 """N4b-2 coverage group 8 (risk population, generation assignment, completeness):
-docs/DESIGN.md 4.13.1 and 4.13.11; .reviews/v0.3/N4-plan.md L13.
+docs/DESIGN.md 4.13.1 and 4.13.11.
 
 Most rows build a Run directly, so each inclusion branch has a witness that is in
 the population only through that branch; a few rows read real runs.

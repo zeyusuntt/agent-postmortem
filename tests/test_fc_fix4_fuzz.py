@@ -1,4 +1,4 @@
-"""Fix round 4 (W5) of field milestone F: a seeded generator of shell spellings of one private path.
+"""A seeded generator of shell spellings of one private path.
 
 Each case builds a path whose directory names hold a marker (`Zq<digits>`) and special characters
 (a space, quotes, a colon, `;`, `&`, parentheses, an accented letter in either normal form), writes it

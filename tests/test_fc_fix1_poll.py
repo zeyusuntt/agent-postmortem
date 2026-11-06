@@ -1,5 +1,4 @@
-"""Fix round 1 of field milestone F: S-m5 (docs/DESIGN.md 4.2, 4.13.3 FA4;
-.reviews/v0.3/F-dispositions.md).
+"""S-m5 (docs/DESIGN.md 4.2, 4.13.3 FA4).
 
 `ParentIndex.refresh` ran the fork scan twice per poll for a file whose stem never matches its
 sessionId (a renamed copy: every line has the key, no own entry ever settles the boundary). The

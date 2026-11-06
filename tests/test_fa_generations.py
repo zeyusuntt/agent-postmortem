@@ -1,8 +1,7 @@
 """Part FA2 (field milestone F, T1): generations are bounded by the launch
-`tool_use` timestamp, not by the launch result line (docs/DESIGN.md 4.1, 4.13.1;
-.reviews/v0.3/F-plan.md FA2).
+`tool_use` timestamp, not by the launch result line (docs/DESIGN.md 4.1, 4.13.1).
 
-Why: in the real econ runs the first agent writes its first entry 0.33 to 0.47 s
+Why: in observed workflow runs the first agent writes its first entry 0.33 to 0.47 s
 BEFORE the parent records the launch result, so the first attempt of nearly
 every workflow was unassignable and so always "at risk". An attempt that starts
 after the Workflow call is placed; one that starts before the call is not.
@@ -295,7 +294,7 @@ def test_fa2_an_attempt_with_no_first_ts_stays_unassignable():
     assert ledger.is_unassignable(run, run.attempts[0])
 
 
-# --- field_first_agent_before_launch_result (the real econ shape) -------------------------
+# --- field_first_agent_before_launch_result (the observed shape) -------------------------
 
 FIELD_WF = "wf_00000000-fa5"
 
@@ -303,7 +302,7 @@ FIELD_WF = "wf_00000000-fa5"
 def _field_fixture(tmp_path, monkeypatch, *, first_offset=-0.33, committed_marker=False):
     """Four agents; the first writes its first entry 0.33 s before the launch
     result line and after the Workflow tool_use entry (the shape of all four
-    real econ runs)."""
+    observed workflow runs)."""
     _no_config(monkeypatch, tmp_path)
     root = tmp_path / "root"
     run_dir = _wf_dir(root, FIELD_WF)

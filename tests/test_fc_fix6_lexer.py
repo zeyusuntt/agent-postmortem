@@ -1,6 +1,5 @@
-"""Fix round 6 (W6-2 to W6-8) of field milestone F: focused unit tests of the end-of-line span, the
-lexer and the JSON pass behind `redact.scan_paths` (docs/DESIGN.md 5.1; .reviews/v0.3/
-F-dispositions.md, "Fix round 5 review").
+"""Focused unit tests of the end-of-line span, the
+lexer and the JSON pass behind `redact.scan_paths` (docs/DESIGN.md 5.1).
 
 Every fixture is synthetic.
 """

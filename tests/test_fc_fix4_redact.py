@@ -1,8 +1,7 @@
-"""Fix round 4 (W) of field milestone F: one free-text path scanner built on shell words
-(docs/DESIGN.md 5.1; .reviews/v0.3/F-W-spec.md rev 3; the exact inputs of
-.reviews/v0.3/F-codex-r3.md items 1 to 4 and of the spec reviews F-W-spec-codex*.md).
+"""One free-text path scanner built on shell words
+(docs/DESIGN.md 5.1).
 
-Three review rounds each found one more spelling of a path that a character-class or a
+There was always one more spelling of a path that a character-class or a
 quoted-regex scanner splits, leaving a raw private tail. The unit is now a complete shell word:
 once a word holds a path, the rest of the word is rendered as one path.
 
@@ -72,7 +71,7 @@ def _assert_clean(r, text, private):
             assert word not in out, (sink, word, out)
 
 
-# --- F-codex-r3 item 1: an escaped matching delimiter does not end the quoted path ---------------
+# --- an escaped matching delimiter does not end the quoted path ---------------
 
 ITEM1 = [
     pytest.param("/srv/data/A", 'cat "/srv/data/A\\"B Client/deep/notes.md" now',
@@ -111,7 +110,7 @@ def test_fc4_item1_the_exact_goldens(level):
     )
 
 
-# --- F-codex-r3 item 2: a registered relative value at the start of a quoted path ----------------
+# --- a registered relative value at the start of a quoted path ----------------
 
 ITEM2 = [
     pytest.param("Client", 'cat "Client Secret/deep/notes.md" now', id="double_quoted"),
@@ -144,7 +143,7 @@ def test_fc4_item2_the_exact_goldens(level):
     assert r("cat 'Client Secret/deep/notes.md' now") == "cat 'path-2 [text hidden]' now"
 
 
-# --- F-codex-r3 item 3: unregistered escapes, quoted segments, typographic apostrophes -----------
+# --- unregistered escapes, quoted segments, typographic apostrophes -----------
 
 ITEM3 = [
     # F fix 5 (W5-1): a decoded span that holds a space carries the marker
@@ -178,7 +177,7 @@ def test_fc4_item3_an_unregistered_path_is_one_word(level, text, expected):
     assert r(text) == expected
 
 
-# --- F-W-spec-codex.md items 1 to 3 ---------------------------------------------------------------
+# --- further cases ---------------------------------------------------------------
 
 SPEC1 = [
     pytest.param("/srv/data/Client\" Secret\"/deep/notes.md", id="double_quote_mid_segment"),

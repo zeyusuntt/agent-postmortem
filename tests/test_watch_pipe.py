@@ -1,4 +1,4 @@
-"""`watch RUN_ID` with stdout to a pipe (field report 2026-11-03, "watch under Monitor
+"""`watch RUN_ID` with stdout to a pipe ("watch under Monitor
 delivers nothing until the run ends"; docs/DESIGN.md 4.12).
 
 A Claude Code Monitor reads the watch command's stdout through a pipe. Python block-buffers
@@ -120,7 +120,7 @@ def test_watch_lines_reach_a_pipe_while_the_run_is_still_open(watched, json_flag
 
 
 def test_watch_ends_quietly_when_its_reader_closes_the_pipe(tmp_path):
-    # review round 2: a flushed line meets a closed reader at once; watch must stop without a
+    # a flushed line meets a closed reader at once; watch must stop without a
     # traceback or the interpreter's "Exception ignored" note, with the shell's SIGPIPE code
     run_dir = _run_dir(tmp_path)
     _append(run_dir / "journal.jsonl", {

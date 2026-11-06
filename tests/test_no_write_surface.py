@@ -184,145 +184,146 @@ _ALLOWED_SINK_CALLS = {
     ("reader.py", 452, "path.open"):
         "_transcript_lines: read on past a torn last line, mode 'r' (surrogateescape)",
     ("reader.py", 1034, "journal_path.open"): "read journal.jsonl line by line, mode 'r'",
-    ("reader.py", 1324, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
-    ("reader.py", 3026, "transcript_path.open"):
+    ("reader.py", 1323, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
+    ("reader.py", 3025, "transcript_path.open"):
         "probe that a transcript can be opened at all, immediately closed again, mode 'r'",
-    ("state.py", 237, "os.open"):
+    ("state.py", 236, "os.open"):
         "_backup_writer: create 'state.json.corrupt-<timestamp>' inside the state "
         "directory, O_CREAT|O_EXCL, never a caller-named path (docs/DESIGN.md 7.5)",
-    ("state.py", 444, "os.open"):
+    ("state.py", 443, "os.open"):
         "_open_lock_file: open/create state.lock inside the state directory, O_CREAT, "
         "never a caller-named path",
-    ("state.py", 475, "os.open"):
+    ("state.py", 474, "os.open"):
         "_fsync_dir: open the state directory itself read-only (O_RDONLY), to fsync it "
         "after a rename (best effort, state.json's own writer only)",
-    ("state.py", 505, "os.replace"):
+    ("state.py", 504, "os.replace"):
         "_write_state: the state store's own atomic rename of its temp file over "
         "state.json, both inside the state directory",
-    ("state.py", 952, "os.open"):
+    ("state.py", 951, "os.open"):
         "_open_verified_state_dir: open the state directory itself read-only "
         "(O_RDONLY|O_DIRECTORY|O_NOFOLLOW) to fstat it before either disclosure file is "
-        "ever touched, and (N3a fix round 3, new Finding 1) returns this same verified "
+        "ever touched, and returns this same verified "
         "descriptor for lock_state_dir to keep open and use for every later disclosure "
         "operation instead of reopening by path; reads only, touches no path a caller "
-        "names (docs/DESIGN.md 7.5a, N3a fix round 2, Finding 4)",
-    ("state.py", 999, "os.open"):
+        "names (docs/DESIGN.md 7.5a)",
+    ("state.py", 998, "os.open"):
         "_open_lock_file_at: open/create state.lock relative to the verified state "
         "directory descriptor (dir_fd), O_CREAT|O_RDWR|O_NONBLOCK|O_NOFOLLOW, mode 0600, "
         "so the held lock always belongs to the directory every disclosure operation "
-        "uses (N3a Codex round 4, MAJOR 1); never a caller-named path",
-    ("state.py", 1135, "os.open"):
+        "uses; never a caller-named path",
+    ("state.py", 1134, "os.open"):
         "_open_probe_fd: O_RDONLY|O_NONBLOCK|O_NOFOLLOW probe open of the disclosure "
         "secret or alias registry, both fixed names, either inside the state directory "
-        "by path or (N3a fix round 3, new Finding 1) relative to the verified directory "
+        "by path or relative to the verified directory "
         "descriptor via dir_fd -- never a caller-named path (docs/DESIGN.md 7.5, N3a)",
-    ("state.py", 1201, "os.open"):
+    ("state.py", 1200, "os.open"):
         "_fsync_dir_strict: open the state directory itself read-only (O_RDONLY), to "
         "fsync it after the secret create or the registry rename, only when no dir_fd "
-        "was given (N3a fix round 3: with dir_fd, it fsyncs that already-open "
+        "was given (with dir_fd, it fsyncs that already-open "
         "descriptor directly instead); the disclosure-only sibling of _fsync_dir that "
-        "reports failure instead of swallowing it (docs/DESIGN.md 7.5a, N3a fix round "
-        "2, Finding 1)",
-    ("state.py", 1300, "os.open"):
+        "reports failure instead of swallowing it (docs/DESIGN.md 7.5a)",
+    ("state.py", 1299, "os.open"):
         "create_secret: O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW exclusive create of the "
         "disclosure secret, a fixed name, either inside the state directory by path or "
-        "(N3a fix round 3, new Finding 1) relative to the verified directory "
+        " relative to the verified directory "
         "descriptor via dir_fd -- never a caller-named path (docs/DESIGN.md 7.5, N3a)",
-    ("state.py", 1385, "os.open"):
+    ("state.py", 1384, "os.open"):
         "_create_exclusive_temp_file: O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW create of the "
         "alias registry's own temp file, either inside the state directory by path or "
-        "(N3a fix round 3, new Finding 1) relative to the verified directory "
+        " relative to the verified directory "
         "descriptor via dir_fd -- never a caller-named path (docs/DESIGN.md 7.5, N3a)",
-    ("state.py", 1427, "os.open"):
+    ("state.py", 1426, "os.open"):
         "_verify_registry_after_commit: O_RDONLY|O_NONBLOCK|O_NOFOLLOW reopen of the "
         "alias registry's own fixed path, right after write_registry_bytes's commit, "
-        "either by path or (N3a fix round 3, new Finding 1) relative to the verified "
+        "either by path or relative to the verified "
         "directory descriptor via dir_fd, to verify type/mode/owner/content from the "
-        "descriptor instead of a symlink-following stat() (docs/DESIGN.md 7.5a, N3a "
-        "fix round 2, Finding 6; O_NONBLOCK added in fix round 3, new Finding 2); "
+        "descriptor instead of a symlink-following stat() (docs/DESIGN.md 7.5a); "
         "reads only, touches no caller-named path",
-    ("state.py", 1503, "os.rename"):
+    ("state.py", 1502, "os.rename"):
         "write_registry_bytes: the alias registry's own atomic commit, used only when "
-        "dir_fd is given (N3a fix round 3, new Finding 1) -- os.rename(..., "
+        "dir_fd is given -- os.rename(..., "
         "src_dir_fd=dir_fd, dst_dir_fd=dir_fd) renames the temp file over aliases.json "
         "relative to the verified directory descriptor; POSIX rename() is already an "
         "atomic overwrite, and os.rename (unlike os.replace) is the function "
         "os.supports_dir_fd actually lists on this platform -- both names, never a "
         "caller-named path (docs/DESIGN.md 7.5, N3a)",
-    ("state.py", 1505, "os.replace"):
+    ("state.py", 1504, "os.replace"):
         "write_registry_bytes: the alias registry's own atomic rename of its temp "
         "file over aliases.json by path, used only when no dir_fd was given, both "
         "inside the state directory (docs/DESIGN.md 7.5, N3a)",
-    ("state.py", 801, "os.replace"):
+    ("state.py", 800, "os.replace"):
         "_write_cache: the live store's or the scan cache's own atomic rename of its temp "
         "file over live.json or scan-cache.json, both inside the state directory "
         "(docs/DESIGN.md 4.14.8, 4.14.9)",
-    ("state.py", 643, "os.open"):
+    ("state.py", 642, "os.open"):
         "_open_private_dir: open the state directory's transcript-cache/ itself read-only "
         "(O_RDONLY|O_DIRECTORY|O_NOFOLLOW) to fstat it and run every later cache operation "
         "relative to that descriptor; never a caller-named path (docs/DESIGN.md 4.14.9 item 4)",
-    ("state.py", 671, "os.open"):
+    ("state.py", 670, "os.open"):
         "read_private_bytes: O_RDONLY|O_NONBLOCK|O_NOFOLLOW open of one transcript-cache file "
         "relative to the verified cache directory descriptor, fstat-checked; reads only "
         "(docs/DESIGN.md 4.14.9 item 4)",
-    ("state.py", 706, "os.open"):
+    ("state.py", 705, "os.open"):
         "write_private_bytes: O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW 0600 create of the transcript "
         "cache's (or the hook gate's, 4.14.5) own temp file relative to the verified cache "
         "directory descriptor (docs/DESIGN.md 4.14.9 item 4)",
-    ("state.py", 713, "os.rename"):
+    ("state.py", 712, "os.rename"):
         "write_private_bytes: the transcript cache's own atomic rename of its temp file over one "
         "run's file, both relative to the verified cache directory descriptor "
         "(docs/DESIGN.md 4.14.9 item 4)",
     ("live.py", 119, "self.path.open"):
         "Tail.read: read appended transcript bytes from the last offset, mode 'rb', never "
         "written (docs/DESIGN.md 4.14.3)",
-    ("stalls.py", 51, "<expr>.open"):
+    ("stalls.py", 50, "<expr>.open"):
         "_last_line: read the last 1 KB of a background command's output file for codex's "
         "stdin line, mode 'rb', never written (docs/DESIGN.md 4.14.4)",
-    ("live.py", 1503, "path.open"):
+    ("live.py", 1508, "path.open"):
         "SessionFollower._nested_link: read a nested child's .meta.json (at most 64 KB) for its "
         "launcher and launch id, mode 'rb', never written (docs/DESIGN.md 4.14.3)",
-    ("cli.py", 3051, "os.open"):
+    ("cli.py", 3062, "os.open"):
         "_silence_closed_stdout: open the null device write-only and duplicate it onto stdout's "
         "descriptor after watch's reader closed the pipe, so the exit flush has somewhere to go; "
         "writes nothing else (docs/DESIGN.md 4.12)",
-    ("cli.py", 1851, "path.open"):
+    ("cli.py", 1850, "path.open"):
         "_has_a_timestamp: read a run file's first 64 KB for a timestamp before the --since "
         "pre-filter skips it, mode 'rb', never written (docs/DESIGN.md 4.14.9)",
-    ("doctor.py", 124, "shutil.which"):
+    ("doctor.py", 138, "shutil.which"):
         "_hook_cli_found: look on PATH for the CLI the plugin's hooks would run (docs/DESIGN.md "
         "4.14.12), by name only; a read-only PATH lookup, runs nothing, writes nothing",
-    ("doctor.py", 417, "shutil.which"):
+    ("doctor.py", 434, "shutil.which"):
         "_claude_path: find the claude executable for doctor's one comparison (docs/DESIGN.md "
         "4.14.12); a read-only PATH lookup, writes nothing",
-    ("doctor.py", 483, "subprocess.run"):
+    ("doctor.py", 500, "subprocess.run"):
         "_check_native: `claude agents --json --all`, one fixed argv, never a shell, stdin closed, "
         "under a timeout, only from `doctor`, never from a hook; on a config it has run with "
         "before it left the config's files unchanged (docs/DESIGN.md 4.14.12)",
-    ("doctor.py", 61, "path.open"):
+    ("doctor.py", 118, "path.open"):
+        "_is_plugin_wrapper: read a file on PATH's first 256 bytes for the wrapper's mark, mode 'rb', "
+        "never written (docs/DESIGN.md 7.1)",
+    ("doctor.py", 62, "path.open"):
         "_read_json: read a small settings or plugin file, at most 4 MB, mode 'rb', never written "
         "(docs/DESIGN.md 4.14.12)",
-    ("doctor.py", 321, "main_path.open"):
+    ("doctor.py", 338, "main_path.open"):
         "_first_timestamp: read a transcript's first 256 KB for when the session started, mode "
         "'rb', never written (docs/DESIGN.md 4.14.12)",
     ("workers.py", 208, "<expr>.open"):
         "read_job: read a background session's job file, at most 1 MB, mode 'rb', never written "
         "(docs/DESIGN.md 4.14.5)",
-    ("watcher.py", 72, "<expr>.open"):
+    ("watcher.py", 71, "<expr>.open"):
         "_version_ok: read the main transcript's last 64 KB for the Claude Code version, mode "
         "'rb', never written (docs/DESIGN.md 4.14.5)",
-    ("watcher.py", 158, "self.main_path.open"):
+    ("watcher.py", 157, "self.main_path.open"):
         "active_again: read the main transcript's bytes appended since the watcher's last look, "
         "mode 'rb', never written (docs/DESIGN.md 4.14.5)",
     ("hook_gate.py", 105, "<expr>.open"):
         "_read_range: read the main transcript's bytes appended since the gate's offset (or its "
         "last 64 KB) to look for a mark, mode 'rb', never written (docs/DESIGN.md 4.14.5)",
-    ("watch.py", 197, "path.open"):
+    ("watch.py", 196, "path.open"):
         "_read_new_journal_lines: read appended journal bytes, mode 'rb', never written",
-    ("reader.py", 3875, "self.path.open"):
+    ("reader.py", 3874, "self.path.open"):
         "ParentIndex._hash_prefix: re-read already-parsed prefix bytes to validate the "
         "incremental cache, mode 'rb', never written",
-    ("reader.py", 4073, "self.path.open"):
+    ("reader.py", 4071, "self.path.open"):
         "ParentIndex._parse_increment: read appended parent-transcript bytes, mode 'rb', "
         "never written",
 }

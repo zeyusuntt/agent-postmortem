@@ -789,7 +789,7 @@ def test_workflow_launched_registers_a_running_priority_unit_with_its_locator(mo
     }
     code, out = _run(monkeypatch, capsys, "workflow-launched", payload)
     assert code == 0
-    # .reviews/proposals/2026-09-v0.2-guided-rescue.md section 7: this used
+    #: this used
     # to assert out == "" (docs/DESIGN.md 7.2 pre-M5 said "emit nothing").
     # workflow-launched now hands the session the watch command whenever it
     # could read a run id, so a successful registration also emits the hint.
@@ -855,7 +855,7 @@ def test_workflow_launched_wrong_tool_name_is_silent(monkeypatch, capsys):
 
 
 def test_workflow_launched_hint_opted_out_by_env_var(monkeypatch, capsys, tmp_path):
-    """.reviews/proposals/2026-09-v0.2-guided-rescue.md section 7: 'Opt out:
+    """: 'Opt out:
     AGENT_POSTMORTEM_WATCH_HINT=0'. Registration still happens -- only the
     hint is suppressed, back to the pre-M5 'emit nothing'."""
     monkeypatch.setenv("AGENT_POSTMORTEM_WATCH_HINT", "0")
@@ -1280,7 +1280,7 @@ def test_session_start_only_digests_its_own_root(monkeypatch, capsys, tmp_path):
     assert other_qualified in data["digest"]["pending"]
 
 
-# --- F2 (M1 review finding 2): a malformed 'started' entry must not --------
+# --- F2: a malformed 'started' entry must not --------
 # --- crash the check hook path ----------------------------------------------
 
 MALFORMED_FIELDS_ROOT = (

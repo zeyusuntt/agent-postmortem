@@ -1,9 +1,8 @@
-"""Fix round 7 (W7-2, W7-4, W7-5) of field milestone F: every piece that enters a rescue line is
+"""Every piece that enters a rescue line is
 scanned (the `status` claim and `reset_time` leaked at local), a tool-built sentence is never
-rescanned (config warnings), and the named test gaps (docs/DESIGN.md 5.1, 4.11;
-.reviews/v0.3/F-dispositions.md, "Fix round 6 and 6b review").
+rescanned (config warnings), and the named test gaps (docs/DESIGN.md 5.1, 4.11).
 
-Each row of `.reviews/tooling/f/inventory_fix7.py` that classifies a rescue builder piece as
+Each row of the output inventory that classifies a rescue builder piece as
 scanned names a test of this file.
 
 Every fixture is synthetic.

@@ -1,7 +1,6 @@
 """Tests for unit M3b: `scan` becomes a triage view by default.
 
-docs/DESIGN.md 4.7/4.8 and .reviews/proposals/2026-09-v0.2-guided-rescue.md
-section 6.2. Every fixture root here is built fresh under tmp_path (never
+docs/DESIGN.md 4.7/4.8. Every fixture root here is built fresh under tmp_path (never
 tests/fixtures/, which the tracked-file privacy sweep in test_privacy.py
 audits): a workflow directory under
 <root>/<slug>/<uuid>/subagents/workflows/<wf_id>/, or a session .jsonl at
@@ -598,7 +597,7 @@ def test_all_flag_output_is_the_old_one_row_per_run_list(tmp_path, monkeypatch, 
     # expected order follows the same rule instead of assuming
     # one date.
     # its one entry is at the frozen now and its file was just written, so the tool's own
-    # liveness rule calls it possibly running, and the --all row says so (release review of 0.3.0)
+    # liveness rule calls it possibly running, and the --all row says so
     session_row = (
         f"{session_ref.run_id}  {session_date}  -home-user-scan-all-session  session  "
         f"0 agents  0 attempts  CLEAN possibly running  -\n"

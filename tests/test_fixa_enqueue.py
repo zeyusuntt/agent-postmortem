@@ -1,4 +1,4 @@
-"""N4 fix round, Fix A, M-N4-1 (b): N1's shape rule treats a `queue-operation`
+"""N4, Fix A, M-N4-1 (b): N1's shape rule treats a `queue-operation`
 `enqueue` entry whose key set is exactly {type, operation, sessionId, timestamp}
 as benign (docs/DESIGN.md 4.13.3). Every extra key and every missing key keeps
 the entry malformed. Fixtures are synthetic; every wf_ id used here is in

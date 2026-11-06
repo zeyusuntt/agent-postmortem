@@ -1,4 +1,4 @@
-"""The default `scan` says when it could only read a run in part (field report 2026-11-05: "NEEDS
+"""The default `scan` says when it could only read a run in part ("NEEDS
 ATTENTION (0 of 2 runs) / nothing needs attention" over a run whose journal had malformed fields,
 which only `--all` showed as `CLEAN (INCOMPLETE)`; docs/DESIGN.md 4.7). Synthetic fixtures only.
 """
@@ -60,7 +60,7 @@ def test_with_candidates_the_line_still_comes(tmp_path, capsys, monkeypatch):
     assert "nothing needs attention" not in text
 
 
-# --- field report 2026-11-05: a placeholder in a prompt's path names no one file -----------------
+# --- a placeholder in a prompt's path names no one file -----------------
 
 
 def test_a_capital_placeholder_in_a_file_name_is_a_template():
@@ -82,7 +82,7 @@ def test_a_real_name_with_capitals_is_still_a_file():
 
 def test_a_placeholder_kept_by_an_older_build_is_not_told_as_missing(tmp_path):
     """0.5.0 kept `reply-N.json` in a subagent's facts, and a store of the same facts version is
-    read as it is, so the rule also holds where the kept list is read (0.5.1 release review)."""
+    read as it is, so the rule also holds where the kept list is read."""
     from agent_postmortem import live
 
     gone = str(tmp_path / "report.md")

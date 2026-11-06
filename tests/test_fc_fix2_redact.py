@@ -1,5 +1,4 @@
-"""Fix round 2 of field milestone F: R2-1 and R2-2 (docs/DESIGN.md 5.1, FA1;
-.reviews/v0.3/F-dispositions.md, Codex round 2).
+"""R2-1 and R2-2 (docs/DESIGN.md 5.1, FA1).
 
 R2-1: a quoted span is scanned by its opening delimiter. Its body excludes only that matching
 delimiter and a newline, so a double-quoted path may hold an apostrophe and a single-quoted

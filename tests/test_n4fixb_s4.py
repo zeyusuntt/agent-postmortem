@@ -1,6 +1,6 @@
 """Fix B, S4: in every write form, options must precede the first operand (POSIX
 getopt, what macOS runs); an option-looking word after an operand makes the
-command opaque (docs/DESIGN.md 4.13.1; .reviews/v0.3/N4-dispositions.md S4).
+command opaque (docs/DESIGN.md 4.13.1).
 The read-only grammar is unaffected: an operand there is only read.
 """
 

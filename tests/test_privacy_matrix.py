@@ -211,7 +211,7 @@ def _hook_live(command: str, event: str):
 
 
 def _hook_pre_bash(env: Env, flags: list[str]):
-    """docs/DESIGN.md 4.14.5 (field report 2026-11-03, item 5): the PreToolUse warning for a
+    """docs/DESIGN.md 4.14.5: the PreToolUse warning for a
     background codex exec whose command names the planted session's own paths; it prints fixed
     words only."""
     session = env.planted.root / env.planted.slug / f"{env.planted.session}.jsonl"
@@ -225,7 +225,7 @@ def _hook_pre_bash(env: Env, flags: list[str]):
 
 
 def _hook_worker(env: Env, flags: list[str]):
-    """docs/DESIGN.md 4.14.5 (field reports 2026-11-04): the session launched a worker whose job
+    """docs/DESIGN.md 4.14.5: the session launched a worker whose job
     file holds the planted strings in `needs` (past the tool, which is all that is printed),
     `detail` and `output.result`."""
     session = env.planted.root / env.planted.slug / f"{env.planted.session}.jsonl"

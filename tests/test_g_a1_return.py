@@ -1,4 +1,4 @@
-"""G-A1 (fix round for G-A, docs/DESIGN.md 4.13.1 "Return evidence"): GA-1 an unreadable issuer,
+"""G-A1 (docs/DESIGN.md 4.13.1 "Return evidence"): GA-1 an unreadable issuer,
 GA-4 a non-string tool_use id, GA-6 and GA-12 the rows the G-A mutation review found missing,
 GA-7 a SendMessage addressed by an agent name.
 

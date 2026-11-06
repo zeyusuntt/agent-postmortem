@@ -115,7 +115,7 @@ def test_a_resume_after_the_later_notice_reads_running_again(tmp_path):
     assert _row(main)["state"] == "running"  # the transcript grew past it, 10 minutes on
 
 
-# --- review round 3 of this change ---------------------------------------------------------------
+# --- further cases ---
 
 
 def test_a_delayed_delivery_copy_does_not_end_a_resumed_subagent(tmp_path):

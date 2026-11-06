@@ -1,10 +1,9 @@
-"""Fix round 12 (W12-1, W12-2) of field milestone F: the strict start rule after the round 11
-reviews (docs/DESIGN.md 5.1; .reviews/v0.3/F-dispositions.md, "Fix round 11 review";
-F-W11-review.md and F-codex-r11.md).
+"""The strict start rule after the round 11
+reviews.
 
 W12-1: a combining mark of the unspaced class (a Thai, Lao or Myanmar vowel, tone or asat mark)
 ends a word like a letter does, so a slash between two such words stays prose. W12-2: rows for
-the boundary classes and suffix runs the round 11 reviewers found unpinned.
+the boundary classes and suffix runs not yet pinned.
 
 Every fixture is synthetic. Private words are the ones a stranger must never read.
 """
@@ -28,7 +27,7 @@ def _rows(rows):
     return [pytest.param(level, text, id=f"{rid}-{level}") for rid, text in rows for level in LEVELS]
 
 
-# --- W12-1: a combining mark ends a word of the unspaced class (Codex r11 finding 1) --------------
+# --- W12-1: a combining mark ends a word of the unspaced class --------------
 
 W121_PROSE = [
     ("thai_yes_no", "ใช่/ไม่ใช่"),  # U+0E48 before the slash
@@ -45,7 +44,7 @@ def test_fc12_w1_a_slash_between_words_that_end_in_a_mark_stays_prose(level, tex
 
 @pytest.mark.parametrize("level", LEVELS)
 def test_fc12_w1_a_spacing_mark_and_the_decoded_spelling_follow_the_same_rule(level):
-    """Codex r12: U+1038 MYANMAR SIGN VISARGA is category Mc, not Mn; the decoded text of an
+    """U+1038 MYANMAR SIGN VISARGA is category Mc, not Mn; the decoded text of an
     escaped word reaches the same helper."""
     r = _redactor(level)
     assert r("စား/မစား") == "စား/မစား"
@@ -55,7 +54,7 @@ def test_fc12_w1_a_spacing_mark_and_the_decoded_spelling_follow_the_same_rule(le
 
 @pytest.mark.parametrize("level", LEVELS)
 def test_fc12_w1_a_mark_outside_the_class_is_an_ordinary_boundary(level):
-    """Codex r12: the mark rule holds only inside the unspaced class. An Arabic word ending in
+    """The mark rule holds only inside the unspaced class. An Arabic word ending in
     U+064F is no word character of the class, so the slash after it starts a path."""
     r = _redactor(level)
     _clean12(r, "تعذّرُ/Zqa")
@@ -75,7 +74,7 @@ def test_fc12_w1_a_path_after_a_word_that_ends_in_a_mark_still_hides(level, text
     _clean12(_redactor(level), text)
 
 
-# --- W12-2: rows the round 11 reviewers found unpinned (Codex r11 finding 2, sonnet r11 finding 4)
+# --- W12-2: rows not yet pinned ---
 
 W122_HIDE = [
     ("period_run", "读取/Zqa.md... failed"),
@@ -102,7 +101,7 @@ def test_fc12_w2_the_unpinned_rows_hide(level, text):
 def test_fc12_w2_the_recorded_one_segment_limits_are_pinned(level):
     """docs/DESIGN.md 5.1, recorded in F fix 12: a one-segment value after an unspaced word whose
     name goes on past a shell operator, or past a path-alphabet character after its extension,
-    is read by the strict rule as prose (sonnet r11 finding 1, CONTRIVED: a root-level name with
+    is read by the strict rule as prose (contrived: a root-level name with
     `(` or `&` glued to an unspaced word)."""
     r = _redactor(level)
     assert r("读取/Zqa&Zqb/x.md") == "读取/Zqa&Zqb/x.md"

@@ -1,5 +1,4 @@
-"""`hook stop-watch` wakes a session that has gone idle (docs/DESIGN.md 4.14.5; field reports
-2026-11-04). The per-call hook needs a tool call, and the manager of the field report made none
+"""`hook stop-watch` wakes a session that has gone idle (docs/DESIGN.md 4.14.5). The per-call hook needs a tool call, and the manager of the field report made none
 all night. The worst failure here is a session woken over and over, so most of these are about
 when it must not wake.
 
@@ -537,7 +536,7 @@ def test_the_wake_prints_none_of_the_workers_words(tmp_path, monkeypatch, capsys
     assert "(approve Bash)" in err and "zz-private" not in err, err
 
 
-# --- review round 1 of this feature --------------------------------------------------------------
+# --- further cases --------------------------------------------------------------
 
 
 def test_a_claim_that_fails_at_its_commit_does_not_wake(tmp_path, monkeypatch, capsys):
@@ -664,7 +663,7 @@ def test_a_renewed_watcher_says_so_again_at_its_own_deadline(tmp_path, monkeypat
     assert "after 14 days" in capsys.readouterr().err
 
 
-# --- review round 2 of this feature --------------------------------------------------------------
+# --- further cases --------------------------------------------------------------
 
 
 def test_a_job_removed_during_the_cooldown_wakes_nothing(tmp_path, monkeypatch, capsys):
@@ -698,7 +697,7 @@ def test_one_failed_stat_does_not_end_the_watch(tmp_path, monkeypatch, capsys):
     assert PERMISSION in capsys.readouterr().err
 
 
-# --- review round 3 of this feature --------------------------------------------------------------
+# --- further cases --------------------------------------------------------------
 
 
 def test_a_decision_after_a_delivery_still_wakes(tmp_path, monkeypatch, capsys):

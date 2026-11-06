@@ -1,4 +1,4 @@
-"""N9 V3: the 0.3 docs say what the 0.3 tool does (.reviews/v0.3/N9-plan.md).
+"""N9 V3: the 0.3 docs say what the 0.3 tool does.
 
 README "What changed in 0.3", the CHANGELOG entry, the DESIGN 4.13 status
 marks, and the two plugin skills read against the 0.3 outputs.
@@ -96,17 +96,14 @@ def test_changelog_unreleased_entry_is_first_and_grouped():
     assert "http" not in entry
 
 
-def test_the_package_version_is_0_5_1():
+def test_the_package_version_is_0_5_2():
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     init = (REPO_ROOT / "src" / "agent_postmortem" / "__init__.py").read_text(encoding="utf-8")
-    assert re.search(r'^version = "0\.5\.1"', pyproject, re.M)
-    assert '__version__ = "0.5.1"' in init
+    assert re.search(r'^version = "0\.5\.2"', pyproject, re.M)
+    assert '__version__ = "0.5.2"' in init
 
 
 # ---- DESIGN ----
-
-COMMITS = re.compile(r"\(commits [0-9a-f]{7}\.\.[0-9a-f]{7}\)")
-
 
 def test_design_413_heading_is_marked_implemented():
     heading = re.search(r"^## 4\.13 .*$", DESIGN, re.M).group(0)
@@ -114,16 +111,15 @@ def test_design_413_heading_is_marked_implemented():
 
 
 @pytest.mark.parametrize("number", [1, 2, 3, 4, 5, 6, 7, 8])
-def test_design_section_headings_carry_implemented_and_a_commit_range(number):
+def test_design_section_headings_carry_implemented(number):
     heading = re.search(rf"^### 4\.13\.{number} .*$", DESIGN, re.M).group(0)
     assert re.search(r"\(implemented in N\d", heading), heading
-    assert COMMITS.search(heading), heading
 
 
 def test_design_4139_and_41310_headings_are_marked():
     h9 = re.search(r"^### 4\.13\.9 .*$", DESIGN, re.M).group(0)
     h10 = re.search(r"^### 4\.13\.10 .*$", DESIGN, re.M).group(0)
-    assert "implemented in N9" in h9 and "f58f8b2.." in h9
+    assert "implemented in N9" in h9
     assert "standing" in h10
 
 
@@ -175,7 +171,7 @@ def test_rescue_skill_handles_the_no_unit_sentences():
     assert "exit code 4" in RESCUE_SKILL
 
 
-# ---- N9 fix 1 (.reviews/v0.3/N9-dispositions.md items 2 to 7) ----
+# ---- further doc checks ----
 
 def test_fix1_changelog_states_the_real_marker_boundary():
     entry = _section(CHANGELOG, "[0.3.0]")
@@ -223,19 +219,10 @@ def test_fix1_design_marks_n9_verification_by_what_exists():
     h = re.search(r"^## 4\.13 .*$", DESIGN, re.M).group(0)
     assert "verified" not in h
     h9 = re.search(r"^### 4\.13\.9 .*$", DESIGN, re.M).group(0)
-    assert "87b4cca.." not in h9 and "f58f8b2.." in h9
-    assert "advisory corpus check run with the owner's authorization" in h9
+    assert "advisory corpus check run" in h9
     body = _section(DESIGN, "4.13.11", "### ")
     n7 = re.search(r"^\*\*N7,[^\n]*", body, re.M).group(0)
-    assert "step 3 and its `RUN_CACHE_ENABLED` flag are deferred past v0.3 by the owner's decision C (N7-plan.md" in " ".join(
-        body[body.index("**N7,"):].split()
-    )
     assert "Folded into 4.13.7 in N7 step 1" in n7
-
-
-def test_fix1_design_lifecycle_range_runs_to_the_last_lifecycle_fix():
-    h3 = re.search(r"^### 4\.13\.3 .*$", DESIGN, re.M).group(0)
-    assert "31a2c24..7f3a643" in h3 and "533acac" not in h3
 
 
 def test_fix1_readme_detector_table_lists_workflow_failed():

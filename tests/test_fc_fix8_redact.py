@@ -1,9 +1,6 @@
-"""Fix round 8 (W8-1 to W8-4, W8-8, W8-9) of field milestone F: the path-start grammar and the
-lexer after the round 7 reviews (docs/DESIGN.md 5.1; .reviews/v0.3/F-dispositions.md, "Fix round 7
-review" and "Codex round 7").
+"""The path-start grammar and the lexer (docs/DESIGN.md 5.1).
 
-Every exact input of the sonnet round 7 review (F-W7-review.md findings 1 to 4) and of Codex round 7
-(F-codex-r7.md findings 1 and 2) runs through the sinks the reviewers list, at share and at local.
+Every exact input found so far runs through the sinks, at share and at local.
 
 Every fixture is synthetic. Private words are the ones a stranger must never read.
 """

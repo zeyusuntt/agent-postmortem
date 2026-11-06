@@ -718,8 +718,8 @@ def _load_workflow(path: Path) -> Run:
         # docs/DESIGN.md 4.6: a non-string key or agentId names no attempt
         # this reader can safely build -- an int/list/bool key can never
         # index agents_by_key the way a string key does below, and a
-        # non-string agentId used to crash _valid_agent_id (M1 review
-        # finding 2). Skip the whole entry, with a line-specific diagnostic,
+        # non-string agentId used to crash _valid_agent_id.
+        # Skip the whole entry, with a line-specific diagnostic,
         # and force status INCOMPLETE, rather than build a malformed Attempt.
         # A missing or explicit-null key/agentId is the existing, valid
         # "unkeyed"/"blank id" shape and is untouched here; only a *present
@@ -957,8 +957,8 @@ def _load_workflow(path: Path) -> Run:
     # same table (through lifecycle_finished), so this reader and that hook
     # can never again drift into two different answers the way the N2
     # checkpoint did. Unlike workflow_lifecycle, this call passes the
-    # journal resolution _load_workflow already computed above (N1N2 review
-    # finding 7) instead of letting workflow_lifecycle read and
+    # journal resolution _load_workflow already computed above
+    # instead of letting workflow_lifecycle read and
     # state-machine journal.jsonl a second time.
     journal_resolved = _workflow_finished_from_occurrences(journal_attempts)
     run.lifecycle = _lifecycle_from_parts(run.path, run_id, journal_resolved, parent_index)
@@ -1198,8 +1198,7 @@ def _run_journal_state_machine(
 
 
 # --- Attempt.reported: the agent's own self-reported result (docs/ -----
-# --- DESIGN.md section 3, 4.1; .reviews/proposals/2026-09-v0.2-guided- ---
-# --- rescue.md section 4.3) ----------------------------------------------
+# --- DESIGN.md section 3, 4.1) --------------------------------------------
 #
 # A real journal 'result' event's own value is a dict in most cases and a
 # string in the rest (measured: 483/705 dict, 222/705 string on real data).
@@ -1240,7 +1239,7 @@ def _reported_claims(value: dict) -> dict:
         if key in value and type(value[key]) is int:
             claims[key] = value[key]
 
-    # field report 2026-11-05: `{"tests": {"failed": 2}}`, one level and only these names
+    # `{"tests": {"failed": 2}}`, one level and only these names
     tests = value.get("tests")
     if "tests_failed" not in claims and isinstance(tests, dict):
         for key in ("failed", "failures"):
@@ -2319,7 +2318,7 @@ def _is_rejected_launch(block: dict, tool_use_result: object) -> bool:
     """docs/DESIGN.md 4.13.1 (N4 fix, A4 and A5): a launch result whose
     `tool_result` block has `is_error` true and whose entry-level
     `toolUseResult` is a string. This is the rejected shape only; it is not
-    proof that no run was created (Codex round 2, R2-3): a rejected resume
+    proof that no run was created (R2-3): a rejected resume
     launch stays involved with the run it names, and an initial rejected
     launch stays `undiscovered` in the session launch table."""
     return block.get("is_error") is True and isinstance(tool_use_result, str)
@@ -2637,7 +2636,7 @@ def _fork_scan(path: Path) -> tuple[int, bool]:
         return hook_last_foreign, True
     # no hook-identified prefix yet: settled only once the first window passed without a hook
     # line, or the first one named this session ("none"); a fork's copied block may still be
-    # arriving, and a settled boundary is never read again (batch 1 review)
+    # arriving, and a settled boundary is never read again
     return 0, sid_own_seen and hook_state == "none"
 
 
@@ -3714,7 +3713,7 @@ class ParentIndex:
         # except that a transient I/O failure (below) can force one more
         # full reinspection, which may then legitimately set it True again.
         self.inspection_complete = True
-        # (N1N2 review round 2, new finding 1) True exactly when the most
+        # True exactly when the most
         # recent _refresh() ended in an OSError from stat/rehash/reparse:
         # content validity (inspection_complete, above, and every per-line
         # diagnostic) is persistent -- it only ever reflects bytes this index
@@ -3731,7 +3730,7 @@ class ParentIndex:
         # own needs_reset was already true for an ordinary reason.
         self._needs_full_recheck = False
         self._raw_diagnostics: list[str] = list(self.diagnostics)
-        # (N1N2 review round 2, original finding 1) gen_diagnostics as last
+        # gen_diagnostics as last
         # computed by _rebuild_generations, kept separately from
         # _raw_diagnostics so self.diagnostics can be recomputed by
         # _recompute_diagnostics from both of these plus
@@ -3887,7 +3886,7 @@ class ParentIndex:
         (everything _reset_state() wipes, plus lines_parsed, which
         _parse_increment can advance before it raises) -- taken right before
         _reset_state() runs, restored verbatim by _restore_state if the
-        rebuild's own read then fails (N1N2 fix review finding 1). Keeps a
+        rebuild's own read then fails. Keeps a
         failed rebuild from committing _reset_state()'s wipe."""
         return {
             "task_stops": list(self.task_stops),
@@ -3923,8 +3922,7 @@ class ParentIndex:
         Called from _rebuild_generations after a successful pass, and
         directly from _mark_unreadable so a failure branch that never
         reaches _rebuild_generations at all still leaves self.diagnostics
-        current before _refresh returns (N1N2 review round 2, original
-        finding 1)."""
+        current before _refresh returns."""
         diagnostics = list(self._raw_diagnostics) + list(self._gen_diagnostics)
         if self._unreadable_diagnostic is not None:
             diagnostics.append(self._unreadable_diagnostic)
@@ -3940,7 +3938,7 @@ class ParentIndex:
 
     def _mark_unreadable(self) -> None:
         """Record a transient I/O failure from anywhere in _refresh's own
-        stat/rehash/reparse steps (N1N2 review round 2, new finding 1):
+        stat/rehash/reparse steps:
         inspection is no longer complete, and the *next* access must do a
         full reinspection from byte 0 regardless of what the ordinary
         inode/size/prefix-hash comparison would otherwise conclude -- that
@@ -3948,7 +3946,7 @@ class ParentIndex:
         which is exactly what a one-time, non-recurring I/O hiccup leaves
         behind, so nothing else would ever re-trigger the recheck this needs.
         Also records the one stable, file-level diagnostic a read failure
-        gets (original finding 1, PARTLY): never a growing list, since the
+        gets: never a growing list, since the
         same ongoing failure recurring across refreshes is one fact, and
         visible on self.diagnostics immediately -- this failure path never
         reaches _rebuild_generations, which is the only other place that
@@ -3970,7 +3968,7 @@ class ParentIndex:
             return
         except OSError:
             # Exists but could not even be stat'd -- unreadable, not merely
-            # absent (N1N2 review finding 1): current state is kept as-is,
+            # absent: current state is kept as-is,
             # the same tolerant "do not raise" rule as every other branch of
             # this method, but inspection is no longer complete.
             self._mark_unreadable()
@@ -4008,7 +4006,7 @@ class ParentIndex:
                 self._mark_unreadable()
                 return
 
-        # N1N2 fix review finding 1: _reset_state() wipes generations/
+        # _reset_state() wipes generations/
         # task_stops/kill_sentinels/etc. before the rebuild's own read has
         # even been attempted. Snapshot first, so a read failure right after
         # the reset (a permission flap, a transient I/O error, a concurrent
@@ -4031,8 +4029,8 @@ class ParentIndex:
         try:
             self._parse_increment(size)
         except OSError:
-            # A read failure partway through reading the new tail (N1N2
-            # review finding 1: the concrete scenario is Path.open raising
+            # A read failure partway through reading the new tail (the
+            # concrete scenario is Path.open raising
             # for an existing file whose stat() still succeeded) never
             # raises past this point; the index simply stays incomplete and
             # keeps whatever state it already had -- restoring the
@@ -4083,7 +4081,7 @@ class ParentIndex:
             line_no = start_line_no + offset_in_chunk
             # docs/DESIGN.md 4.13.3: "lines_parsed adds one per complete line
             # parsed" -- every complete physical line counts, blank ones
-            # included (N1N2 review finding 8), so the increment happens
+            # included, so the increment happens
             # before the blank-line skip below, not after it.
             self.lines_parsed += 1
             if line_no <= self._skip_through:
@@ -4096,11 +4094,11 @@ class ParentIndex:
             except (UnicodeDecodeError, *_UNPARSEABLE) as exc:
                 # docs/DESIGN.md 4.13.3's Run lifecycle paragraph: parent
                 # inspection is complete only when the file "has no
-                # undecodable line" (N1N2 review finding 1/7 -- computed
+                # undecodable line" (computed
                 # here, in the same incremental pass, rather than by a
                 # second full re-read). docs/DESIGN.md section 2: a bad line
-                # becomes a diagnostic too, never only a dropped flag (N1N2
-                # review round 2, original finding 1) -- a fixed reason and
+                # becomes a diagnostic too, never only a dropped flag
+                # -- a fixed reason and
                 # the line number only, never the undecodable text itself.
                 self.inspection_complete = False
                 reason = f": {_TOO_DEEP}" if isinstance(exc, RecursionError) else ""
@@ -4114,8 +4112,8 @@ class ParentIndex:
                 self._raw_diagnostics.append(f"{self.path.name}:{line_no}: {_PARENT_NOT_OBJECT}")
                 continue
             if not _entry_shape_ok(entry):
-                # Same rule, the shape-violation half (N1N2 review round 2,
-                # original finding 1): a fixed reason and the line number
+                # Same rule, the shape-violation half:
+                # a fixed reason and the line number
                 # only, regardless of which of 4.13.3's sub-rules failed.
                 self.inspection_complete = False
                 self._raw_diagnostics.append(
@@ -4519,7 +4517,7 @@ def lifecycle_terminal_line(run: Run) -> int | None:
     """The physical parent-transcript line that decided run.lifecycle's own
     terminal (docs/DESIGN.md 4.13.3), read straight off the private
     `_terminal_line` already captured in the exact snapshot that produced
-    `run.lifecycle` (N1N2 review finding 2) -- never re-derived by a fresh
+    `run.lifecycle` -- never re-derived by a fresh
     ParentIndex query, which could by now reflect a newer generation
     appended to the parent transcript after load_run() computed
     `run.lifecycle`. Lifecycle's own public shape still has exactly the five
@@ -4641,7 +4639,7 @@ def _lifecycle_from_parts(
         return Lifecycle(
             terminal=newest.terminal, source=newest.terminal_source, activity=activity,
             generations=len(generations), diagnostics=list(newest.diagnostics),
-            # N1N2 review finding 2: captured in this same snapshot so
+            # Captured in this same snapshot so
             # workflow_failed's evidence never drifts to a newer generation
             # a later ParentIndex refresh might see.
             _terminal_line=newest.terminal_line,

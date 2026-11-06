@@ -13,11 +13,11 @@ post_tool_check) only when:
   agent id (a launch or a return), an interrupt or a TaskStop: the facts that decide or explain
   an ending;
 - an earlier check left a kill waiting for its native notice (`pending`);
-- (field report 2026-11-03) a background command was launched (`"backgroundTaskId"` in the
+- a background command was launched (`"backgroundTaskId"` in the
   appended bytes), or the time the last check stored, when a running command can first have
   stopped writing (`recheck_at`), has come. A session with no subagent keeps no gate state
   until its transcript's tail names a background command or a worker;
-- (field reports 2026-11-04) this call launched a worker (`claude --bg`, read from the payload,
+- this call launched a worker (`claude --bg`, read from the payload,
   since the transcript can lag), the appended bytes name one (`--bg`, `--background`, `claude
   attach `), or a worker's job file says something new: its file is parsed only when its size or
   mtime moved, at most 8 per call, and the gate opens only if its state, class or `needs` did.
@@ -146,7 +146,7 @@ def _main_delta(main_path: str, gate: dict | None) -> tuple[bool, dict]:
 
 def _tail_names_a_launch(main_path: str) -> bool:
     """Whether the last 64 KB of the main transcript name a background command: the one read a
-    session with no subagent and no gate state pays at a call (field report 2026-11-03)."""
+    session with no subagent and no gate state pays at a call."""
     try:
         size = os.stat(main_path).st_size
     except OSError:

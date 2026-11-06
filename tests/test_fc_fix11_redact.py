@@ -1,9 +1,7 @@
-"""Fix round 11 (W11-1 to W11-3) of field milestone F: the strict start rule after the round 10
-reviews (docs/DESIGN.md 5.1; .reviews/v0.3/F-dispositions.md, "Fix round 10 review";
-F-W10-review.md and F-codex-r10.md).
+"""The strict start rule after the round 10
+reviews.
 
-Every exact input of Codex round 10 (finding 1) and of the sonnet round 10 review (findings 1, 2)
-runs through the sinks the reviewers list, at share and at local.
+Every exact input found so far runs through the sinks, at share and at local.
 
 Every fixture is synthetic. Private words are the ones a stranger must never read.
 """

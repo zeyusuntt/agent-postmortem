@@ -1,5 +1,4 @@
-"""Fix round 3 of field milestone F: M3-1 (docs/DESIGN.md 5.1, FA1; .reviews/v0.3/F-dispositions.md,
-"Main-session finding before Codex round 3").
+"""M3-1 (docs/DESIGN.md 5.1, FA1).
 
 (a) The quoted-path scrub (`_QUOTED_PATH_RE`) is delimiter-aware: the body excludes only the
 matching delimiter and a newline, so a double-quoted path may hold an apostrophe and a

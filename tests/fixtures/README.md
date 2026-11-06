@@ -245,7 +245,7 @@ main transcript's `TaskStop` line.
 ### `session_human_interrupt`
 
 Session kind. The main transcript's own last event is the kill sentinel
-(the owner pressed Escape on the whole session); the child's kill sentinel
+(the user pressed Escape on the whole session); the child's kill sentinel
 lands 5s later, well inside the 30s window and with no `TaskStop` anywhere.
 
 Expected numbers: `interrupt.cause` is `"human"`, severity info (docs/

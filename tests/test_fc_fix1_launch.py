@@ -1,4 +1,4 @@
-"""Fix round 1 of field milestone F: S-m4 (docs/DESIGN.md 4.7; .reviews/v0.3/F-dispositions.md).
+"""S-m4 (docs/DESIGN.md 4.7).
 
 The unassignable reason "the launch times are missing or out of order" was misleading when
 no launch exists at all (a run whose parent transcript is absent, the packaged demo): there is

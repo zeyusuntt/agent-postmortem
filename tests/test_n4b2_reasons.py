@@ -1,6 +1,6 @@
 """N4b-2 coverage group 7 (ledger existence, completeness, and every reason with
 every producer, in the fixed order): docs/DESIGN.md 4.13.1, C-14's 4.1 rule,
-C-15; .reviews/v0.3/N4-plan.md L12.
+C-15.
 
 Each producer has a test that asserts the whole reasons list, so a missing,
 extra, or reordered reason fails it. Runs are real: a synthetic workflow run (one

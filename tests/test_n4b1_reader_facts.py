@@ -1,7 +1,7 @@
 """N4b-1 coverage group 8 (reader facts): the private ToolCall fields
 (run_in_background, a Monitor command, a MultiEdit path, the N4a
 classification), Attempt.journal_state, and Generation.result_ts
-(docs/DESIGN.md 4.1, 4.13.1, C-14; .reviews/v0.3/N4-plan.md L13, L15).
+(docs/DESIGN.md 4.1, 4.13.1, C-14).
 
 Fixtures are synthetic. Every wf_ id used here is in tests/synthetic-ids.txt.
 """

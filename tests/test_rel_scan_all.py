@@ -97,7 +97,7 @@ def _session_raw(root, slug: str, uuid: str, stamps: list[str | None], mtime: fl
 
 
 def test_rows_are_ordered_by_the_instant_and_undated_rows_come_first(tmp_path, monkeypatch, capsys):
-    """Codex release review round 3, finding 2: `-07:00` and `+00:00` start times sort by the
+    """`-07:00` and `+00:00` start times sort by the
     instant they name, not by their text, and a run with no start time sorts before every dated
     run (oldest first: nothing says it is new), in the text and in --json alike."""
     now = _freeze_now(monkeypatch)

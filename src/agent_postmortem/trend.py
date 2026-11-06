@@ -291,7 +291,7 @@ def _format_rate(rate: float | None) -> str:
 
 
 def _display_target(target: str | None, redactor: Redactor) -> str:
-    """docs/DESIGN.md 5.1: a rule target (the free-text 'target' an owner
+    """docs/DESIGN.md 5.1: a rule target (the free-text 'target' a user
     recorded for an adopted rule) renders as 'target-N (basename)', a
     per-render pseudonym plus the file's own basename -- enough to tell two
     different targets apart in one report without the full path, which

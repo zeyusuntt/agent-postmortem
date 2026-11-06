@@ -1,5 +1,4 @@
-"""The plugin tells the manager about its workers (Zeyu's direction, field reports 2026-11-04;
-docs/DESIGN.md 4.14.5).
+"""The plugin tells the manager about its workers (docs/DESIGN.md 4.14.5).
 
 Claude Code records a background session's state in its job file and tells nobody: a worker sat
 8.5 hours on a permission prompt while the session that launched it heard nothing. The test that
@@ -262,7 +261,7 @@ def test_the_state_word_catching_up_is_no_new_change(tmp_path, monkeypatch, caps
 
 def test_a_worker_on_a_schedule_is_told_finishing_twice_then_not_until_trouble(
         tmp_path, monkeypatch, capsys):
-    """Field report 2026-11-04: a worker goes `done` after each scheduled check and wakes on its
+    """A worker goes `done` after each scheduled check and wakes on its
     own cron, so "finished" would fire every hour. None of its own words go on the line."""
     m = Manager(tmp_path)
     m.launched()
@@ -644,7 +643,7 @@ def test_a_worker_idle_on_a_silent_command_is_told_once(tmp_path, monkeypatch, c
     assert _hook(monkeypatch, capsys, m) == ""  # same state, so the gate stays shut until the clock
     clock_is_up()
     text = _hook(monkeypatch, capsys, m)
-    # field report 2026-11-04: it can only see the command's own files, so it says what it knows
+    # it can only see the command's own files, so it says what it knows
     assert text.startswith(f"WORKER night-run ({SHORT}) idle 40m:"), text
     assert "may be hung or writing elsewhere" in text and "only its end would wake" in text, text
     assert "Check before stopping it" in text and f"claude attach {SHORT}" in text
@@ -709,7 +708,7 @@ def test_an_ending_waits_when_the_workers_fill_the_budget(tmp_path, monkeypatch,
     assert long_ending in _hook(monkeypatch, capsys, m)
 
 
-# --- review round 1 of this feature --------------------------------------------------------------
+# --- further cases --------------------------------------------------------------
 
 
 def test_a_long_word_after_new_project_mcp_is_no_label(tmp_path, monkeypatch, capsys):
@@ -816,7 +815,7 @@ def test_the_gate_keeps_no_more_workers_than_the_facts(tmp_path, monkeypatch, ca
     assert len(gate["workers"]) <= workers.WORKERS_KEPT, len(gate["workers"])
 
 
-# --- review round 2 of this feature --------------------------------------------------------------
+# --- further cases --------------------------------------------------------------
 
 
 def test_a_short_word_after_new_project_mcp_is_no_label(tmp_path, monkeypatch, capsys):
@@ -937,7 +936,7 @@ def test_the_stall_turn_is_kept_in_the_gate(tmp_path, monkeypatch, capsys):
     assert gate["stall_turn"] == 1
 
 
-# --- review round 3 of this feature --------------------------------------------------------------
+# --- further cases --------------------------------------------------------------
 
 
 def test_a_partial_stall_read_keeps_the_reported_identity(tmp_path, monkeypatch):

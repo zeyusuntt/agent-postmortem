@@ -240,7 +240,7 @@ def test_k3_no_title_in_any_fixture_claims_a_cause_by_the_precursor(word):
         assert not re.search(rf"\b{word}\b", title.lower()), (name, title)
 
 
-# field report 2026-09-30 "mislabeled_kill major with no paths written reads as alarming": the
+# the
 # title says what the transcript logged, as the runtime-cause title already does
 def test_every_unattributed_title_says_the_log_called_it_a_user_interrupt(tmp_path):
     title = _title(_build(tmp_path, "wf_00000000-8c1", "last", retried=False))

@@ -18,9 +18,10 @@ corrupted, a review finding that names a file that never appeared.
 /plugin install agent-postmortem@agent-postmortem
 ```
 
-Check it works, from inside a session: `agent-postmortem doctor --test-alert`
-(`uvx agent-postmortem doctor --test-alert` if the CLI is not on your `PATH`: the
-copy this plugin installs for its hooks is not).
+Check it works, from inside a session: `agent-postmortem doctor --test-alert`. The plugin's `bin/`
+puts the copy it installs for its hooks on the Bash tool's `PATH`, after anything of your own. In your
+own terminal, or on a Claude Code that does not do that (2.1.318 does), use
+`uvx agent-postmortem doctor --test-alert`.
 
 Uninstall with `/plugin uninstall agent-postmortem@agent-postmortem`, or
 `claude plugin uninstall agent-postmortem@agent-postmortem` outside a

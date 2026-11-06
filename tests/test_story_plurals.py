@@ -1,4 +1,4 @@
-"""Story counts agree with their nouns (docs/DESIGN.md 4.7 rule 6; field report 2026-09-30,
+"""Story counts agree with their nouns (docs/DESIGN.md 4.7 rule 6,
 "bash_backgrounded false positive ...": `1 Bash commands backgrounded.`)."""
 
 from __future__ import annotations

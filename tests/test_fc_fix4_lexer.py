@@ -1,6 +1,5 @@
-"""Fix round 4 (W1, W2, W3) of field milestone F: focused unit tests of the shell-word lexer, the
-NFC registered lookup and the word rewriter behind `redact.scan_paths` (docs/DESIGN.md 5.1;
-.reviews/v0.3/F-W-spec.md rev 3).
+"""Focused unit tests of the shell-word lexer, the
+NFC registered lookup and the word rewriter behind `redact.scan_paths` (docs/DESIGN.md 5.1).
 
 Every fixture is synthetic.
 """

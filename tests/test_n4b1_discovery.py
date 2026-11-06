@@ -1,7 +1,7 @@
 """N4b-1 coverage group 8 (discovery): Run.discovery per source, and the
 session launch reconciliation of docs/DESIGN.md 4.13.1 (C-14), every
 reachable (tool, code) pair of the decision tables included
-(.reviews/v0.3/N4-plan.md L13).
+.
 
 Fixtures are synthetic; every wf_ id used here is in tests/synthetic-ids.txt.
 """

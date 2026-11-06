@@ -1,9 +1,9 @@
-"""Fix round 8 (W8-5, W8-6, W8-10) of field milestone F: an unreadable run directory is a
+"""An unreadable run directory is a
 diagnostic and never a crash, an uncaught exception prints through the redactor, a config warning
 is built from typed parts, and the test gaps the round 7 mutation tables named (docs/DESIGN.md
-5.1, 4.1; .reviews/v0.3/F-dispositions.md, "Fix round 7 review" and "Codex round 7").
+5.1, 4.1).
 
-Each row of `.reviews/tooling/f/inventory_fix8.py` that classifies an output as scanned names a
+Each row of the output inventory that classifies an output as scanned names a
 test of this file or of the earlier fix files.
 
 Every fixture is synthetic.

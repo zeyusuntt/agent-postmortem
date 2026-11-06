@@ -1,5 +1,5 @@
 """Part FC, P3 and P4 (field milestone F): the AGENT table's column widths and its legend
-(docs/DESIGN.md 4.7, AGENT table; .reviews/v0.3/F-plan.md FC).
+(docs/DESIGN.md 4.7, AGENT table).
 
 The field case (four of the author's own projects): at `--local` the AGENT column was a
 fixed 10 characters wide, so a label such as `card B21` ran into the next column and read as

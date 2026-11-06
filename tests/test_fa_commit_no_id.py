@@ -1,6 +1,6 @@
 """Part FA6 (field milestone F, T6): commit commands that printed no id
 (docs/DESIGN.md 4.13.1 commit grammar, 4.1 AttemptFacts, 4.7 COMMITS and the
-WORK AT RISK count line, 5.3b `facts`; .reviews/v0.3/F-plan.md FA6).
+WORK AT RISK count line, 5.3b `facts`).
 
 The field case: `git commit -q` prints no summary line, so A1's id grammar (which
 deliberately rejects -q and --quiet, because a quiet segment poisons the call's id
@@ -120,7 +120,7 @@ def test_fa6_call_ran_a_commit_command(command, expected):
     assert _ran(command) is expected
 
 
-# Field report 2026-10-30 "COMMITS 0 for an agent that committed": the commit ran as
+# The commit ran as
 # `SKIP=mypy mise exec -- git commit -m ...` and printed no summary line. A run-as-is prefix
 # (leading NAME=VALUE words, `env` with only NAME=VALUE words, `mise exec|x [tool@version ...]
 # --`) leaves the command a commit command; one that takes an option (which could change the
@@ -157,7 +157,7 @@ def test_e36_a_run_as_is_prefix_leaves_a_commit_command(command, expected):
 
 def test_e36_the_id_grammar_reads_no_id_behind_a_git_variable_assignment():
     # an assignment can redirect the repository (GIT_DIR=...), so such a call counts no id.
-    # E48 (field report 2026-11-03): any other run-as-is prefix now gives its id
+    # E48: any other run-as-is prefix now gives its id
     # (tests/test_e48_commit_ids_behind_a_prefix.py).
     assert commands.commit_facts("GIT_DIR=/tmp/o/.git git commit -m x", CWD).is_commit is False
     assert commands.commit_facts("SKIP=mypy git commit -m x", CWD).is_commit is True

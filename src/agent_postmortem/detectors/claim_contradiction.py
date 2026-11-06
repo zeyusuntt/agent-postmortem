@@ -1,6 +1,5 @@
 """claim_contradiction: a completed workflow attempt whose own self-reported
-result contradicts the outcome the journal recorded (.reviews/proposals/
-2026-09-v0.2-guided-rescue.md section 4.3, unit M1c).
+result contradicts the outcome the journal recorded.
 
 Reads only Attempt.reported (docs/DESIGN.md section 3/4.1), which the
 reader already restricted to an allowlisted set of self-reported claims --
@@ -118,7 +117,7 @@ def _clauses(
     if claims.get("ok") is False:
         clauses.append(("ok_false", "ok is false", "none"))
 
-    # field report 2026-11-05: the whole value and nothing else, so `done_with_concerns` or a
+    # the whole value and nothing else, so `done_with_concerns` or a
     # sentence is no failure. None of 722 real results here said so, and none was misread
     status = claims.get("status")
     if isinstance(status, str) and status.strip().lower() in _FAILED_STATUS_WORDS:

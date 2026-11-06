@@ -1,4 +1,4 @@
-"""N4 fix round, Fix A (reader, discovery, population): what reaches
+"""N4, Fix A (reader, discovery, population): what reaches
 Run.discovery (A2, docs/DESIGN.md 4.13.1). Fixtures are synthetic; every wf_
 id used here is in tests/synthetic-ids.txt.
 """

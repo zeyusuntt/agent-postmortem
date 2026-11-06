@@ -1,4 +1,4 @@
-"""N3b fix round 2, R2-1: every whole-value validator uses fullmatch, so a
+"""R2-1: every whole-value validator uses fullmatch, so a
 final newline (or carriage return, NUL, embedded newline) never passes.
 Checked directly per validator, and end to end through watch text, watch
 JSONL (one physical record per event) and the forced hook fallback."""

@@ -63,8 +63,7 @@ from .redact import Redactor
 # filesystem path already, but reader.load_run's iterdir()/open() calls have
 # nothing to open when the package is imported straight out of a wheel .whl
 # (itself a zip). importlib.resources.as_file extracts a directory only from
-# Python 3.12 on; on 3.11 such an import gets a clear message (release review
-# of 0.3.0, finding 1).
+# Python 3.12 on; on 3.11 such an import gets a clear message.
 # N3b S12: the demo renders with a home directory that matches no account on
 # any machine, so the bare-account-name rule never rewrites a word of it.
 _DEMO_HOME = Path("/zz-demo-home/zz-no-account")
@@ -575,8 +574,8 @@ def _build_parser(tokens: list[str] | None = None) -> argparse.ArgumentParser:
         "review",
         help=(
             "Print each adopted rule's detector rate before and after adoption, "
-            "and list rules to consider removing. Read-only; the owner records "
-            "an adoption in their own config."
+            "and list rules to consider removing. Read-only; you record "
+            "an adoption in your own config."
         ),
     )
     rules_review.add_argument(
@@ -1588,13 +1587,13 @@ def _accumulate_scan_totals(totals: dict, run: Run, findings: list[Finding]) -> 
 
 def _attention_sessions(root: Path, now_ts: float, kind: str | None,
                         here_caller: str | None) -> list[dict]:
-    """docs/DESIGN.md 4.7 (field reports 2026-11-04): the background sessions in trouble now:
+    """docs/DESIGN.md 4.7: the background sessions in trouble now:
     STALLED (above) and those blocked on a person or failed, by the job's own class, whoever
     launched them and regardless of --since. One that delivered waits on a decision, no trouble,
     and is not listed. The caller's own workers are marked, from its own transcript."""
     if kind == "workflow":
         return []
-    def want(cwd: str | None) -> bool:  # --here, applied before any job is read (round 2)
+    def want(cwd: str | None) -> bool:  # --here, applied before any job is read
         return here_caller is None or (
             isinstance(cwd, str) and (cwd == here_caller or cwd.startswith(here_caller + "/")))
 
@@ -1645,7 +1644,7 @@ def _stall_reason(stall: dict) -> str:
         what += f" {status._age(stall['silent_seconds'])}"
     if stall.get("waiting_on_stdin"):
         what += ", waiting on stdin"
-    # field report 2026-11-04: only a command's own files are seen, and it may end yet
+    # only a command's own files are seen, and it may end yet
     return what + ("; nothing will wake it" if stall.get("waiting_on_stdin")
                    else "; may be hung or writing elsewhere, and only its end would wake it")
 
@@ -1659,14 +1658,14 @@ def _fold_stalled(stalled: list[dict], candidates: list[dict], live_now: list[di
         public = entry["session"]
         stall = entry.get("stall") or {}
         reason = _stall_reason(stall)
-        # the caller's marker survives the fold (review round 2), else it comes from the id
+        # the caller's marker survives the fold, else it comes from the id
         mark = next((c.get("mark") for c in [*candidates, *live_now]
                      if c["run"].run_id == public and c.get("mark")), None)
         caller = _caller_session_id()
         if mark is None and caller and str(entry.get("session_id", "")).lower() == caller:
             mark = "this session"
         if mark is None and entry.get("mine"):
-            mark = "dispatched by this session"  # as for a blocked one (0.5.0 review)
+            mark = "dispatched by this session"  # as for a blocked one
         for existing in [c for c in candidates if c["run"].run_id == public]:
             reason += f" (also: {existing['reason']})"
             candidates.remove(existing)
@@ -1701,7 +1700,7 @@ def _scan_payload(rows: list[dict], totals: dict, redactor: Redactor,
         "totals": report.redact_value(totals, redactor),
     }
     if stalled:
-        # field report 2026-11-03: background sessions idle on a command that will not end; the
+        # background sessions idle on a command that will not end; the
         # key is present only then, so every other scan document keeps its shape
         payload["stalled"] = [
             {"session": entry["session"], "idle_seconds": entry.get("age_seconds"),
@@ -1711,7 +1710,7 @@ def _scan_payload(rows: list[dict], totals: dict, redactor: Redactor,
             for entry in stalled
         ]
     if blocked:
-        # field reports 2026-11-04: present only then, as `stalled` above; ids from --local
+        # present only then, as `stalled` above; ids from --local
         named = redactor.level in ("local", "raw")
         payload["blocked"] = [
             {"session": entry["session"], "state": entry["state"], "class": entry["class"],
@@ -2460,7 +2459,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             state.transcript_cache_dir(), (now - _TRANSCRIPT_CACHE_KEEP).timestamp()
         )
     progress.finish()
-    # docs/DESIGN.md 4.7 (field report 2026-11-03): background sessions idle on a command that
+    # docs/DESIGN.md 4.7: background sessions idle on a command that
     # will not end, read now and outside the scan cache and --since, since they are stuck now
     attention = _attention_sessions(root, now.timestamp(), args.kind, here_caller)
     stalled = [entry for entry in attention if entry.get("state") == "stalled"]
@@ -2704,7 +2703,7 @@ def _cmd_rules_propose(args: argparse.Namespace) -> int:
         _print_left_out(unreadable)
 
     # docs/DESIGN.md 9 (N8): an adopted rule is a status row, never proposed
-    # again. Only the owner's config [[adopted]] records name one.
+    # again. Only the user's config [[adopted]] records name one.
     rows = rules.propose_rules(
         runs_with_findings, config.load_config().adopted, single_run=bool(args.run_id),
     )
@@ -2722,7 +2721,7 @@ def _cmd_rules_propose(args: argparse.Namespace) -> int:
 
 
 def _adopted_entries(cfg: config.Config) -> list[dict]:
-    """docs/DESIGN.md 9/7.5: the owner's `[[adopted]]` config rows, plus any
+    """docs/DESIGN.md 9/7.5: the user's `[[adopted]]` config rows, plus any
     legacy v0.1 state-store `applied` entry (id, target, applied_at) that
     isn't already the same adoption declared in config -- v0.1 users keep
     their history even though nothing writes a new `applied` entry anymore.
@@ -2754,7 +2753,7 @@ def _adopted_entries(cfg: config.Config) -> list[dict]:
 
 
 def _cmd_rules_review(args: argparse.Namespace) -> int:
-    """docs/DESIGN.md 9: the owner's adopted rules' detector rate, N weeks
+    """docs/DESIGN.md 9: the user's adopted rules' detector rate, N weeks
     before and after adoption. Read-only: reviewing never removes a rule,
     it only lists which ones show no improvement."""
     redactor = _redactor_for(args)
@@ -2850,6 +2849,16 @@ _APPLY_CLOSING = (
 )
 
 
+def _template_shown(redactor: Redactor, path: str) -> str:
+    """The hook template, this package's own file. Under the home it reads as any path does; outside
+    it, a system or Homebrew install, by name alone, since `node path-1` says nothing. Its folders
+    stay hidden below --raw."""
+    home = str(redactor.context.home).rstrip("/")
+    if redactor.level == "raw" or (home and path.startswith(home + "/")):
+        return redactor.display_path(path)
+    return f".../{os.path.basename(path)}"
+
+
 def _cmd_apply(args: argparse.Namespace) -> int:
     """`apply` (docs/DESIGN.md 9; N3b P18, C-4, P19).
 
@@ -2921,9 +2930,11 @@ def _cmd_apply(args: argparse.Namespace) -> int:
         # `display` is the P19 form of the target, rendered once: the line is not scanned again
         print(f"postmortem: {args.rule_id} already present in {display}; nothing to add")
 
-    note = rules.render_hook_install_note(rule, redactor.display_path)
+    note = rules.render_hook_install_note(rule, lambda path: _template_shown(redactor, path))
     if note:
         print(note, end="")  # the template path was rendered once; the note is not rescanned
+        if level != "raw":
+            print("The template's full path prints with --raw.")
 
     # docs/DESIGN.md 9/R3: apply never writes target itself, with or without
     # a diff to show -- this closing sentence is the last line every time,
@@ -3031,7 +3042,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
-# docs/DESIGN.md 4.12 (field report 2026-11-03, review round 2): watch flushes every line, so a
+# docs/DESIGN.md 4.12: watch flushes every line, so a
 # reader that closed the pipe stops it at the next line; 128 + SIGPIPE, as a shell reports it.
 _WATCH_READER_GONE = 141
 

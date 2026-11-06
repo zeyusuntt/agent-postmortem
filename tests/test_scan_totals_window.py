@@ -1,5 +1,5 @@
 """The LAST 7 DAYS footer and the SINCE footer place an undated run the same way
-(docs/DESIGN.md 4.7, 4.14.9 item 2; field report 2026-10-30 "scan footer counts more runs in one
+(docs/DESIGN.md 4.7, 4.14.9 item 2 "scan footer counts more runs in one
 day than in seven").
 
 A workflow directory whose files carry no timestamp (an empty run: a launch line only) has an

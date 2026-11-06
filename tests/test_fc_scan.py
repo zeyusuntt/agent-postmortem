@@ -1,5 +1,4 @@
-"""Part FC, P9 and P12 (field milestone F): scan's wording (docs/DESIGN.md 4.7;
-.reviews/v0.3/F-plan.md FC).
+"""Part FC, P9 and P12 (field milestone F): scan's wording (docs/DESIGN.md 4.7).
 
 - P9: the per-detector block of the full list is introduced by "findings per detector (one
   finding can cover several events):", because "bash_backgrounded: 2" next to a run that

@@ -1,4 +1,4 @@
-"""Fix B, MINOR lexer fixes (.reviews/v0.3/N4-dispositions.md): `&>` after a glued
+"""Fix B, MINOR lexer fixes: `&>` after a glued
 word keeps that word, and `>> /dev/null` is treated like `> /dev/null`.
 """
 

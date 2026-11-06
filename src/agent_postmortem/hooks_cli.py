@@ -962,7 +962,7 @@ def _format_notify_lines(notifications: list[_NotifyInfo], redactor: Redactor) -
     return lines
 
 
-# docs/DESIGN.md 4.14.5 (field report 2026-11-03, item 1 of "no silent failures")
+# docs/DESIGN.md 4.14.5
 _STOP_BUDGET = 400
 
 
@@ -1034,7 +1034,7 @@ def _watcher_cannot_read(command: str, cwd: str | None) -> bool:
     """The watcher tells a silence only for a command whose output it can read. Silence is never
     judged for a redirect it cannot place, for one that is no regular file, or for one where it
     may not be, as a relative one after a `cd X;` that may have failed, so the deadline request
-    stays for those (0.5.0 review)."""
+    stays for those."""
     outputs, unknown = live.command_outputs(command, cwd)
     if unknown:
         return True
@@ -1058,7 +1058,7 @@ def _watcher_cannot_read(command: str, cwd: str | None) -> bool:
 
 
 def _armed_by_facts(main_path: Path, tasks: list[str]) -> bool:
-    """Field report 2026-11-04: the payload can list a Monitor as a plain `shell` task, so a
+    """The payload can list a Monitor as a plain `shell` task, so a
     Monitor is known from the session's own Monitor calls; one of them still listed as running,
     or a wake still able to fire, is the deadline this request would ask for. A read cut short
     says no, and asks."""
@@ -1077,7 +1077,7 @@ def _armed_by_facts(main_path: Path, tasks: list[str]) -> bool:
 
 def _deadline_texts(tasks: list[str]) -> tuple[str, str]:
     """The request in full and its short form, naming only the tasks it asks about (rendered
-    from the keys this call won, inside the claim: review rounds 1 and 2)."""
+    from the keys this call won, inside the claim)."""
     ids = ", ".join(tasks[:3]) + (f" and {len(tasks) - 3} more" if len(tasks) > 3 else "")
     full = (
         f"DEADLINE {ids}: still running as this turn ends. Claude Code wakes you when a command "
@@ -1126,7 +1126,7 @@ _STATUS_HINT_KEY = "hint:status"
 
 
 def _status_reminder(payload: dict) -> str | None:
-    """Field report 2026-11-04: two of three workers with subagents never ran `status` before
+    """Two of three workers with subagents never ran `status` before
     reporting, since the rule lives only in an instruction file. At a Stop of a background session
     (an interactive one has a person reading), once per session (4.14.6 rule 4), when its subagents
     and workflows have all ended and no `status`, `scan`, `run` or `watch` of this tool ran since
@@ -1171,7 +1171,7 @@ def _status_reminder(payload: dict) -> str | None:
 
 
 def _cmd_check(payload: dict) -> None:
-    # field report 2026-11-03 (item 1): asked for at every Stop, a session with no subagent too
+    # asked for at every Stop, a session with no subagent too
     deadline = _stop_deadline_notice(payload)
     session_dir = _session_dir_from_payload(payload)
     if session_dir is None:
@@ -1237,7 +1237,7 @@ def _cmd_check(payload: dict) -> None:
     if not stop_hook_active:
         context = message
         # joined with the finding within the 400 characters, in full or short; if neither fits,
-        # nothing is claimed and the next Stop asks (review round 1)
+        # nothing is claimed and the next Stop asks
         request = None
         if deadline is not None:
             request = _claim_deadline(deadline, room=_STOP_BUDGET - len(message) - 1)
@@ -1509,8 +1509,7 @@ def _cmd_workflow_launched(payload: dict) -> None:
             if transcript_dir:
                 entry["transcript_dir"] = transcript_dir
 
-    # .reviews/proposals/2026-09-v0.2-guided-rescue.md section 7 (docs/
-    # DESIGN.md 7.2): the registration side effect above happens either way;
+    # docs/DESIGN.md 7.2: the registration side effect above happens either way;
     # this is the one added sentence, emitted only when a run id could be
     # read (already established above) and not opted out of. It arms
     # nothing itself (R2) -- the session decides whether to actually run the
@@ -1570,7 +1569,7 @@ def _cmd_agent_launched(payload: dict) -> None:
     synchronous = isinstance(response, dict) and (
         status_word == "completed"
         or (status_word is None and response.get("isAsync") is not True))  # T2 (returns.py)
-    claim_key = None  # claimed last, once the message is ready (release review, 0.4.0)
+    claim_key = None  # claimed last, once the message is ready
     claim_message = None
     if synchronous and disclosure.is_canonical_id("agent", agent_id):
         transcript = session_dir / "subagents" / f"agent-{agent_id}.jsonl"
@@ -1658,7 +1657,7 @@ def post_tool_check(main_path_str: str, payload: dict) -> tuple[Callable[[], str
     cache = state.read_cache(follower.store_path)
     _status._restore(follower, cache)
     complete = follower._read(deadline=started + _FIRST_READ_BUDGET_SECONDS)
-    # field reports 2026-11-04: workers first, and told even with no baseline yet: what they say
+    # workers first, and told even with no baseline yet: what they say
     # needs none, and the baseline can take many calls in a long session
     worker_check = _worker_check(follower, payload, cache, started)
     if not follower.load_endings(new_baseline=complete or follower.read_once_each()):
@@ -1675,7 +1674,7 @@ def post_tool_check(main_path_str: str, payload: dict) -> tuple[Callable[[], str
     for agent_id in follower._agent_ids():
         # past the budget, the rest wait for the next call, whether or not anything is told yet:
         # an ending that needs no line can still need a full parse, and a call killed at run.sh's
-        # deadline saves nothing, so the next one would redo it (release review, 0.4.0)
+        # deadline saves nothing, so the next one would redo it
         if judged and time.monotonic() >= started + _CALL_BUDGET_SECONDS:
             pending = True  # tell what is ready now and the rest at the next call
             break
@@ -1701,7 +1700,7 @@ def post_tool_check(main_path_str: str, payload: dict) -> tuple[Callable[[], str
             judged += 1  # only an agent with an ending counts, so every call makes progress
     if follower.unsettled_meta or follower.rule_pending:
         pending = True  # a meta file to read again, or a baseline to extend (4.14.5)
-    # field report 2026-11-03 (item 2): a background command that stopped writing, once each;
+    # a background command that stopped writing, once each;
     # the commands still clocking say when the gate must open again
     told = live.delivered_keys(main_path, follower.store_path)
     running = stalls.running_commands(follower.main, now)
@@ -1709,7 +1708,7 @@ def post_tool_check(main_path_str: str, payload: dict) -> tuple[Callable[[], str
                if c["silent"] and _command_key(c) not in told]
     rechecks = [c["recheck_seconds"] for c in running
                 if c["recheck_seconds"] is not None and _command_key(c) not in told]
-    # with commands to tell, the endings leave room for their summary line (review round 1)
+    # with commands to tell, the endings leave room for their summary line
     reserve = {"budget": _HOOK_BUDGET - _COMMAND_RESERVE} if waiting else {}
     message = _render_endings([event for event, _key in found], main_path, follower, **reserve)
     # only the commands whose lines fit are claimed; the rest are told at the next call
@@ -1754,7 +1753,7 @@ def _make_deliver(found: list[tuple[dict, str]], commands: list[tuple[dict, str]
         alert: list[str] = []
 
         def before(record: dict) -> None:
-            # a commit that fails runs this again for the fallback (0.5.0 review)
+            # a commit that fails runs this again for the fallback
             for held in (trouble, info, quiet, told):
                 held.clear()
             # only from the real record: after a failed commit the flag is still there, and the
@@ -1793,7 +1792,7 @@ def _make_deliver(found: list[tuple[dict, str]], commands: list[tuple[dict, str]
                     endings = None
             text, shown = _with_commands(endings, [c for c, _key in mine], more=overflow + unshown,
                                          budget=room)
-            # a command whose line no longer fits is not recorded: told at a later call (round 2)
+            # a command whose line no longer fits is not recorded: told at a later call
             dropped.extend(key for _c, key in mine[shown:])
             if text:
                 parts.append(text)
@@ -1830,7 +1829,7 @@ def _make_deliver(found: list[tuple[dict, str]], commands: list[tuple[dict, str]
     return deliver
 
 
-# --- workers this session launched (field reports 2026-11-04, docs/DESIGN.md 4.14.5) -----------
+# --- workers this session launched (docs/DESIGN.md 4.14.5) -----------
 
 _STALL_RECHECK_SECONDS = 300.0
 _STALL_READ_BYTES = 32 << 20
@@ -1957,7 +1956,7 @@ def _worker_check(follower, payload: dict, cache: dict, started: float,
         check.observed.append(worker)
     _worker_stall(follower, check, now, started, cache=cache)
     lines, quiet = workers.due(told, check.observed, _finishes(record))
-    # a change recorded with no line waits for its store write as well (review round 3): else a
+    # a change recorded with no line waits for its store write as well: else a
     # write that fails leaves the old identity there, and the same prompt coming back reads as told
     check.pending = check.pending or bool(lines) or bool(quiet)
     return check
@@ -1978,7 +1977,7 @@ def _unread_bytes(main: Path, cache: dict | None) -> int:
         entry = transcripts.get(str(path))
         offset = entry.get("offset") if isinstance(entry, dict) else None
         # what a read would keep (`status._restore`, `Tail.read`): another version, a replaced file
-        # or one shorter than the offset is read again from byte 0 (0.5.0 review)
+        # or one shorter than the offset is read again from byte 0
         kept = isinstance(entry, dict) and isinstance(offset, int) and offset <= size \
             and entry.get("inode") in (None, info.st_ino) and (
                 entry.get("facts_version") == live.MAIN_FACTS_VERSION
@@ -2041,7 +2040,7 @@ def _command_key(command: dict) -> str:
 
 
 def _command_line(command: dict) -> str:
-    """docs/DESIGN.md 4.14.5 (field report 2026-11-03): fixed words, the native task id and two
+    """docs/DESIGN.md 4.14.5: fixed words, the native task id and two
     ages, so it skips the redactor (which would hide `/dev/null` as a path)."""
     from .status import _age
 
@@ -2054,6 +2053,11 @@ def _command_line(command: dict) -> str:
                 f"in codex's \"Reading additional input from stdin...\" and stopped changing. "
                 f"{fix[0].upper()}{fix[1:]}.")
     quiet = command.get("silent_seconds")
+    if command.get("end_only"):  # its output cannot show it working
+        return (f"COMMAND {task}{since} has shown nothing for {_age(quiet or 0)}, but it ends in "
+                f"`{command['end_only']}`, which prints only when it ends, so that may be fine. If "
+                f"it should be done by now, stop it (TaskStop {task}) and rerun with </dev/null, "
+                f"a timeout and its output in a file.")
     return (f"COMMAND {task}{since} has written nothing for {_age(quiet or 0)}. Claude Code "
             f"tells you when it ends, never that it hangs: if it is stuck, {fix}.")
 
@@ -2069,7 +2073,7 @@ def _with_commands(endings: str | None, commands: list[dict], more: int = 0,
                    budget: int = _HOOK_BUDGET) -> tuple[str | None, int]:
     """The endings message, then one line per silent command, all within the 400-character
     budget, and a summary line for the commands left for a later call, whose room is always
-    kept (review round 1). Returns (the message, how many command lines it holds)."""
+    kept. Returns (the message, how many command lines it holds)."""
     parts = [endings] if endings else []
     shown = 0
     for index, command in enumerate(commands):

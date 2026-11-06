@@ -1,5 +1,4 @@
-"""Tests for the attempt_failed detector (.reviews/proposals/2026-09-
-v0.2-guided-rescue.md section 4.2, unit M1b): names the cause of a workflow
+"""Tests for the attempt_failed detector: names the cause of a workflow
 attempt the journal closed with a `failed` event. The cause comes from
 exactly one place, the attempt's own last transcript entry, never a wider
 window and never the attempt's first user prompt.

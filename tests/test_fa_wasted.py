@@ -1,6 +1,5 @@
 """Part FA5 (field milestone F, T5): wasted time counts every attempt that returned no
-result (docs/DESIGN.md 4.3 wasted_time row, 4.7 WASTED column and header sentence;
-.reviews/v0.3/F-plan.md FA5).
+result (docs/DESIGN.md 4.3 wasted_time row, 4.7 WASTED column and header sentence).
 
 The field case: a session subagent killed after about 70 minutes showed WASTED 0s,
 because WASTED summed every attempt but the LAST and a killed subagent (or a workflow

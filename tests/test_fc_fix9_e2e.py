@@ -1,12 +1,12 @@
-"""Fix round 9 of field milestone F: an end-to-end probe through the real CLI of the spellings the
-round 8 reviews found (a path glued to CJK text, a variable anchor after `@`, a possessive
+"""An end-to-end probe through the real CLI of the spellings found
+so far (a path glued to CJK text, a variable anchor after `@`, a possessive
 apostrophe before a space in a single-quoted path, a colon-form colour sequence and other control
 sequences, `$CLAUDE_PROJECT_DIR`, a `/tmp` path with a Unicode space).
 
 A planted run whose label, phase or transcript excerpt holds a private name spelled that way is read
 by every command that prints text from a run, at share and at local, as text and as JSON, with and
 without `--evidence`. No marker of the private name may reach stdout or stderr. The probe is the
-proof the inventory rows of `.reviews/tooling/f/inventory_fix9.py` that name an output family point
+proof the inventory rows of the output inventory that name an output family point
 at; `tests/test_fc_fix8_e2e.py` is the same probe for the round 8 names.
 
 Every fixture is synthetic.

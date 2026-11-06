@@ -1,4 +1,4 @@
-"""N3b fix round 2, R2-4 (decision D-p in .reviews/v0.3/N3b-spec.md), moved to
+"""R2-4, moved to
 schema 3 by N5a-1: S1's name-first finding titles carry the label's pseudonym
 instead of the label with structural placeholders in it. The goldens hold no
 hostile label, so this test pins one.

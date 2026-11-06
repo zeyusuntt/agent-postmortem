@@ -161,7 +161,7 @@ def _register_names(run: Run, redactor: Redactor, *, detailed: bool = False) -> 
     excludes it from export.
 
     Also registers every attempt's own report_path claim, if it has one
-    (docs/DESIGN.md 5.1, M1 review finding 1): unlike the four name fields
+    (docs/DESIGN.md 5.1): unlike the four name fields
     above, a registered path is substituted everywhere the plain Redactor
     renders text (Redactor.__call__ itself, not only title()), so this pass
     is what lets a report_path embedded in a title or evidence line -- not
@@ -1855,8 +1855,8 @@ def _sentence_case(text: str) -> str:
 
 
 def _own_clause(text: str) -> str:
-    """A story clause in the tool's own words, capitalized where it is written (0.4 review round
-    2): every clause is capitalized again only after names are substituted, and a label that is
+    """A story clause in the tool's own words, capitalized where it is written:
+    every clause is capitalized again only after names are substituted, and a label that is
     the clause's first word (`killed`, `restarted`, `attempt`) must not meet that word in
     lowercase."""
     return _sentence_case(text)
@@ -1867,7 +1867,7 @@ _LABEL_LED_TITLES = frozenset({"mislabeled_kill"})
 
 
 def _title_clause(finding: Finding) -> object:
-    """A finding title as a story clause (0.3.6 review round 3). The title of a detector that
+    """A finding title as a story clause. The title of a detector that
     leads with the agent's own label stays as written, so the name substitution meets the label
     before the sentence is capitalized; every other title is in the tool's own words and is
     capitalized where it is used (`_own_clause`), so a label that is its first word ("the" in
@@ -1875,7 +1875,7 @@ def _title_clause(finding: Finding) -> object:
     if finding.title_parts:
         return finding.title_parts
     if finding.detector in _LABEL_LED_TITLES:
-        # whatever label it leads with (batch 2 review: an agent id can carry two labels)
+        # whatever label it leads with (an agent id can carry two labels)
         return finding.title
     return _own_clause(finding.title)
 
@@ -1998,7 +1998,7 @@ def _story_records(run: Run, findings: list[Finding], verbose: bool) -> list[dic
     run_relevant = [f for f in run_level if verbose or f.severity != "info"]
     if run_relevant:
         rank = min(_SEVERITIES.index(f.severity) for f in run_relevant)
-        # an attempt outside every logical agent (no journal key) is told here (batch 1 review)
+        # an attempt outside every logical agent (no journal key) is told here
         pieces = _sentences_pieces([_title_clause(f) for f in run_relevant])
         entries.append({
             "agent": "run",
@@ -2161,8 +2161,7 @@ def is_possibly_live(
     """unit M3b / docs/DESIGN.md 7.2's UNKNOWN_QUIET_SECONDS: the best a cold
     `scan` can say about liveness without hook state or a live task list --
     a run that has not finished and was touched inside the quiet window
-    might still be running. **(fixed after cross-model review, N1N2 review
-    finding 3)** This also applies to a session: a session's own
+    might still be running. This also applies to a session: a session's own
     Run.finished is always None (never anything the `run.finished` check
     below rejects, since v0.3 N2, D11), and its own newest mtime is already
     computed correctly by the caller (cli._run_files_for_liveness handles
@@ -2472,10 +2471,10 @@ def render_scan_triage_text(
             f"{candidate['verdict']}  {redactor(candidate['reason'])}"
         )
         lines.append(f"    -> {redactor(candidate['command'])}")
-    if older_blocked:  # field reports 2026-11-04
+    if older_blocked:
         lines.append(f"  {older_blocked} more blocked in other sessions for over 3 days: "
                      "agent-postmortem status")
-    if read_in_part:  # field report 2026-11-05: `--all` said so, the default view did not
+    if read_in_part:  # `--all` said so, the default view did not
         lines.append(f"  {read_in_part} of {total_runs} runs could only be read in part, so "
                      f"{'it' if read_in_part == 1 else 'they'} may hide more: "
                      "agent-postmortem scan --all")
@@ -2515,7 +2514,7 @@ def _scan_row_line(row: dict, redactor: Redactor) -> str:
         verdict = f"{verdict} unfinished"
     elif row.get("finished") is None and row.get("unfinished_state") == "possibly running":
         # a session has no lifecycle; recent activity marks it as maybe still going, so `latest`
-        # can skip it too (release review of 0.3.0)
+        # can skip it too
         verdict = f"{verdict} possibly running"
     line = (
         f"{row.get('run_id', '')}  {row.get('date', '')}  {project}  {kind}  "

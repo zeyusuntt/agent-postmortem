@@ -1,5 +1,5 @@
-"""Fix B, S5 to S10: tests for the six mutations the sonnet review found alive
-(.reviews/v0.3/N4-dispositions.md S5 to S10). Each row is proven against the
+"""Fix B, S5 to S10: tests for six mutations that were found alive
+. Each row is proven against the
 reviewer's mutation in the Fix B report; none changes behavior.
 """
 

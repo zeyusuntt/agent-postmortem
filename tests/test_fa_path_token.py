@@ -1,5 +1,5 @@
 """Part FA1 (field milestone F, T2): one path-token scanner for substitution and scrubbing
-(docs/DESIGN.md 5.1; .reviews/v0.3/F-plan.md FA1).
+(docs/DESIGN.md 5.1).
 
 The leak: `Pseudonyms.apply_paths` replaced a registered path as a plain substring, so a
 registered `/tmp/claude-501` inside the longer `/private/tmp/claude-501/<slug>/<uuid>/

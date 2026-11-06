@@ -36,7 +36,7 @@ RESULTS = ("[main 1a2b3c4] msg\n 1 file changed", "no summary here", "[a b] x\n[
 # Fields added after the frozen classifier (field milestone F, FA6): `Lexed.reason_at`
 # and `CallClass.commit_command_present`. The frozen copy has neither, so the comparison is over every
 # field it does have; tests/test_fa_commit_no_id.py pins the new ones. `CommitFacts.placed`
-# (field report 2026-11-03) is pinned by tests/test_e48_commit_ids_behind_a_prefix.py.
+# is pinned by tests/test_e48_commit_ids_behind_a_prefix.py.
 _FIELDS_ADDED_AFTER_THE_FROZEN_COPY = frozenset({"reason_at", "commit_command_present", "placed"})
 
 

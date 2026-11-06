@@ -1,4 +1,4 @@
-"""N3b fix round 2, R2-2: the free-text path scrub also catches a leading
+"""R2-2: the free-text path scrub also catches a leading
 `//` (alone and quoted with spaces) and a bare `/`. The matched spelling is
 normalized before placement, so `//a/b` and `/a/b` are one path and one
 path-N. At local through every structured name field and --evidence

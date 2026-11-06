@@ -1,5 +1,5 @@
 """A run id that matches nothing is echoed when it is a public id, and the message says where
-the ids are (docs/DESIGN.md 4.8, N3b P13; field report 2026-09-30, "run <full session uuid>
+the ids are (docs/DESIGN.md 4.8, N3b P13, "run <full session uuid>
 fails and names a different id": the message showed a label the person never typed).
 
 A public run id (`wf_...`, `s_...`) is what `scan` prints, so it is not private and the message

@@ -1,11 +1,7 @@
 """Field regression fixtures for the v0.3 evidence model (docs/DESIGN.md
-4.1, 4.13, 5.3b; revised contract, commit 3446313, N0r).
+4.1, 4.13, 5.3b).
 
-Source: `.reviews/v0.3/N0r-decisions.md` D14 to D17 and D19, written against
-`.reviews/v0.3/N0-codex.txt` findings 14, 15, 16 (test cases only, not the
-triage-clause additions it also asks for), 17, and 19.
-
-Each field case from the original N0 proposal is split in two, where both
+Each field case is split in two, where both
 levels apply (D14):
 
 - a MODEL-LEVEL test, at the exact milestone DESIGN.md 4.1/4.13 names for
@@ -559,7 +555,7 @@ def test_field_workflow_failed_reported_clean(tmp_path, monkeypatch, capsys):
 
 
 def test_field_workflow_failed_evidence_pins_the_deciding_snapshot_line(tmp_path, monkeypatch):
-    """docs/DESIGN.md 4.13.3 (N1N2 review finding 2): load a run while
+    """docs/DESIGN.md 4.13.3: load a run while
     generation A (lines 1-3) decides Run.lifecycle as failed. Appending a
     newer, completed generation B (lines 4-6) to the parent transcript after
     load_run() must not change which line workflow_failed's own evidence
@@ -611,8 +607,8 @@ def test_field_workflow_failed_evidence_pins_the_deciding_snapshot_line(tmp_path
 def test_field_lifecycle_to_dict_is_exactly_the_five_public_fields_for_a_failed_generation(
     tmp_path, monkeypatch,
 ):
-    """N1N2 review round 2, new finding 3 (MINOR): Lifecycle carries a
-    private _terminal_line (docs/DESIGN.md 4.13.3, N1N2 review finding 2) so
+    """Lifecycle carries a
+    private _terminal_line (docs/DESIGN.md 4.13.3) so
     workflow_failed's evidence never drifts to a newer generation; to_dict()
     must still export exactly the five public fields docs/DESIGN.md 4.1/5.3b
     document, never that private field, even when it is non-null (mutation
@@ -957,7 +953,7 @@ def test_field_quoted_notification_ignored(tmp_path, monkeypatch, capsys):
 
 
 # N1 (implemented): the model-level counterpart of the CLI-level test above.
-# Review finding (.reviews/v0.3/N1-review.md #1): the CLI-level assertions
+# Review finding: the CLI-level assertions
 # alone are vacuous here -- workflow_failed does not exist until N2, and
 # nothing in N1's own pipeline reads Generation.terminal to produce a
 # CLI-visible effect, so they would hold identically whether or not the

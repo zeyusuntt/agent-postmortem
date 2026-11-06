@@ -1,5 +1,5 @@
-"""`agent-postmortem doctor`: can alerts reach this session? (docs/DESIGN.md 4.14.12; field report
-2026-11-05, "no way to tell quiet because healthy from quiet because broken").
+"""`agent-postmortem doctor`: can alerts reach this session? (docs/DESIGN.md 4.14.12:
+quiet can mean healthy or broken).
 
 The plugin's normal success is silence, and its failures are silent too: hooks never fail a turn,
 so a missing plugin, an old Claude Code or a state directory it cannot write all look like nothing
@@ -34,6 +34,7 @@ TEST_ALERT = ("ALERT TEST from agent-postmortem doctor: this line reached you th
 _WIDTH = 14
 # dotted numbers and a known prerelease word: an id, a name or a sentence stays unprinted
 _VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+){1,3}(?:-(?:alpha|beta|rc|dev|pre)\.?[0-9]*)?")
+_WRAPPER_MARK = b"agent-postmortem for a session's Bash tool"  # plugin/bin/agent-postmortem
 _NATIVE_TIMEOUT_SECONDS = 10  # 0.18 s measured with 110 sessions listed
 _NATIVE_SETTLED_SECONDS = 5  # a job file changed more recently than this may be mid-change
 _NATIVE_NAMED_MAX = 8
@@ -106,22 +107,38 @@ def _hook_copies() -> list[Path]:
         folders = []
     folders = folders or [state.state_dir() / "plugin"]
     copies = [folder / "bin" / "agent-postmortem" for folder in folders]
-    return [copy for copy in copies if copy.is_file() and os.access(copy, os.X_OK)]
+    return [copy for copy in copies
+            if copy.is_file() and os.access(copy, os.X_OK) and not _is_plugin_wrapper(copy)]
+
+
+def _is_plugin_wrapper(path: Path) -> bool:
+    try:
+        if not path.is_file():  # a pipe with no writer never answers
+            return False
+        with path.open("rb") as handle:
+            return _WRAPPER_MARK in handle.read(256)
+    except OSError:
+        return False
 
 
 def _hook_cli_found() -> bool:
     """run.sh's order: its data directory, then PATH, by name only (running it is its own check).
     uvx puts its throwaway environment first on PATH for the command it runs and no hook sees
-    that, so this interpreter's folder counts only when it is no environment or the active one."""
+    that, so this interpreter's folder counts only when it is no environment or the active one. The
+    plugin's own bin/ script is on a session's PATH and not on a hook's, and only runs the copies
+    above, so a CLI in that place does not count."""
     if _hook_copies():
         return True
     own = None
     activated = os.path.realpath(os.environ.get("VIRTUAL_ENV") or "")
     if sys.prefix != sys.base_prefix and activated != os.path.realpath(sys.prefix):
         own = os.path.realpath(os.path.dirname(sys.executable))
-    search = [part for part in os.environ.get("PATH", "").split(os.pathsep)
-              if part and os.path.realpath(part) != own]
-    return shutil.which("agent-postmortem", path=os.pathsep.join(search)) is not None
+    for part in os.environ.get("PATH", "").split(os.pathsep):
+        if part and os.path.realpath(part) != own:
+            found = shutil.which("agent-postmortem", path=part)
+            if found is not None and not _is_plugin_wrapper(Path(found)):
+                return True
+    return False
 
 
 def _check_cli(version_text: str) -> list[dict]:

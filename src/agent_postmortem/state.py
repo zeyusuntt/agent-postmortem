@@ -93,11 +93,10 @@ from pathlib import Path
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 # O_DIRECTORY makes an open() fail outright if the final path component is
-# not a directory, instead of silently succeeding (N3a fix round 2,
-# Finding 4). Same degrade-to-0 reasoning as _NOFOLLOW above.
+# not a directory, instead of silently succeeding. Same degrade-to-0 reasoning as _NOFOLLOW above.
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 
-# N3a fix round 3, new Finding 1: the real os.open/os.unlink/os.rename
+# The real os.open/os.unlink/os.rename
 # function objects, captured once at import time, before any test (or
 # anything else) can have monkeypatched os.open etc. for an unrelated
 # reason. _dir_fd_capable() below checks membership of THESE captured
@@ -150,7 +149,7 @@ class StateTooNew(StateError):
 
 
 class PostCommitVerificationError(StateError):
-    """N3a fix round 2, Finding 1 (BLOCKER): raised only after a disclosure
+    """Raised only after a disclosure
     write's actual commit point has already passed -- os.replace() for the
     alias registry, or (for the installation secret, whose own commit
     point is simply "create_secret() returned without raising") the
@@ -911,7 +910,7 @@ def registry_path(directory: Path | None = None) -> Path:
 
 
 def _dir_fd_capable() -> bool:
-    """N3a fix round 3, new Finding 1 (BLOCKER, fixed the robust way): every
+    """Every
     disclosure file operation that runs relative to the verified directory
     descriptor needs os.open, os.unlink, and os.rename (the registry's own
     atomic commit uses os.rename, not os.replace -- see write_registry_
@@ -935,11 +934,11 @@ def _dir_fd_capable() -> bool:
 def _open_verified_state_dir(dir_path: Path) -> int:
     """Open the state directory itself with O_NOFOLLOW|O_DIRECTORY and verify
     the open descriptor by fstat: a directory, mode exactly 0700, owned by
-    the current uid (N3a fix round 2, Finding 4). Also requires
+    the current uid. Also requires
     _dir_fd_capable(). Returns the open, verified descriptor; raises
     StateError, fail closed, on any mismatch.
 
-    N3a Codex round 4, MAJOR 1: this runs BEFORE the lock file is opened,
+    This runs BEFORE the lock file is opened,
     and state.lock is then opened relative to this descriptor
     (_open_lock_file_at), so the held lock and every disclosure operation
     always name the same directory. Opening the lock by path first and the
@@ -983,7 +982,7 @@ def _open_lock_file_at(dir_fd: int) -> int:
     directory descriptor, O_NOFOLLOW so a symlink is refused and O_NONBLOCK
     so a FIFO cannot hang the open, mode 0600; repair the mode on the open
     descriptor (best effort; _verify_lock_fd decides). Raises StateError
-    if the open itself fails (N3a Codex round 4, MAJOR 1).
+    if the open itself fails.
 
     N3b, main-session finding M1: on macOS APFS, when two processes create
     the same new name relative to a directory descriptor at the same
@@ -1023,7 +1022,7 @@ def _open_lock_file_at(dir_fd: int) -> int:
 
 def _verify_lock_fd(lock_fd: int) -> None:
     """fstat the open lock descriptor: a regular file, mode exactly 0600,
-    owned by the current uid (N3a fix round 2, Finding 4). Raises
+    owned by the current uid. Raises
     StateError, fail closed, on any mismatch."""
     lock_st = os.fstat(lock_fd)
     if not stat.S_ISREG(lock_st.st_mode):
@@ -1038,7 +1037,7 @@ def _verify_lock_fd(lock_fd: int) -> None:
 
 
 class LockedStateDir(namedtuple("LockedStateDir", ("path", "dir_fd"))):
-    """What lock_state_dir() yields (N3a fix round 3, new Finding 1): the
+    """What lock_state_dir() yields: the
     state directory's own path, for building the caller-facing Path values
     secret_path()/registry_path() already return, and the verified
     directory file descriptor every disclosure file operation must run
@@ -1059,15 +1058,15 @@ def lock_state_dir(directory: Path | None = None) -> Iterator[LockedStateDir]:
     writers get, via the same _ensure_state_dir/_open_lock_file/
     _acquire_lock path (symlink and wrong-kind rejection, 0700 directory,
     0600 lock file, StateLocked after LOCK_TIMEOUT_SECONDS of contention),
-    plus (N3a fix round 2, Finding 4) a stricter fstat-based re-check of
+    plus a stricter fstat-based re-check of
     both before yielding: transaction()'s own best-effort chmod calls are
     not enough of a guarantee for a secret file.
 
-    N3a fix round 3, new Finding 1 (BLOCKER): yields a LockedStateDir
+    Yields a LockedStateDir
     carrying both the path and the verified directory descriptor, and keeps
     that descriptor open for the whole lock scope -- it is not reopened or
-    re-verified by path again anywhere in this scope. N3a Codex round 4,
-    MAJOR 1: the directory is opened and verified first and state.lock is
+    re-verified by path again anywhere in this scope. The directory is opened and verified first
+    and state.lock is
     opened relative to it, so the held lock always belongs to the
     directory every disclosure operation uses. The lock, and the directory
     descriptor, are both released and closed on every exit, normal or
@@ -1127,7 +1126,7 @@ def _open_probe_fd(path: Path, *, dir_fd: int | None = None) -> int | None:
     than being special-cased here, so this function's only two outcomes are
     "doesn't exist" (None) and "opened, or a real error propagates".
 
-    N3a fix round 3, new Finding 1: dir_fd, when given, makes this open run
+    dir_fd, when given, makes this open run
     relative to that verified directory descriptor (see _dir_relative)
     instead of by path -- see lock_state_dir/LockedStateDir.
     """
@@ -1184,14 +1183,14 @@ def _fsync_dir_strict(dir_path: Path, *, dir_fd: int | None = None) -> None:
     """Like _fsync_dir, but raises OSError instead of swallowing one.
 
     Used only for the disclosure secret and alias registry (docs/
-    DESIGN.md 7.5a, N3a fix round 2, Finding 1): a durability failure for
+    DESIGN.md 7.5a): a durability failure for
     either of those two files must be reported and recovered from
     (agent_postmortem.disclosure re-probes and either returns the
     committed result or falls back), never silently accepted the way
     state.json's own best-effort _fsync_dir is. state.json keeps using
     _fsync_dir unchanged -- this is a stricter sibling, not a replacement.
 
-    N3a fix round 3, new Finding 1: when dir_fd is given, it IS the
+    When dir_fd is given, it IS the
     already-open, already-verified state directory descriptor itself
     (lock_state_dir/LockedStateDir) -- fsync it directly rather than
     reopening the directory by path a second time."""
@@ -1209,7 +1208,7 @@ def fsync_directory(directory: Path, *, dir_fd: int | None = None) -> None:
     """Public name for _fsync_dir_strict, for disclosure.py's P6
     initialization: after create_secret() the state directory is fsynced
     so the secret's directory entry is durable, whether or not a registry
-    write follows. Raises OSError on failure (N3a fix round 2, Finding 1):
+    write follows. Raises OSError on failure:
     by the time this runs the secret (and, on a cold start, the registry)
     already exist, fully written and verified, so the caller must treat a
     failure here as durability-only and re-probe rather than assuming
@@ -1221,8 +1220,8 @@ def _verify_fd(fd: int, *, expect_regular: bool, expected_mode: int, what: str) 
     """fstat the already-open descriptor and require it is a regular file
     (when expect_regular), mode exactly expected_mode, and owned by the
     current uid. Raises StateError on the open descriptor, before the
-    caller's commit point (docs/DESIGN.md 7.5a, N3a fix round 2, Finding 1
-    and Finding 11): every check that can fail runs here, on the fd itself,
+    caller's commit point (docs/DESIGN.md 7.5a):
+    every check that can fail runs here, on the fd itself,
     never via a later, separate stat() of the path that could observe a
     swapped file."""
     st = os.fstat(fd)
@@ -1241,7 +1240,7 @@ def _write_full(fd: int, data: bytes, *, what: str) -> None:
     """Write every byte of data to fd, looping until done.
 
     POSIX permits os.write() to return fewer bytes than requested without
-    raising (N3a fix round 2, Finding 2): a single unchecked os.write()
+    raising: a single unchecked os.write()
     call can silently leave a short file that is reported as complete. A
     write that makes no progress at all (a zero-length return with data
     still remaining) is treated as an error rather than retried forever.
@@ -1261,7 +1260,7 @@ def _write_full(fd: int, data: bytes, *, what: str) -> None:
 
 def _verify_fd_size(fd: int, expected_size: int, *, what: str) -> None:
     """Confirm, by fstat on the still-open descriptor, that exactly
-    expected_size bytes actually landed (N3a fix round 2, Finding 2): the
+    expected_size bytes actually landed: the
     write loop above only proves os.write() reported writing every byte,
     not that the file's own size agrees."""
     st = os.fstat(fd)
@@ -1278,7 +1277,7 @@ def create_secret(path: Path, *, dir_fd: int | None = None) -> bytes:
     check that can fail -- regular file, mode exactly 0600, owned by the
     current uid, then (after the write loop and fsync) size exactly 32 --
     runs on the open descriptor, before the fd is ever closed (docs/
-    DESIGN.md 7.5a, N3a fix round 2, Finding 1): once this function
+    DESIGN.md 7.5a): once this function
     returns, the secret is fully committed, and the only thing that can
     still fail is the caller's own, separate, durability-only directory
     fsync (fsync_directory). Raises FileExistsError if path already exists
@@ -1397,7 +1396,7 @@ def _create_exclusive_temp_file(
 def _verify_registry_after_commit(
     path: Path, expected: bytes, *, dir_fd: int | None = None
 ) -> None:
-    """N3a fix round 2 (continued), new Finding 6 (MINOR): the post-commit
+    """The post-commit
     check right after write_registry_bytes's own os.replace() must not
     trust a separate, symlink-following stat() of the path -- the same
     class of TOCTOU _verify_fd already closes for the *pre*-commit
@@ -1413,7 +1412,7 @@ def _verify_registry_after_commit(
     unchanged, since that caller's own prerequisite checks (docs/
     DESIGN.md 7.5a) and threat model are different.
 
-    N3a fix round 3, new Finding 2 (MAJOR): the open also carries
+    The open also carries
     O_NONBLOCK, for the same reason _open_probe_fd already does -- without
     it, a FIFO swapped in at the final path right after os.replace() would
     block this open indefinitely waiting for a writer that is never coming,
@@ -1455,16 +1454,16 @@ def write_registry_bytes(path: Path, data: bytes, *, dir_fd: int | None = None) 
     same directory, every check that can fail (regular file, mode exactly
     0600, owned by the current uid, then size) run on the open descriptor,
     fsync, then an atomic rename over path. That rename is this write's
-    commit point (docs/DESIGN.md 7.5a, N3a fix round 2, Finding 1): a
+    commit point (docs/DESIGN.md 7.5a): a
     failure before it unlinks the temp file and leaves path untouched,
     exactly as before. A failure after it (the strict directory fsync, or
-    the final post-commit reverification, N3a fix round 2 continued,
-    Finding 6: reopened with O_NOFOLLOW rather than a separate,
+    the final post-commit reverification,
+    reopened with O_NOFOLLOW rather than a separate,
     symlink-following stat()) raises PostCommitVerificationError instead --
     path already holds the new content, so the caller must re-probe and
     decide, never assume nothing changed.
 
-    dir_fd (N3a fix round 3, new Finding 1): when given, every operation
+    dir_fd: when given, every operation
     here -- the temp file's own create, its rename over path, and the
     directory fsync -- runs relative to that verified directory descriptor
     instead of by path. The commit-point rename uses os.rename(...,

@@ -1,6 +1,5 @@
 """`agent-postmortem watch`: a read-only follower for one workflow run
-(docs/DESIGN.md 4.12; .reviews/proposals/2026-09-v0.2-guided-rescue.md
-section 7).
+(docs/DESIGN.md 4.12).
 
 Designed to be the command line a Claude Code Monitor runs: it prints one
 START line first, then one line per event a person would act on (KILL, FAILED,
@@ -91,7 +90,7 @@ _LABEL_WIDTH = 7
 
 
 class _LineFlushed:
-    """docs/DESIGN.md 4.12 (field report 2026-11-03): the stream watch prints to, flushed at
+    """docs/DESIGN.md 4.12: the stream watch prints to, flushed at
     the end of every line. A Monitor reads watch's stdout through a pipe, where Python buffers
     by block, so without this every line reached the reader only when the process exited."""
 

@@ -1,4 +1,4 @@
-"""G-C (fix round for G-B1, docs/DESIGN.md 4.1, 4.13.1, 7.2): GC-1 a transcript cut inside a
+"""G-C (docs/DESIGN.md 4.1, 4.13.1, 7.2): GC-1 a transcript cut inside a
 multibyte character is a half-written line, GC-2 the independent return implementation agrees
 with the reader on every builder row, GC-3 the rows the G-B1 mutation review found missing.
 

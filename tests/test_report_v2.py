@@ -1,5 +1,5 @@
 """Tests for the redesigned `run` text/JSON report (unit M3a: docs/DESIGN.md
-4.7/4.8, .reviews/proposals/2026-09-v0.2-guided-rescue.md section 6.1).
+4.7/4.8).
 
 Covers the packaged demo run and five fixtures: attempt_failed_causes
 (reset_time guidance in WHAT TO DO), claim_contradiction (a story clause

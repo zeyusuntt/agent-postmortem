@@ -1,4 +1,4 @@
-"""N8b K4 (docs/DESIGN.md 4.13.8, 4.11, 4.7, 5.3b; .reviews/v0.3/N8-plan.md rev 3): the two N5
+"""N8b K4 (docs/DESIGN.md 4.13.8, 4.11, 4.7, 5.3b): the two N5
 release blockers and the two rescue wording fixes.
 
 K4.1  STEPS never prints `<none>`; a unit with no step path gets both whole-tree commands.

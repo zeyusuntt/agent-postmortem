@@ -216,7 +216,7 @@ class SubFacts:
     # the latest tool_result was the person rejecting the tool call (markers.PERMISSION_DENIED_USER)
     rejected_by_user: bool = False
     cwd: str | None = None  # the first working directory its entries name (0.4)
-    # docs/DESIGN.md 4.14.3 (0.4, field report 2026-10-31): the Agent/Task launches this
+    # docs/DESIGN.md 4.14.3 (0.4): the Agent/Task launches this
     # transcript made, by tool_use id, and the synchronous result of each one that returned
     # here: {"status": completed|failed|killed|stopped, "ts"}. A nested child's return.
     launches: set[str] = field(default_factory=set)
@@ -421,7 +421,7 @@ MAIN_FACTS_VERSION = 10  # 10: when this tool last ran here; 9: the workers it l
 # 4: the session's backgrounded shell commands and their native ends (4.14.4); 5: early ends kept
 # per tool-use id and a timeout-moved command aged from its start (4 never released); 6: each
 # command's output files, the session's last turn end and activity, its armed wakes; 7, 8: the same
-# with crons by id and the output rules of review rounds 1 to 4 (6, 7 never released)
+# with crons by id and the output rules (6, 7 never released)
 # the same for a subagent transcript's facts (2: its Agent/Task launches and their synchronous
 # results, 0.4; 3: a present agent id that is not one is no result); a stored entry of another
 # version, or none, is read again from byte 0
@@ -430,7 +430,7 @@ SUB_FACTS_VERSION = 3
 # baseline of another rule is extended once, over a complete read (4.14.3)
 BASELINE_RULE = 3
 # What a native task id looks like. It is printed as is in hook lines and local rows, on the ground
-# that it is no path or name, so anything else is not taken for one (0.5.0 review)
+# that it is no path or name, so anything else is not taken for one
 TASK_ID_RE = re.compile(r"[a-z0-9]{1,32}")
 _META_LIMIT = 65536
 _WORKFLOW_END_WORDS = {
@@ -463,7 +463,7 @@ class MainFacts:
     early_ends: dict[str, dict] = field(default_factory=dict)
     trailing_cost_states: int = 0
     entrypoint: str | None = None
-    # field report 2026-11-03 (4.14.4): where each Bash call writes, kept from its tool_use
+    # 4.14.4: where each Bash call writes, kept from its tool_use
     # until its result names a background task ({outputs, unknown, ts} by tool-use id, the
     # newest _PENDING_BASH_KEPT); when the session's last turn ended (a system turn_duration
     # entry) and when it last did anything; until when a wake it armed can still come
@@ -476,16 +476,16 @@ class MainFacts:
     # successful CronCreate armed and no successful CronDelete removed ({recurring, next} by id)
     pending_wakes: dict[str, dict] = field(default_factory=dict)
     crons: dict[str, dict] = field(default_factory=dict)
-    # field report 2026-11-04: the background sessions this session launched ({ts, end, name} by
+    # the background sessions this session launched ({ts, end, name} by
     # short id: the launching call's own time window, which the job's createdAt must fall in),
     # and the task ids of its Monitors, which Claude Code can list as shell tasks
     workers: dict[str, dict] = field(default_factory=dict)
     monitors: dict[str, float] = field(default_factory=dict)
-    # when this session last ran `status`, `scan`, `run` or `watch` of this tool (field report
-    # 2026-11-04: the reminder at Stop)
+    # when this session last ran `status`, `scan`, `run` or `watch` of this tool (for the
+    # reminder at Stop)
     status_ran: float | None = None
     pending_looks: dict[str, dict] = field(default_factory=dict)  # until its result, as a rejected
-    # call ran nothing (review round 2)
+    # call ran nothing
     # `claude --bg` calls whose result named no id: under `run_in_background` the id goes to the
     # task's output file, so that worker cannot be told from another session's
     unlinked_launches: int = 0
@@ -629,9 +629,11 @@ class MainFacts:
             self.shells[task_id]["outputs"] = outputs
             if isinstance(pending, dict) and pending.get("quiet"):
                 self.shells[task_id]["quiet"] = True
+            if isinstance(pending, dict) and isinstance(pending.get("end_only"), str):
+                self.shells[task_id]["end_only"] = pending["end_only"]
             # what is not redirected goes to the task output file: with none named (an older
-            # Claude Code), that part of the output cannot be watched (review round 1); with the
-            # call itself no longer kept, its redirects are unknown (review round 3)
+            # Claude Code), that part of the output cannot be watched; with the
+            # call itself no longer kept, its redirects are unknown
             if not task_output or not isinstance(pending, dict) or pending.get("unknown"):
                 self.shells[task_id]["unknown_outputs"] = True
             early = self.early_ends.pop(task_id, None)
@@ -663,7 +665,7 @@ class MainFacts:
                 if status and isinstance(monitor, dict) and (
                         not tool or monitor.get("tool") in (None, "", tool)):
                     # a persistent Monitor's own end, by its launch's own tool-use id when the
-                    # notice names one: it arms nothing more (review rounds 2 and 3)
+                    # notice names one: it arms nothing more
                     del self.crons[f"monitor:{task_id}"]
                     continue
                 if not disclosure.is_canonical_id("agent", task_id):
@@ -743,7 +745,7 @@ class MainFacts:
         return facts
 
     def _bash_call(self, tool_id: str, tool_input: dict, cwd: object, ts: float | None) -> None:
-        """Where a Bash call writes (field report 2026-11-03), kept until its result: a
+        """Where a Bash call writes, kept until its result: a
         background task's result takes them, every other call's entry ages out."""
         command = tool_input.get("command")
         if not isinstance(command, str):
@@ -752,7 +754,10 @@ class MainFacts:
         outputs, unknown = command_outputs(command, cwd)
         call = {"outputs": outputs, "unknown": unknown, "ts": ts}
         if commands.quiet_by_design(command, cwd):
-            call["quiet"] = True  # field report 2026-11-04: silence is its normal state
+            call["quiet"] = True  # silence is its normal state
+        end_only = commands.writes_only_at_its_end(command)
+        if end_only and not outputs:  # a file of its own would show it working (2026-11-05)
+            call["end_only"] = end_only
         launches = workers.count_launches(command)
         if launches:
             call["launch"] = launches
@@ -762,7 +767,7 @@ class MainFacts:
         out_after = sum(1 for held in self.pending_bash.values()
                         if isinstance(held, dict) and held.get("launch"))
         if out_after < out_before + (1 if launches else 0):
-            self.unlinked_launches += 1  # its result can no longer be tied to it (review round 2)
+            self.unlinked_launches += 1  # its result can no longer be tied to it
 
     def _worker_launch(self, tool_id: str, block: dict, result: object, ts: float | None) -> None:
         """docs/DESIGN.md 4.14.5: a `claude --bg` call's result names the worker it started. Its
@@ -777,7 +782,7 @@ class MainFacts:
         launched = workers.launched_ids(text)
         if len(launched) < call.get("launch"):  # a redirect or a `tail` can hide one of several
             self.unlinked_launches += 1
-        call.pop("launch", None)  # answered: evicting it later is no unlinked launch (0.5.0 review)
+        call.pop("launch", None)  # answered: evicting it later is no unlinked launch
         for short, name in launched.items():
             self.workers[short] = {"ts": call.get("ts"), "end": ts, "name": name}
         while len(self.workers) > workers.WORKERS_KEPT:
@@ -801,8 +806,8 @@ class MainFacts:
 
     def _wake(self, call: dict, block: dict, result: object, ts: float | None,
               tool_id: str = "") -> None:
-        """A wake the session armed for itself (field report 2026-11-03), taken from the call's
-        own successful result only (review round 1: a failed CronCreate armed nothing, a failed
+        """A wake the session armed for itself, taken from the call's
+        own successful result only (a failed CronCreate armed nothing, a failed
         CronDelete removed nothing): a ScheduleWakeup fires at most an hour out, a Monitor tells
         its end or its expiry, a cron fires until a CronDelete names it (a one-shot one until
         its `nextFireAt`)."""
@@ -842,7 +847,7 @@ class MainFacts:
                     del self.monitors[min(self.monitors, key=lambda t: self.monitors[t])]
             if result.get("persistent") is True:
                 task = result.get("taskId")
-                # its own end, written before this result, retires it at once (review round 3)
+                # its own end, written before this result, retires it at once
                 early = self.early_ends.get(task) if isinstance(task, str) else None
                 ends = early.get("ends") if isinstance(early, dict) else None
                 if isinstance(ends, dict) and (ends.get(tool_id) or ends.get("")):
@@ -942,7 +947,7 @@ class MainFacts:
         if reader._parse_envelope(text) is None and not (
                 command is not None and not command[1] and len(command[0]) == 1
                 and command[0][0] in self.agents):
-            # field report 2026-11-04: a subagent resumed by a message ends with a notice naming
+            # a subagent resumed by a message ends with a notice naming
             # no tool-use id; only for one this session launched, since nothing else ties it here
             return
         values = {}
@@ -963,7 +968,7 @@ class MainFacts:
         kind, detail = _notice_kind(values["summary"])
         previous = self.notices.get(task_id)
         # the user entry is the queue entry's copy, delivered when the session got to it: the end
-        # is when it was queued, or a resumed subagent would read as ended (review round 3)
+        # is when it was queued, or a resumed subagent would read as ended
         queued = entry.get("type") == "queue-operation"
         if not queued and isinstance(previous, dict) and previous.get("queued") == text:
             previous.pop("queued")
@@ -991,7 +996,7 @@ _DESCRIPTOR_RE = re.compile(r"[0-9]*-?")
 def _opens_group(raw: str) -> bool:
     """Whether a word as written holds an unquoted `(` that opens a subshell or group, not a
     substitution (`$(`, `<(`, `>(`): `(cd x && ...)` and an unspaced `time(cd x && ...)` both do
-    (review rounds 3 and 4)."""
+."""
     single = double = False
     previous = ""
     i = 0
@@ -1037,7 +1042,7 @@ def _resolve_path(target: str, base: str | None) -> str | None:
 
 
 def command_outputs(command: str, cwd: str | None) -> tuple[list[str], bool]:
-    """docs/DESIGN.md 4.14.4 (field report 2026-11-03): the files a shell command's own
+    """docs/DESIGN.md 4.14.4: the files a shell command's own
     redirects write (`>`, `>>`, `>|`, `&>`, `&>>` of stdout or stderr), each resolved against
     the call's cwd as moved by a `cd DIR` segment before it, and whether some output cannot be
     watched: thrown away (`/dev/null`), or named by an expansion, a glob or a directory change
@@ -1051,12 +1056,12 @@ def command_outputs(command: str, cwd: str | None) -> tuple[list[str], bool]:
                           or any(_opens_group(word.raw) for word in seg.words))
            for seg in lexed.segments):
         # a subshell, a group or control flow (`if ...; then cd x; fi`, a loop) moves
-        # directories or runs segments this reading cannot follow (review rounds 1 and 2)
+        # directories or runs segments this reading cannot follow
         return [], True
     for index, seg in enumerate(lexed.segments):
         words = [word.text for word in seg.words]
         if words[:1] == ["cd"] and index == 0 and seg.sep_after in ("&&", ";", "\n"):
-            # only a leading `cd DIR &&` or `cd DIR;` is followed (review round 1)
+            # only a leading `cd DIR &&` or `cd DIR;` is followed
             if len(words) == 1:
                 base = os.path.expanduser("~")
             elif len(words) == 2 and words[1] != "-" and not _UNPLACEABLE_RE.search(words[1]):
@@ -1070,9 +1075,9 @@ def command_outputs(command: str, cwd: str | None) -> tuple[list[str], bool]:
         for redirect in seg.redirects:
             target = redirect.target
             # `>& file` is bash's other spelling of `&> file`; `2>&1` and `>&-` only duplicate
-            # or close a descriptor (review round 3)
+            # or close a descriptor
             to_file = redirect.op == ">&" and redirect.fd is None and isinstance(target, str) \
-                and not _DESCRIPTOR_RE.fullmatch(target)  # `2>&1`, `>&-`, `>&1-` (round 4)
+                and not _DESCRIPTOR_RE.fullmatch(target)  # `2>&1`, `>&-`, `>&1-`
             if not to_file and (redirect.op not in _OUTPUT_OPS
                                 or redirect.fd not in (None, "1", "2")):
                 continue
@@ -1111,7 +1116,7 @@ _ENTRY_TYPE_MARKS = tuple(
     f'"type"{sep}"{kind}"'.encode()
     for kind in ("user", "assistant", "system", "attachment", "queue-operation")
     for sep in (":", ": ")
-)  # attachments and queue entries mark a session's activity (review round 1)
+)  # attachments and queue entries mark a session's activity
 
 
 def _main_want(raw: bytes) -> bool:
@@ -1311,7 +1316,7 @@ def _read_job_state(job_dir: Path) -> tuple[str | None, str | None]:
         return None, None
     if not isinstance(data, dict):
         return None, None
-    state_word = workers.effective_state(data)  # field report 2026-11-04: `tempo` is the live one
+    state_word = workers.effective_state(data)  # `tempo` is the live one
     session_id = data.get("sessionId")
     return (state_word if isinstance(state_word, str) and state_word.isascii()
             and state_word.replace("_", "").isalpha() else None,
@@ -1970,7 +1975,7 @@ def claim_deliveries(main_path: Path, keys: list[str], store_path: Path | None =
     recorded in one write under the store lock, and `then` runs inside it before that write, so
     a caller killed or failing anywhere before the write has claimed none of them. `unclaim()`,
     read after `then` inside the same lock, names won keys the caller did not show after all
-    (review round 2 of item 2): they are not recorded. A store that cannot be used lets the
+: they are not recorded. A store that cannot be used lets the
     caller deliver every key (a repeat beats a lost line), except under `strict`, for a wake
     (4.14.5), where a line that cannot be recorded could repeat for good: no claim, no `then`.
     `before(record)` and `after(record)` run inside the lock, around `then`, for what a caller

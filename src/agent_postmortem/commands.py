@@ -1210,7 +1210,7 @@ class CommitSegment:
 @dataclass(frozen=True)
 class CommitFacts:
     segments: tuple[CommitSegment, ...]
-    # Field report 2026-11-03: False when the segments come from a command the lexer does not
+    # False when the segments come from a command the lexer does not
     # place as a whole (judged segment by segment, DESIGN 4.13.1). Their repo is unknown, and
     # the ledger keeps the call's own candidate repository for such a call.
     placed: bool = True
@@ -1280,7 +1280,7 @@ def _commit_segments(
     the text is not placed, a wrapper is deeper than one level or holds text
     that is not placed, or a commit segment carries a dry-run or quiet flag
     (poisoning: such a call counts no id at all)."""
-    # Field report 2026-11-03: every segment is judged on its own, the way FA6 judges presence,
+    # Every segment is judged on its own, the way FA6 judges presence,
     # so an assignment or an expansion in another segment no longer hides a literal commit. A
     # command the lexer does not place is judged only at the top level (a wrapper's STRING must
     # be placed). Any word that assigns a git variable makes the call count no id: git reads its
@@ -1304,7 +1304,7 @@ def _commit_segments(
         first = seg.words[0].raw if seg.words else ""
         if reasons - {"first_word"}:
             # Not literal: only an ordinary program's arguments or redirects may be opaque, and
-            # no substitution in them may spell `commit` (review round 2: `echo "$(git commit
+            # no substitution in them may spell `commit` (`echo "$(git commit
             # -q)"` runs a commit whatever program the substitution is an argument of).
             if _substitution_spells_commit(seg, reasons) or (
                 spells and not _ordinary_program(first)
@@ -1319,8 +1319,8 @@ def _commit_segments(
                 return None
             continue
         if not _is_commit_or_wrapper(words):
-            # An opaque first word (eval, time, ...), also one a prefix exposed (review round 1:
-            # `mise exec -- time git commit -q`), may hide a commit no id can be matched to.
+            # An opaque first word (eval, time, ...), also one a prefix exposed
+            # (`mise exec -- time git commit -q`), may hide a commit no id can be matched to.
             if spells and words[0] in _FIRST_WORD_OPAQUE:
                 return None
             continue
@@ -1348,7 +1348,7 @@ def _commit_segments(
     return found
 
 
-# Field report 2026-11-03: an assignment word that names a git variable (GIT_DIR, GIT_WORK_TREE,
+# An assignment word that names a git variable (GIT_DIR, GIT_WORK_TREE,
 # GIT_INDEX_FILE, ...), as a prefix, a segment of its own, or an export/env argument, matched on
 # the word with its quotes removed (`export "GIT_DIR=..."`).
 _GIT_ASSIGN_RE = re.compile(r"GIT_[A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
@@ -1360,9 +1360,9 @@ _SUBSTITUTION_REASONS = frozenset({"command_substitution", "process_substitution
 def _opens_substitution(raw: str) -> bool:
     """Whether a word as written opens a substitution: `$(` or a backtick outside single quotes
     and not escaped (double quotes do not stop either), `<(` or `>(` outside any quotes. Text in
-    single quotes is data (review round 3). An ANSI-C quote `$'...'` counts as an opener: the
+    single quotes is data. An ANSI-C quote `$'...'` counts as an opener: the
     lexer does not model it (it ends `$'can\\'t'` at the escaped quote, where bash does not), so
-    nothing after it can be judged (review round 4)."""
+    nothing after it can be judged."""
     single = double = False
     i, n = 0, len(raw)
     while i < n:
@@ -1390,7 +1390,7 @@ def _heredoc_runs_a_commit_spelling(seg: Segment) -> bool:
     """Whether a heredoc of this segment with an unquoted delimiter has a `$(` or a backtick in
     its body (quotes there are plain characters, so they stop neither) and spells `commit`.
     Checked on every segment: the lexer gives the body's reason to the segment it is building
-    when the body is read, which is the next one in `cat <<EOF | cat` (review round 3)."""
+    when the body is read, which is the next one in `cat <<EOF | cat`."""
     for redirect in seg.redirects:
         body = redirect.body
         if body is not None and not redirect.target_quoted and ("$(" in body or "`" in body):
@@ -1458,7 +1458,7 @@ def commit_command_ran(words: list[str] | tuple[str, ...]) -> bool:
 
 
 def _run_as_is_command(words) -> list[str] | None:
-    """FA6 (field report 2026-10-30, COMMITS 0 for an agent that committed): a segment's words
+    """FA6 (COMMITS 0 for an agent that committed): a segment's words
     after the prefixes that run the command after them unchanged, in the same directory:
     leading NAME=VALUE words, `env` followed by NAME=VALUE words only, and `mise exec|x
     [tool@version ...] --`. None when such a prefix takes an option (`env -C DIR`, `mise exec
@@ -1469,7 +1469,7 @@ def _run_as_is_command(words) -> list[str] | None:
     rest = list(words)
     i, n = 0, len(rest)
     # NAME=VALUE is an assignment only where a shell or env reads one: at the start and after
-    # `env`. mise runs the word after `--` as the command itself (batch 1 review).
+    # `env`. mise runs the word after `--` as the command itself.
     assignments = True
     while i < n:
         word = rest[i]
@@ -1558,7 +1558,7 @@ def commit_facts(command: str, cwd: str | None = None) -> CommitFacts:
         return CommitFacts(())
     if not lexed.placed:
         # no segment of such a command has a known repository, not even behind an absolute -C
-        # or a cd inside a wrapper (review round 1)
+        # or a cd inside a wrapper
         return CommitFacts(tuple(CommitSegment(None) for _ in found), False)
     return CommitFacts(tuple(commit for commit, _ in found))
 
@@ -1729,7 +1729,7 @@ def _classify_call(
     return CallClass(6, "possible", "opaque_command", (), commit, repo, present)
 
 
-# --- what ends on its own (field reports 2026-11-03, 2026-11-04) ----------------------------------
+# --- what ends on its own (2026-11-04) ----------------------------------
 
 _DURATION_RE = re.compile(r"(\d+(?:\.\d+)?)([smhd]?)")
 
@@ -1757,13 +1757,13 @@ _TIMEOUT_FLAGS = ("--foreground", "--preserve-status", "--verbose")
 
 
 def _long_option(name: str, full: str) -> bool:
-    """`--sig` is `--signal`: GNU getopt takes an unambiguous prefix (review round 3)."""
+    """`--sig` is `--signal`: GNU getopt takes an unambiguous prefix."""
     return len(name) >= 4 and full.startswith(name)
 
 
 def _opens_without_blocking(target: str | None, cwd: str | None) -> bool:
     """Whether opening an output redirect's target cannot block before the command starts: not
-    a FIFO or a device (`/dev/null` aside), as far as a stat now shows (review round 3)."""
+    a FIFO or a device (`/dev/null` aside), as far as a stat now shows."""
     if not target:
         return False
     if target == "/dev/null":
@@ -1784,7 +1784,7 @@ def _opens_without_blocking(target: str | None, cwd: str | None) -> bool:
 
 def _redirects_cannot_block(segment: Segment, cwd: str | None) -> bool:
     """Stdin only from /dev/null, output only to files that open without blocking: a FIFO with no
-    reader holds the shell before the command even starts (review round 3 of `is_bounded`)."""
+    reader holds the shell before the command even starts."""
     for redirect in segment.redirects:
         if redirect.op in ("<", "<>") and redirect.target != "/dev/null":
             return False
@@ -1802,7 +1802,7 @@ def is_bounded(command: str, cwd: str | None = None) -> bool:
     ends it (or a positive kill-after), with nothing that can block before timeout starts: no
     expansion or substitution, stdin only from /dev/null, a heredoc or a literal here-string,
     output only to files that open without blocking, and only options timeout is known to take
-    (review rounds 1 to 3: `timeout 1 true; tail -f x`, `timeout 0 x`, `timeout 1 true "$(sleep
+    (`timeout 1 true; tail -f x`, `timeout 0 x`, `timeout 1 true "$(sleep
     9)"`, `timeout -s CONT 1 x`, `timeout -sCONT 1 x` and `timeout 1 true > fifo` do not end)."""
     lexed = lex(command)
     if set(lexed.reasons) - {"here_string"} or len(lexed.segments) != 1:
@@ -1990,24 +1990,24 @@ def _substitutions_are_only_date(command: str) -> bool:
 
 def under_its_own_alarm(command: str, cwd: str | None = None) -> bool:
     """A long run under `perl -e 'alarm N; exec @ARGV'`, the same bound as `timeout` where there is
-    none (macOS), with only steps around it that surely end at once. The field report 2026-11-04
+    none (macOS), with only steps around it that surely end at once. One real session
     had 15 such wrappers. This reads the plain ones as bounded and tells the rest once, on purpose:
     a wrong False costs one line, which says it may be fine; a wrong True silences the only alarm
-    for a real hang (review rounds 1 and 2 of this rule found a dozen ways a looser rule did). So:
+    for a real hang, and a looser rule let through a dozen ways to do that. So:
     every step and redirect by exact shape, with paths literal or from a literal assignment."""
     if "perl" not in command or "alarm" not in command or not _substitutions_are_only_date(command):
         return False
     from .pre_bash import _without_substitutions  # no import at module level: it imports this
 
-    # where the command can be now: a `cd X;` that fails leaves it where it was (review round 3)
+    # where the command can be now: a `cd X;` that fails leaves it where it was
     bases: tuple = (cwd if isinstance(cwd, str) and cwd.startswith("/") else None,)
-    # a `cd X &&` that fails skips only its own list: the next one runs where it was (0.5.0 review)
+    # a `cd X &&` that fails skips only its own list: the next one runs where it was
     resume: tuple = ()
     known: dict[str, str] = {}
     found = False
     previous = None
     lexed = lex(_without_substitutions(command))
-    # what runs in the background outlives the alarm, and a list in it is a subshell (0.5.0 review)
+    # what runs in the background outlives the alarm, and a list in it is a subshell
     if lexed.trailing_op == "&" or any(seg.sep_after == "&" for seg in lexed.segments):
         return False
     for segment in lexed.segments:
@@ -2030,13 +2030,13 @@ def under_its_own_alarm(command: str, cwd: str | None = None) -> bool:
             else:
                 bases = (*moved, *bases)
         if words[:1] == ["printf"] and any(word.startswith("-v") for word in words[1:]):
-            return False  # it sets a variable of this shell (0.5.0 review)
+            return False  # it sets a variable of this shell
         # only what persists in this shell: `export`, or a segment of nothing but assignments. A
-        # prefix or a child's argument changes nothing here (0.5.0 review)
+        # prefix or a child's argument changes nothing here
         persists = words[1:] if words[:1] == ["export"] else (
             words if all(_ASSIGNMENT_RE.match(word) for word in words) else [])
         # and only if it surely ran here: not skipped by a `&&` or `||` before it, and not in the
-        # subshell a pipe gives it (0.5.0 review, round 2)
+        # subshell a pipe gives it
         surely = previous in (None, ";", "\n") and segment.sep_after not in ("|", "|&")
         for word in persists:
             if not _ASSIGNMENT_RE.match(word):
@@ -2046,7 +2046,7 @@ def under_its_own_alarm(command: str, cwd: str | None = None) -> bool:
                 known.pop(name.rstrip("+"), None)  # what it now holds is not worked out here
                 continue
             value = _expand(value, known)
-            # one that an unquoted `$NAME` would split or glob is not one operand (0.5.0 review)
+            # one that an unquoted `$NAME` would split or glob is not one operand
             if _NOT_LITERAL_RE.search(value) or "SUBSTITUTION" in value \
                     or any(char.isspace() or char in "*?[" for char in value):
                 known.pop(name, None)
@@ -2079,7 +2079,7 @@ def _names_a_look(words: list[str]) -> bool:
 def runs_this_tool(command: str) -> bool:
     """Whether a segment of this command runs `status`, `scan`, `run` or `watch` of this tool, by
     its command word, directly or through `uv run`, `uvx` or `python -m`: an `echo` or a `grep`
-    naming it does not (review rounds 1 and 2)."""
+    naming it does not."""
     if "postmortem" not in command:
         return False
     from .pre_bash import _command_words, _without_substitutions
@@ -2093,8 +2093,8 @@ _TIMER_RE = re.compile(r"\s*import\s+time\s*;\s*time\.sleep\(\s*(\d+(?:\.\d+)?)\
 
 
 def _only_waits(words: list[str]) -> bool:
-    """`sleep N` by any path, or exactly `python3 -c 'import time; time.sleep(N)'` (field report
-    2026-11-05: an agent refused a foreground `sleep` wrote its timer this way). N > 0."""
+    """`sleep N` by any path, or exactly `python3 -c 'import time; time.sleep(N)'`
+    (an agent refused a foreground `sleep` wrote its timer this way). N > 0."""
     name = words[0].rsplit("/", 1)[-1] if words else ""
     if name in ("sleep", "gsleep"):
         return len(words) == 2 and positive_duration(words[1])
@@ -2107,7 +2107,7 @@ def _only_waits(words: list[str]) -> bool:
 def is_timer(command: str) -> bool:
     """A shell task that only waits, and so arms a deadline: `_only_waits`, then at most one literal
     `echo`, `printf`, `true` or `:` joined by `;` or `&&`, with no redirect, expansion or
-    substitution anywhere (review round 1: `sleep 1; echo "$(tail -f x)"` never ends)."""
+    substitution anywhere (`sleep 1; echo "$(tail -f x)"` never ends)."""
     lexed = lex(command)
     segments = lexed.segments
     if not lexed.placed or lexed.trailing_op or not 1 <= len(segments) <= 2:
@@ -2123,8 +2123,71 @@ def is_timer(command: str) -> bool:
     return True
 
 
+_END_ONLY_STAGES = frozenset({"tail", "sort", "tac", "wc"})
+_AFTER_THE_PIPE = frozenset({"echo", "printf", "true", ":", "date"})
+_TAIL_FLAG_RE = re.compile(
+    r"-\d+[bcl]?|-[nc]-?\d+[a-zA-Z]*|--(?:lines|bytes)=-?\d+[a-zA-Z]*|-[qv]|--quiet|--silent|--verbose")
+
+
+def _tail_holds_its_pipe(words: list[str]) -> bool:
+    """`tail` with a count from the end at most: `-f` and a start like `-n +1` print as they go, and
+    a file operand leaves the pipe unread."""
+    index = 0
+    while index < len(words):
+        if words[index] in ("-n", "-c"):
+            index += 1  # its count
+            if index >= len(words) or not re.fullmatch(r"-?\d+[a-zA-Z]*", words[index]):
+                return False
+        elif not _TAIL_FLAG_RE.fullmatch(words[index]):
+            return False
+        index += 1
+    return True
+
+
+def _holds_its_pipe(name: str, words: list[str]) -> bool:
+    """Whether this stage reads the pipe and holds it to the end: `sort -m` merges as it goes, and a
+    file operand or `--files0-from` leaves the pipe unread (2). Flags that take a
+    value in the next word read as an operand: a wrong False costs only the wording."""
+    if name == "tail":
+        return _tail_holds_its_pipe(words)
+    if not all(word.startswith("-") and word != "-" and not word.startswith("--files0-from")
+               for word in words):
+        return False
+    return name != "sort" or not any(
+        word == "--merge" or (not word.startswith("--") and "m" in word) for word in words)
+
+
+def _ends_at_once(segment: Segment) -> bool:
+    """A report after the pipe, with nothing in it that can wait."""
+    return bool(segment.words) and not segment.redirects \
+        and segment.words[0].text in _AFTER_THE_PIPE \
+        and not any("$(" in word.raw or "`" in word.raw for word in segment.words)
+
+
+def writes_only_at_its_end(command: str) -> str | None:
+    """The last pipe stage's name when it holds everything until its input ends, so the command's
+    output says nothing until then (397 of 2696 real background commands
+    end in `| tail`). Not quiet by design: `codex exec | tail` hanging on stdin looks the same, so
+    such a command is still told once, in softer words. A wrong answer costs only the wording."""
+    lexed = lex(command)
+    if lexed.trailing_op:
+        return None
+    segments = list(lexed.segments)
+    while len(segments) > 1 and _ends_at_once(segments[-1]) \
+            and segments[-2].sep_after in (";", "\n", "&&", "||"):
+        segments.pop()  # `... | tail -5; echo "exit $?"` ends a moment after the pipe does
+    if len(segments) < 2 or segments[-2].sep_after not in ("|", "|&"):
+        return None
+    stage = segments[-1]
+    words = [word.text for word in stage.words]
+    name = words[0].rsplit("/", 1)[-1] if words else ""
+    if name not in _END_ONLY_STAGES or stage.redirects:
+        return None
+    return name if _holds_its_pipe(name, words[1:]) else None
+
+
 def quiet_by_design(command: str, cwd: str | None = None) -> bool:
-    """A background command whose silence is its normal state (field reports 2026-11-04): wholly
+    """A background command whose silence is its normal state: wholly
     under a real timeout (`is_bounded`) or a perl alarm, a timer, or carrying the marker `#
     postmortem: silent-wait`. An unbounded wait loop with none of them is still told once."""
     return bool(_SILENT_WAIT_RE.search(command)) or is_timer(command) \

@@ -1,4 +1,4 @@
-"""Fix round 6b (W6-12) of field milestone F: the two detector titles that interpolate a path
+"""The two detector titles that interpolate a path
 first wrap it in literal backquotes (docs/DESIGN.md 4.13.4, 5.1), so the end-of-line rule of the
 path scanner hides only the path and the tool's own sentence survives.
 

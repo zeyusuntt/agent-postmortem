@@ -293,7 +293,7 @@ def test_a_workers_json_keeps_every_row_with_its_owner(tmp_path, monkeypatch, ca
     assert len(rows) == 2 and all(row["mine"] is False for row in rows)
 
 
-# --- review round 1 of this commit ---------------------------------------------------------------
+# --- further cases ---
 
 
 TRUE = "perl -e 'alarm 1; exec @ARGV' true"
@@ -516,7 +516,7 @@ def test_a_subagent_interrupted_with_no_notice_still_counts(tmp_path, monkeypatc
     assert "1 subagent finished" in _stop(m, capsys, monkeypatch)
 
 
-# --- review round 3 of this change ---------------------------------------------------------------
+# --- further cases ---
 
 
 @pytest.mark.parametrize(
@@ -538,7 +538,7 @@ def test_a_failed_cd_leaves_the_old_directory_so_both_must_be_safe(tmp_path):
     run = "perl -e 'alarm 1; exec @ARGV' true"
     assert commands.under_its_own_alarm(f"cd /definitely-absent; {run}; wc -c fifo",
                                         str(tmp_path)) is False
-    # `&&` skips only its own list: after the `;` it runs in the old directory (0.5.0 review)
+    # `&&` skips only its own list: after the `;` it runs in the old directory
     assert commands.under_its_own_alarm(f"cd /definitely-absent && {run}; wc -c fifo",
                                         str(tmp_path)) is False
     assert commands.under_its_own_alarm(f"cd /tmp; {run}; wc -c fine", str(tmp_path)) is True
@@ -553,7 +553,7 @@ def test_help_does_not_count_as_having_looked(tmp_path, monkeypatch, capsys, fla
     assert "1 subagent finished" in _stop(m, capsys, monkeypatch)
 
 
-# --- field report 2026-11-05: a timer written in Python ------------------------------------------
+# --- a timer written in Python ------------------------------------------
 
 
 PY_TIMER = "python3 -c 'import time; time.sleep(1800)'"

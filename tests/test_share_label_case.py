@@ -97,7 +97,7 @@ def _session(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 def _unkeyed_workflow(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """A workflow whose `started` entry has no `key` (batch 1 review): the attempt belongs to no
+    """A workflow whose `started` entry has no `key`: the attempt belongs to no
     logical agent, so its interrupt title is told as a run-level story."""
     root, run_dir, main = _workflow(tmp_path)
     journal = run_dir / "journal.jsonl"
@@ -240,7 +240,7 @@ def _demo_copy(tmp_path, label: str) -> Path:
 def test_a_label_that_is_the_first_word_of_the_tools_own_clause_leaves_it_alone(
     tmp_path, monkeypatch, capsys,
 ):
-    # Review round 2: a workflow agent labelled `killed` with a runtime retry. 0.3.5 printed
+    # a workflow agent labelled `killed` with a runtime retry. 0.3.5 printed
     # "Killed 1 time by the runtime (416s of silence)." and so must 0.3.6, in text and JSON.
     _no_config(monkeypatch, tmp_path)
     run_dir = _demo_copy(tmp_path, "killed")
@@ -282,7 +282,7 @@ def test_the_tools_own_capitalized_words_never_meet_a_name_of_another_case(
 def test_a_run_title_in_the_tools_own_words_keeps_its_capital_whatever_the_labels(
     tmp_path, monkeypatch, capsys,
 ):
-    # Review round 3: a run-level story is a list of finding titles in the tool's own words; a
+    # a run-level story is a list of finding titles in the tool's own words; a
     # label that is their first word (here "the") must not rewrite them. 0.3.5 printed
     # "The harness reported this workflow failed." and so must 0.3.6.
     from tests.test_field_v03 import _case5_fixture

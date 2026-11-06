@@ -208,7 +208,7 @@ def _start_counts(before: str, value: str, after: str) -> bool:
 #
 # A path in free text is found inside a complete shell word, and once a word holds a path the
 # whole rest of the word is rendered as one path. No regular expression splits a path at a quote,
-# an escape or a space: three review rounds each found one more spelling that a character class
+# an escape or a space: there was always one more spelling that a character class
 # or a quoted-span regex cut in two, leaving a raw private tail. The scanner is
 #   _lex          the text into words and boundaries, with the raw span of every decoded character;
 #   _PathLookup   the registered path values, matched in NFC form, indexed by first character;
@@ -1399,7 +1399,7 @@ class Pseudonyms:
     # Finding.title (5.1/5.2: never evidence, a diagnostic, or a metrics
     # value, which are meant to stay a faithful quote). A report_path is
     # itself a metrics/reported value, not a title ingredient, and the whole
-    # point of pseudonymizing it (M1 review finding 1) is that it must never
+    # point of pseudonymizing it is that it must never
     # appear raw in ANY of those places by default -- so it is substituted by
     # the plain Redactor call too (see Redactor.__call__ and apply_paths
     # below), not only by title(). _NAME_CATEGORIES keeps the original five
@@ -1504,8 +1504,8 @@ class Pseudonyms:
     def path(
         self, value: str | None, base: str | None = None, *, resolve_from: str | None = None,
     ) -> str | None:
-        """A report_path claim value (docs/DESIGN.md 5.1, M1 review finding
-        1): its own "path" namespace, numbered in order of first appearance
+        """A report_path claim value (docs/DESIGN.md 5.1): its own "path" namespace, numbered in
+        order of first appearance
         like every other category. Unlike agent/desc/phase/type/target, a
         registered path is substituted everywhere the plain Redactor renders
         text (see apply_paths, used by Redactor.__call__), not only inside
@@ -1914,8 +1914,8 @@ class Redactor:
         return text
 
     def __call__(self, text: str) -> str:
-        """Structural redact(), plus (docs/DESIGN.md 5.1, M1 review finding
-        1) substituting any report_path value already registered on `names`
+        """Structural redact(), plus (docs/DESIGN.md 5.1) substituting any report_path value already
+        registered on `names`
         -- run BEFORE redact() itself, not after, so a report_path under the
         home directory is replaced by its own path-N pseudonym wholesale
         rather than first being collapsed by redact()'s home/tmp rules into

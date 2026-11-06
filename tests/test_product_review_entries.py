@@ -82,7 +82,7 @@ def test_the_readme_labels_its_figure():
     assert "10.2 hours went" not in text
 
 
-# --- review round 1 of this batch ----------------------------------------------------------------
+# --- further cases ----------------------------------------------------------------
 
 
 
