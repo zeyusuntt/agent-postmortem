@@ -56,6 +56,22 @@ Fixtures under `tests/fixtures/` and `src/agent_postmortem/demo/` must stay
 fully synthetic: no real session id, no real absolute path outside `/tmp`
 or `~`, no real project slug, no real prompt text, no real code.
 
+## Imitating CI before a release
+
+A suite can pass on your machine and fail on CI, because your machine has things a runner lacks: the
+plugin, `claude`, a particular Python. Before pushing a release, run CI's steps the way a runner sees
+them:
+
+```
+mkdir -p /tmp/ci-like
+nohup scripts/ci-like.sh --out /tmp/ci-like > /tmp/ci-like/run.log 2>&1 </dev/null &
+```
+
+For each Python in CI's matrix it uses a one-commit copy of the tree, an empty `HOME` and
+`CLAUDE_CONFIG_DIR`, no `claude` on `PATH`, and uv's standalone build, with the version checked. A
+version takes about 8 minutes, and it runs one at a time. The result is the last lines of
+`ci-like-summary.txt`. It cannot show a failure that only happens on another operating system.
+
 ## Linting
 
 ```

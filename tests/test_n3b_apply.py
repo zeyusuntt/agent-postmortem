@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+import agent_postmortem
 from agent_postmortem import disclosure, rules
 from tests import n3b_helpers as h
 
@@ -136,10 +137,19 @@ def test_share_never_writes_the_target(plain_target, capsys):
     assert (plain_target.read_bytes(), plain_target.stat().st_mtime_ns) == before
 
 
-def test_share_hook_rule_prints_the_hook_note_without_an_absolute_path(plain_target, capsys):
+def test_share_hook_rule_prints_the_hook_note_without_an_absolute_path(plain_target, capsys, monkeypatch):
+    # the file name shows for a package under the home, where a uv install or a checkout usually is
+    monkeypatch.setenv("HOME", str(Path(agent_postmortem.__file__).parents[2]))
     _code, out, _err = _apply(capsys, plain_target, rule="R-MODEL-ALLOCATION")
     assert "Hook template:" in out
     assert "model_allocation_guard.mjs" in out
+    _assert_no_target_bytes(out, plain_target)
+
+
+def test_share_hook_rule_outside_the_home_prints_no_path_of_the_package(plain_target, capsys):
+    _code, out, _err = _apply(capsys, plain_target, rule="R-MODEL-ALLOCATION")
+    assert "Hook template:" in out
+    assert str(Path(agent_postmortem.__file__).parent) not in out
     _assert_no_target_bytes(out, plain_target)
 
 

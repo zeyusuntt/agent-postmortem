@@ -33,6 +33,11 @@ and print nothing when they are broken, so a missing plugin looks the same as a 
   read in part, so they may hide more: agent-postmortem scan --all`, and with nothing else to
   report it says `nothing needs attention in what could be read`. Until now only `--all` said so.
 
+- `scripts/ci-like.sh` runs CI's steps before a push the way a runner sees them: a one-commit copy of
+  the tree, an empty `HOME` and `CLAUDE_CONFIG_DIR`, no `claude` on `PATH`, and uv's standalone build
+  of each Python in the matrix, with the version checked. It cannot show a failure that only happens
+  on another operating system.
+
 ### Changed
 
 - An agent's structured result now counts as reporting failure when its `status` is `failed`,
@@ -55,6 +60,18 @@ and print nothing when they are broken, so a missing plugin looks the same as a 
   told once as silent: changing that would make every session read its transcript again.
 - A `run.sh` timing test that failed once on a slow CI runner (2.8 s against 2 s, with a correct
   build) now checks the number of probes.
+- `doctor` and the job file reader count JSON nested past 256 levels as unreadable on every Python.
+  The interpreter's own limit used to decide, and it runs from about 1,000 levels on 3.11 to past
+  100,000 on 3.14.8.
+- CI now runs the Python versions it names. `setup-uv@v3` has no `python-version` input, so the
+  matrix only changed each job's name. All 18 CI runs up to now, 0.4.0 and 0.5.0 among them, ran
+  3.12.3 on Ubuntu and Homebrew's newest on macOS (3.14.7, then 3.15.0 to 3.15.2), and none ran 3.11
+  or 3.13. Each job now selects its version and fails on any other. The matrix and the classifiers
+  both list 3.11 to 3.15.
+- The test suite no longer depends on the machine it runs on. Each test has its own empty home and
+  sees no settings from a session running the suite. Two privacy tests had passed only where the
+  plugin was installed. The JSON rows of the privacy matrix also missed a value that was only a path.
+  They catch it now, and no row had one.
 
 ## [0.5.0]
 

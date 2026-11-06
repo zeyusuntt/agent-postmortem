@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -41,6 +42,7 @@ from agent_postmortem import cli, reader, state
 from agent_postmortem.report import EXCERPT_NOTE
 from tests import n3b_helpers as h
 from tests import n3b_planted as plant
+from tests import test_doctor as td
 from tests import test_watch as tw
 
 LEVEL_FLAGS = {"share": [], "local": ["--local"], "raw": ["--raw"]}
@@ -295,6 +297,7 @@ def _doctor(env: Env, flags: list[str]):
     from agent_postmortem import doctor
 
     env.monkeypatch.setattr(doctor, "_claude_path", lambda: None)  # never the real one in a test
+    env.monkeypatch.setattr(doctor, "_hook_cli_found", lambda: False)  # this machine's PATH is no fixture
     _hook_worker(env, flags)
     env.capsys.readouterr()
     return _run_cli(env, "doctor", "--session", env.planted.session, "--root", env.planted.root,
@@ -303,6 +306,19 @@ def _doctor(env: Env, flags: list[str]):
 
 def _doctor_json(env: Env, flags: list[str]):
     return _doctor(env, ["--json", *flags])
+
+
+def _with_plugin(runner, *, enabled: bool):
+    """The same doctor run with the plugin installed in a config directory of the test's own, so
+    each state doctor can word is a row whatever this machine has (CI run 42145711237)."""
+    def wrapped(env: Env, flags: list[str]):
+        td._plugin(env.tmp_path, enabled=enabled)
+        env.monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(env.tmp_path))
+        # after the session the runner starts, so the one row naming /reload-plugins shows as well
+        later = datetime.now(timezone.utc).timestamp() + 3600
+        os.utime(env.tmp_path / "market" / "plugin" / "hooks" / "hooks.json", (later, later))
+        return runner(env, flags)
+    return wrapped
 
 
 def _status(*extra):
@@ -437,7 +453,12 @@ SINKS = [
          json_lines=True),
     Sink("hook stop-watch", ("hook", "stop-watch"), _hook_stop_watch, (), levels=SHARE_ONLY,
          silent=True),
-    Sink("doctor", ("doctor",), _doctor, ("DOCTOR  ",)),
+    Sink("doctor", ("doctor",), _doctor,
+         ("DOCTOR  ", "/plugin install agent-postmortem@agent-postmortem")),
+    Sink("doctor, plugin turned off", ("doctor",), _with_plugin(_doctor, enabled=False),
+         ("DOCTOR  ", "/plugin enable agent-postmortem@agent-postmortem")),
+    Sink("doctor, plugin installed", ("doctor",), _with_plugin(_doctor, enabled=True),
+         ("DOCTOR  ", "/reload-plugins")),
     Sink("status", ("status",), _status(),
          ("STATUS  session s_", "returned, but its own last entry says: a server error occurred")),
     Sink("statusline subagents", ("statusline", "subagents"), _statusline,
@@ -679,7 +700,13 @@ JSON_SINKS: list[JsonSink] = [
              local_names=("label", "agent1"), raw_names=("label", "agent1"),
              share_alias=(POINTER_ALIAS, PATH_ALIAS), evidence=True),
     JsonSink("doctor --json", ("doctor",), _doctor_json,
-             ('"document": "doctor"', '"checks"')),
+             ('"document": "doctor"', '"checks"', "/plugin install agent-postmortem@agent-postmortem")),
+    JsonSink("doctor --json, plugin turned off", ("doctor",),
+             _with_plugin(_doctor_json, enabled=False),
+             ('"document": "doctor"', "/plugin enable agent-postmortem@agent-postmortem")),
+    JsonSink("doctor --json, plugin installed", ("doctor",),
+             _with_plugin(_doctor_json, enabled=True),
+             ('"document": "doctor"', "/reload-plugins")),
     JsonSink("status --json", ("status",), _status("--json"),
              ('"session": "s_', '"returned_on_error"'), share_alias=(r'"agent": "a:[0-9a-f]{12,}"',)),
     JsonSink("rescue status --json", ("rescue", "status"), _rescue_args("status", "--json"),
@@ -726,6 +753,11 @@ def _json_gaps(parser: argparse.ArgumentParser, rows: list, exempt: dict) -> lis
         if have != want:
             gaps.append(f"{' '.join(path)}: JSON rows cover levels {sorted(have)}, parser accepts {sorted(want)}")
     return gaps
+
+
+def _json_path_text(keys: list[str], values: list[str]) -> str:
+    """One line per key or value, so a value that is only a path starts a token."""
+    return "\n".join([*keys, *values])
 
 
 def _json_strings(node, keys: list[str], values: list[str]) -> None:
@@ -783,9 +815,17 @@ def test_json_matrix_row(sink, level, tmp_path, monkeypatch, capsys):
         assert str(getattr(env.planted, attribute)) in out, f"{attribute} missing at {level}"
     if level == "local":
         # keys and values both: no absolute path anywhere in the document
-        h.assert_no_absolute_path("\\n".join([*keys, *values]), env.planted)
+        h.assert_no_absolute_path(_json_path_text(keys, values), env.planted)
         for name in env.dir_names:
             assert name not in combined, f"directory name leaked at local: {name}"
+
+
+def test_the_json_path_check_sees_a_value_that_is_only_a_path(tmp_path):
+    """Joined with a literal backslash-n the document was one line, and a value that was exactly a
+    path started no token of it, so a leak of that shape passed every JSON row."""
+    text = _json_path_text(["checks"], ["ok", "/opt/zzPlant/file", "more"])
+    with pytest.raises(AssertionError, match="absolute path"):
+        h.assert_no_absolute_path(text, plant.build(tmp_path))
 
 
 def test_every_json_capable_command_and_option_has_a_json_row():

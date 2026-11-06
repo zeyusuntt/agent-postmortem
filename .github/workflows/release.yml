@@ -11,16 +11,19 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.13"
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
-        with:
-          python-version: "3.13"
 
       - name: Install dependencies
         run: uv sync --extra dev
+
+      - name: Check this job runs the Python it names
+        run: uv run python scripts/check-python-version.py 3.13
 
       - name: Test
         run: uv run pytest

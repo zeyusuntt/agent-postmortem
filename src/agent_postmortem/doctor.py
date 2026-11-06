@@ -59,7 +59,7 @@ def _settings_path() -> Path:
 def _read_json(path: Path) -> object:
     try:
         with path.open("rb") as handle:
-            return json.loads(handle.read(1 << 22))
+            return workers.loads_bounded(handle.read(1 << 22))
     except (OSError, ValueError, RecursionError):
         return None
 
@@ -321,7 +321,7 @@ def _first_entry(main_path: Path) -> dict:
         with main_path.open("rb") as handle:
             for raw in handle.read(1 << 18).splitlines():
                 try:
-                    entry = json.loads(raw)
+                    entry = workers.loads_bounded(raw)
                 except (ValueError, RecursionError):
                     continue
                 if not isinstance(entry, dict):
@@ -421,7 +421,7 @@ def _native_rows(stdout: bytes) -> list[tuple[str, str]] | None:
     """(id, state) of each background session in `claude agents --json`, or None when it is not
     the shape this reads. An interactive session has no id and no job file, so it is passed over."""
     try:
-        rows = json.loads(stdout)
+        rows = workers.loads_bounded(stdout)
     except (ValueError, RecursionError):
         return None
     if not isinstance(rows, list):

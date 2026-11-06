@@ -68,13 +68,20 @@ def assert_nothing_planted(out: str, planted, *, except_for: tuple[str, ...] = (
     assert planted.agent1[:12] not in out or "agent1" in except_for
 
 
+# What doctor tells a reader to type into Claude Code, as the exact words around it, so anything else
+# that starts with a slash, a bare /reload-plugins or /plugin with other words among them, is a path.
+_SLASH_COMMANDS = re.compile(
+    r"(?<!\S)(?:/plugin (?:install|enable) agent-postmortem@agent-postmortem(?!\S)"
+    r"|/reload-plugins or restart(?= to get them|\.))")
+
+
 def assert_no_absolute_path(out: str, planted) -> None:
     """No temporary directory, repository, or repository file, and no token
-    that starts with a slash."""
+    that starts with a slash, other than a command to type."""
     tmp = str(planted.repo.parent)
     for fragment in (tmp, tmp[:45], str(planted.repo), str(planted.repo_file)):
         assert fragment not in out, fragment
     for line in out.splitlines():
-        for token in line.split():
+        for token in _SLASH_COMMANDS.sub("", line).split():
             # a bare "/" is a separator in prose (the NEVER line), not a path
             assert not (token.startswith("/") and len(token) > 1), f"absolute path in {line!r}"

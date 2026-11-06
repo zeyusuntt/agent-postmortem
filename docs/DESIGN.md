@@ -5858,6 +5858,11 @@ as eligible or not and has no test of its own. It does not check that the hooks'
 read the flag: a bundled 0.5.0 behind a 0.5.1 plugin only lasts until SessionStart replaces it, and the
 words printed on arming already say to restart when no line arrives.
 
+Job files, settings files, the transcript's first lines and the answer from `claude agents` are read
+through `workers.loads_bounded`: JSON nested past 256 levels (`MAX_JSON_DEPTH`) counts as unreadable on
+every Python. The interpreter's own limit varies by version and build, from about 1,000 levels on 3.11
+to under 20,000 on a 3.14.0 build and past 100,000 on a 3.14.8 build.
+
 `native state` compares the job files with Claude Code's own list, because every worker notice rests on
 job files and they are not a published format. `doctor` runs `claude agents --json --all` once, with
 stdin closed and a 10 s limit, the only program it starts; `--test-alert` does not run it and no hook
@@ -8027,10 +8032,25 @@ critical finding" (4.6), the same substitution `run`'s own 4.8 entry makes.
 ### 8.3 CI and release
 
 `.github/workflows/ci.yml`: on push and pull request; matrix ubuntu-latest
-and macos-latest times Python 3.11, 3.12, 3.13; steps: `uv sync --extra dev`,
-`uv run ruff check`, `uv run pytest`, `uv build`, `scripts/check-privacy.sh
+and macos-latest times Python 3.11, 3.12, 3.13, 3.14, 3.15, selected by `UV_PYTHON` because
+setup-uv@v3 has no `python-version` input; steps: `uv sync --extra dev`,
+`uv run python scripts/check-python-version.py <version>`, which fails a job on any other Python,
+`uv run ruff check`, `uv run pytest -rs`, `uv build`, `scripts/check-privacy.sh
 --tree --artifacts dist/`, and `claude plugin validate --strict ./plugin` and
-`claude plugin validate --strict .` when the binary exists. `.github/workflows/release.yml`: on tag `v*`, a build job (tests, build, privacy
+`claude plugin validate --strict .` when the binary exists. Until 0.5.1 the matrix selected nothing:
+all 18 runs to that point, 0.4.0 and 0.5.0 among them, ran 3.12.3 on Ubuntu and Homebrew's newest on
+macOS (3.14.7, then 3.15.0 to 3.15.2), and none ran 3.11 or 3.13. The classifiers in `pyproject.toml`
+list the same versions as the matrix.
+
+`scripts/ci-like.sh` runs those steps on the local machine before a release is pushed. Per version,
+one at a time, it uses a one-commit repository holding exactly the commit's tree, `env -i`, an empty
+`HOME` and `CLAUDE_CONFIG_DIR`, a `PATH` without `claude`, and uv's standalone build. Each step has a
+deadline, and `HOME` must still be empty afterwards. It cannot show a failure that only happens on
+another operating system: 0.5.0's did, on Linux. `tests/conftest.py` gives each test its own home and
+drops the settings of any session running the suite, so a test cannot pass or fail on what the
+machine has installed.
+
+`.github/workflows/release.yml`: on tag `v*`, a build job on Python 3.13 (tests, build, privacy
 check of the artifacts), then a `github-release` job (`permissions: contents: write`,
 `gh release create <tag> dist/* --verify-tag` with that version's CHANGELOG section as
 notes) and a publish job with `environment: pypi`, `permissions: id-token: write`,

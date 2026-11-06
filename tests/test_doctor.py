@@ -10,6 +10,8 @@ from __future__ import annotations
 import io
 import json
 import os
+import random
+import subprocess
 import sys
 import threading
 import time
@@ -739,6 +741,119 @@ def test_a_settings_file_nested_too_deep_is_only_unreadable(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text("[" * 50_000 + "]" * 50_000, encoding="utf-8")
     assert doctor._read_json(path) is None
+
+
+def _nested(depth: int) -> str:
+    return "[" * depth + "]" * depth
+
+
+def test_the_nesting_limit_is_one_number_on_every_interpreter(tmp_path):
+    """Well below what any supported Python can parse, so the limit decides and the interpreter
+    never does: what a Python parses runs from about 1,000 levels to past 100,000 by version and build."""
+    path = tmp_path / "settings.json"
+    path.write_text(_nested(workers.MAX_JSON_DEPTH), encoding="utf-8")
+    assert doctor._read_json(path) is not None
+    path.write_text(_nested(workers.MAX_JSON_DEPTH + 1), encoding="utf-8")
+    assert doctor._read_json(path) is None
+
+
+def test_a_job_file_one_level_past_the_limit_is_unreadable(tmp_path):
+    path = tmp_path / "state.json"
+    inner = _nested(workers.MAX_JSON_DEPTH - 1)
+    path.write_text('{"state": "working", "x": ' + inner + "}", encoding="utf-8")
+    assert workers.read_job(str(path))["state"] == "working"
+    inner = _nested(workers.MAX_JSON_DEPTH)
+    path.write_text('{"state": "working", "x": ' + inner + "}", encoding="utf-8")
+    assert workers.read_job(str(path)) is None
+
+
+@pytest.mark.parametrize("text,expected", [
+    pytest.param('{"a": "' + "[" * 5000 + '"}', {"a": "[" * 5000}, id="brackets in a string"),
+    pytest.param('{"a": "\\"' + "[" * 5000 + '"}', {"a": '"' + "[" * 5000}, id="after an escaped quote"),
+    pytest.param('{"' + "{" * 5000 + '": 1}', {"{" * 5000: 1}, id="brackets in a key"),
+    pytest.param('{"a": "\\\\", "b": [1]}', {"a": "\\", "b": [1]}, id="an escaped backslash ends no string"),
+])
+def test_a_bracket_inside_a_string_is_not_nesting(text, expected):
+    assert workers.loads_bounded(text) == expected
+
+
+@pytest.mark.parametrize("raw", [
+    pytest.param('{"a": [1, "\u00e9"]}'.encode(enc), id=enc) for enc in ("utf-8", "utf-16", "utf-32")
+])
+def test_bytes_read_as_json_itself_reads_them(raw):
+    assert workers.loads_bounded(raw) == json.loads(raw)
+
+
+@pytest.mark.parametrize("text", ["", "{", "[1,", '"never closed', "not json"])
+def test_what_is_not_json_still_raises_what_json_raises(text):
+    with pytest.raises(ValueError):
+        workers.loads_bounded(text)
+
+
+def test_an_unfinished_string_is_read_in_one_pass():
+    """A job file cut off mid-write can end inside a string full of escaped quotes. Scanning from
+    each quote again took 17 s for 80 KB, and a file may be 1 MB, on the per-call hook's path."""
+    code = ("import sys, time; from agent_postmortem import workers\n"
+            "for text in ('{\"x\":\"' + '\\\\\"' * 500_000, '{\"x\":\"' + '\\\\\"' * 500_000 + '\\\\'):\n"
+            "    try:\n"
+            "        workers.loads_bounded(text)\n"
+            "    except ValueError:\n"
+            "        pass\n"
+            "    else:\n"
+            "        sys.exit('parsed an unfinished string')\n")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
+    done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, timeout=30)
+    assert done.returncode == 0, done.stderr
+
+
+@pytest.mark.parametrize("text", [
+    pytest.param('{"a": "' + "[" * 5000, id="brackets in an unfinished string"),
+    pytest.param('{"a": "x\\', id="ends on a lone backslash"),
+    pytest.param('"', id="one quote"),
+    pytest.param('"\\', id="a quote and a lone backslash"),
+])
+def test_an_unfinished_string_raises_what_json_raises(text):
+    with pytest.raises(ValueError):
+        workers.loads_bounded(text)
+
+
+def _random_value(rng: random.Random, depth: int) -> object:
+    if depth <= 0 or rng.random() < 0.3:
+        return "".join(rng.choice('[]{}"\\,:x \n\u00e9') for _ in range(rng.randrange(8)))
+    if rng.random() < 0.5:
+        return [_random_value(rng, depth - 1) for _ in range(rng.randrange(3))]
+    return {str(_random_value(rng, 0)): _random_value(rng, depth - 1) for _ in range(rng.randrange(3))}
+
+
+def test_it_reads_whatever_json_reads_up_to_the_limit():
+    rng = random.Random(20261105)
+    for _ in range(2000):
+        text = json.dumps(_random_value(rng, 6), ensure_ascii=rng.random() < 0.5)
+        assert workers.loads_bounded(text) == json.loads(text), text
+        assert workers.loads_bounded(text.encode("utf-8")) == json.loads(text), text
+
+
+def test_it_refuses_whatever_json_refuses():
+    rng = random.Random(20261106)
+    for _ in range(5000):
+        text = "".join(rng.choice('[]{}"\\,:x1 \n') for _ in range(rng.randrange(14)))
+        try:
+            expected = json.loads(text)
+        except ValueError:
+            with pytest.raises(ValueError):
+                workers.loads_bounded(text)
+        else:
+            assert workers.loads_bounded(text) == expected, text
+
+
+def test_doctor_reads_no_deep_transcript_line_and_no_deep_native_answer(tmp_path):
+    deep = _nested(workers.MAX_JSON_DEPTH + 1)
+    path = tmp_path / "main.jsonl"
+    good = json.dumps({"timestamp": "2026-02-01T00:00:00.000Z", "cwd": "/tmp/zz"})
+    path.write_text(deep + "\n" + good + "\n", encoding="utf-8")
+    assert doctor._first_entry(path)["cwd"] == "/tmp/zz"
+    assert doctor._native_rows(deep.encode()) is None
 
 
 def test_a_state_neither_side_should_have_is_not_agreement(tmp_path, capsys, monkeypatch):

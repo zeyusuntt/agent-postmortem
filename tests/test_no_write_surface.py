@@ -305,7 +305,7 @@ _ALLOWED_SINK_CALLS = {
     ("doctor.py", 321, "main_path.open"):
         "_first_timestamp: read a transcript's first 256 KB for when the session started, mode "
         "'rb', never written (docs/DESIGN.md 4.14.12)",
-    ("workers.py", 183, "<expr>.open"):
+    ("workers.py", 208, "<expr>.open"):
         "read_job: read a background session's job file, at most 1 MB, mode 'rb', never written "
         "(docs/DESIGN.md 4.14.5)",
     ("watcher.py", 72, "<expr>.open"):

@@ -47,6 +47,8 @@ plugin/           the Claude Code plugin: hooks, /postmortem skill, marketplace.
 scripts/
   check-privacy.sh    repository privacy audit: tree, history, artifacts
   export-public.sh    sanitized export that becomes the public history
+  ci-like.sh          CI's steps as a runner sees them, run before a release is pushed
+  check-python-version.py   fails a CI job or ci-like run on any Python but the one it named
 tests/
   fixtures/runs/<case>/   synthetic run dirs
   fixtures/README.md      field-level description of the formats

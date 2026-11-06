@@ -174,9 +174,34 @@ def job_gone(path: str) -> bool:
     return False
 
 
+# How deep a job file, a settings file or an answer from `claude agents` may nest. None comes close,
+# and every supported Python parses this far, so too deep means this number on all of them. The
+# interpreter's own limit differs: about 1,000 on 3.11, under 10,000 on 3.12 and 3.13, and on 3.14
+# and later whatever the stack holds: under 20,000 on one build, past 100,000 on another.
+MAX_JSON_DEPTH = 256
+# An unfinished string runs to the end of the text, so a file cut off mid-write is one pass over it:
+# failing there would start again at each escaped quote inside, 17 s for 80 KB.
+_JSON_STRING_OR_BRACKET = re.compile(r'"[^"\\]*+(?:\\.?[^"\\]*+)*+(?:"|\Z)|[\[\]{}]', re.DOTALL)
+
+
+def loads_bounded(raw: bytes | str) -> object:
+    """json.loads, raising ValueError for JSON nested past MAX_JSON_DEPTH."""
+    text = raw if isinstance(raw, str) else raw.decode(json.detect_encoding(raw), "surrogatepass")
+    depth = 0
+    for found in _JSON_STRING_OR_BRACKET.finditer(text):
+        token = found.group()
+        if token in ("[", "{"):
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise ValueError(f"nested past {MAX_JSON_DEPTH} levels")
+        elif token in ("]", "}"):
+            depth -= 1
+    return json.loads(text)
+
+
 def read_job(path: str) -> dict | None:
     """A job file as a dict, or None: missing, over 1 MB, unreadable, not a regular file (a pipe
-    with no writer never answers), or not a JSON object."""
+    with no writer never answers), nested too deep, or not a JSON object."""
     try:
         if not stat.S_ISREG(os.stat(path).st_mode):
             return None
@@ -184,7 +209,7 @@ def read_job(path: str) -> dict | None:
             raw = handle.read(_JOB_FILE_BYTES + 1)
         if len(raw) > _JOB_FILE_BYTES:
             return None
-        data = json.loads(raw)
+        data = loads_bounded(raw)
     except (OSError, ValueError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
