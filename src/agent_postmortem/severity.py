@@ -43,7 +43,7 @@ VOCAB: dict[str, frozenset[str]] = {
     "silence": frozenset({"long", "short", "unknown"}),
     "position": frozenset({"final", "non_final"}),
     "clause": frozenset({
-        "tests_failed", "suite_failed", "ok_false", "ready_false", "blockers",
+        "tests_failed", "suite_failed", "ok_false", "status_failed", "ready_false", "blockers",
         "report_path_missing", "self_reported_failure", "self_reported_blocked",
     }),
     "absence": frozenset({"present_now", "absent_now", "unknown", "none"}),
@@ -97,7 +97,7 @@ RULES: dict[str, list[tuple[tuple, str]]] = {
         ((("parent_stop", "human"), _ANY, _ANY), "info"),
     ],
     "claim_contradiction": [
-        ((("tests_failed", "suite_failed", "ok_false", "ready_false", "blockers",
+        ((("tests_failed", "suite_failed", "ok_false", "status_failed", "ready_false", "blockers",
            "self_reported_failure", "self_reported_blocked"), "none"),
          "major"),
         (("report_path_missing", ("absent_now", "unknown")), "info"),

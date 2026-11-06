@@ -35,7 +35,7 @@ from tests.test_field_v03 import (
 )
 
 T0 = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
-SENTENCE = "was spent on retries and attempts that ended without a result."
+SENTENCE = "of agent time went to retries and attempts that ended without a result."
 OLD_SENTENCE = "was spent in attempts that returned no result."
 
 

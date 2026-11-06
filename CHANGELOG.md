@@ -5,6 +5,57 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1]
+
+0.5.1 lets you check that alerts can reach you. The plugin's hooks print nothing when all is well
+and print nothing when they are broken, so a missing plugin looks the same as a healthy one.
+`agent-postmortem doctor` says which.
+
+### Added
+
+- `agent-postmortem doctor` says whether alerts can reach a session: the verdict first, then one
+  row per check. It checks the CLI, the plugin (installed, turned on, its hooks bound, the idle
+  watcher among them), Claude Code's version, readable transcripts and job files, writable state,
+  this session's workers and the idle watcher. It also says when the plugin's hooks have no CLI to
+  run. It exits 3 when a check fails, 2 for a named session that does not exist and 1 for
+  `--test-alert` with no session. `--json` has the same rows. It prints no path below `--raw` and no
+  worker's name or id below `--local`.
+- `doctor --test-alert` sends one line through the per-call hook. Inside a session, your next tool
+  call or prompt reads `ALERT TEST from agent-postmortem doctor: ...`, once. That tests the per-call
+  channel end to end. An idle session is not woken for it, since a wake costs a model turn, so
+  `doctor` reports the idle channel as eligible or not.
+- The `native state` row compares the job files with `claude agents --json --all`, because every
+  worker notice rests on job files and they are not a published format. `doctor` runs that command
+  once, with stdin closed and a 10 s limit. No hook runs it, and it is the only time this tool
+  starts Claude Code. A difference is a WARN, so a Claude Code update that changes the job files
+  shows up.
+- `scan` says when it read a run only in part. The default view adds `2 of 40 runs could only be
+  read in part, so they may hide more: agent-postmortem scan --all`, and with nothing else to
+  report it says `nothing needs attention in what could be read`. Until now only `--all` said so.
+
+### Changed
+
+- An agent's structured result now counts as reporting failure when its `status` is `failed`,
+  `failure`, `error` or `errored` (the whole value, in any case), or when `tests` holds `failed` or
+  `failures` above 0. Both are `claim_contradiction` findings, as `tests_failed` and `ok: false`
+  already were. A status such as `done_with_concerns` is not a failure.
+- A suggested rule is now one that `might have helped`, in place of `would have prevented this`:
+  the tool cannot know that a rule would have stopped a failure.
+- Wasted time reads `20m of agent time went to retries and attempts that ended without a result`,
+  since parallel attempts each count, so the figure is not wall-clock time.
+
+### Fixed
+
+- A placeholder in a prompt's path, such as `reply-N.json`, is no longer reported as a missing file.
+  This covers `N`, `X`, `K` or `ID` as a whole word of the file name. `README.md`, `Xray-N1.json` and
+  `run-X7.log` are still names.
+- `python3 -c 'import time; time.sleep(N)'` counts as a timer, both for the deadline request and for
+  the silence rule. Agents write it when a foreground `sleep` is refused. Any other script does not
+  count. A timer already running when you upgrade keeps the old reading until it ends, and may be
+  told once as silent: changing that would make every session read its transcript again.
+- A `run.sh` timing test that failed once on a slow CI runner (2.8 s against 2 s, with a correct
+  build) now checks the number of probes.
+
 ## [0.5.0]
 
 0.5 tells a session about the workers it launched, with nothing to arm. Claude Code records a

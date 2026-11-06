@@ -297,7 +297,7 @@ exit=4
   "next": [
     {
       "grade": "decide",
-      "text": "rules that would have prevented this",
+      "text": "rules that might have helped",
       "command": "agent-postmortem rules propose"
     }
   ]
@@ -849,7 +849,7 @@ exit=0
   "next": [
     {
       "grade": "decide",
-      "text": "rules that would have prevented this",
+      "text": "rules that might have helped",
       "command": "agent-postmortem rules propose"
     }
   ]
@@ -2759,7 +2759,7 @@ exit=0
     },
     {
       "grade": "decide",
-      "text": "rules that would have prevented this",
+      "text": "rules that might have helped",
       "command": "agent-postmortem rules propose"
     }
   ]
@@ -3092,7 +3092,7 @@ exit=0
   "next": [
     {
       "grade": "decide",
-      "text": "rules that would have prevented this",
+      "text": "rules that might have helped",
       "command": "agent-postmortem rules propose"
     }
   ]
@@ -4420,7 +4420,7 @@ exit=4
   "next": [
     {
       "grade": "decide",
-      "text": "rules that would have prevented this",
+      "text": "rules that might have helped",
       "command": "agent-postmortem rules propose"
     }
   ]
@@ -5726,7 +5726,7 @@ exit=4
   "next": [
     {
       "grade": "decide",
-      "text": "rules that would have prevented this",
+      "text": "rules that might have helped",
       "command": "agent-postmortem rules propose"
     }
   ]
@@ -5926,7 +5926,7 @@ exit=4
   "next": [
     {
       "grade": "decide",
-      "text": "rules that would have prevented this",
+      "text": "rules that might have helped",
       "command": "agent-postmortem rules propose"
     }
   ]

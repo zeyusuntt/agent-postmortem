@@ -129,6 +129,14 @@ def _title(path: str, state: str) -> str:
 
 
 _TEMPLATE_RE = re.compile(r"[<>*{}$]")
+# field report 2026-11-05: `reply-N.json for N 1 to 4` names no one file. A capital placeholder as a
+# whole word of the file name; `README.md`, `Xray-N1.json` and `run-X7.log` are names.
+_PLACEHOLDER_RE = re.compile(r"(?<![A-Za-z0-9])(?:N{1,3}|X{1,3}|K|ID)(?![A-Za-z0-9])")
+
+
+def is_placeholder(path: str) -> bool:
+    """`reply-N.json`: a capital placeholder as a whole word of the file name."""
+    return _PLACEHOLDER_RE.search(path.rsplit("/", 1)[-1]) is not None
 
 
 def artifact_paths(text: str) -> list[str]:
@@ -139,8 +147,8 @@ def artifact_paths(text: str) -> list[str]:
         preceding = text[max(0, match.start() - _NEGATION_WINDOW):match.start()]
         if _NEGATION_RE.search(preceding):
             continue
-        if _TEMPLATE_RE.search(match.group(1)):
-            continue  # a template (<case>, {id}, *, $VAR) names no one file
+        if _TEMPLATE_RE.search(match.group(1)) or is_placeholder(match.group(1)):
+            continue  # a template (<case>, {id}, *, $VAR, reply-N.json) names no one file
         paths.append(match.group(1))
     return paths
 

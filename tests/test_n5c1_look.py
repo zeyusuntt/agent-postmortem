@@ -128,7 +128,7 @@ def test_the_item_sits_before_the_rules_item_and_the_generic_item_is_left_out(mo
     texts = [item["text"] for item in items]
     assert texts == [
         "1 expected file absent now: check whether the run wrote it",
-        "rules that would have prevented this",
+        "rules that might have helped",
     ]
 
 

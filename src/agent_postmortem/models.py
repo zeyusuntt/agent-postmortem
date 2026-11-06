@@ -722,7 +722,7 @@ class Finding:
     agent_id: str | None
     evidence: list[str]  # 'relative/path:line: excerpt' (<=160 chars each), redacted at render time
     metrics: dict  # detector-specific numbers (counts, seconds, tokens)
-    rule_id: str | None  # the rule that would have prevented it, if any
+    rule_id: str | None  # a rule that might have helped, if any
     # Every rule this finding backs, in priority order (unit M1d). Most
     # detectors back at most one rule, so rule_ids is just (rule_id,); a
     # detector whose one finding backs more than one rule (silent_retry's

@@ -1729,6 +1729,12 @@ def post_tool_check(main_path_str: str, payload: dict) -> tuple[Callable[[], str
         or worker_check.pending
 
 
+def doctor_alert_line() -> str:
+    from . import doctor
+
+    return doctor.TEST_ALERT
+
+
 def _make_deliver(found: list[tuple[dict, str]], commands: list[tuple[dict, str]], overflow: int,
                   message: str | None, reserve: dict, check: "_WorkerCheck", main_path: Path,
                   follower, recheck_at: float | None) -> Callable[[], str | None]:
@@ -1737,7 +1743,7 @@ def _make_deliver(found: list[tuple[dict, str]], commands: list[tuple[dict, str]
     commands, then a worker that delivered; what does not fit stays due."""
 
     def deliver() -> str | None:
-        if not found and not commands and not check.observed:
+        if not found and not commands and not check.observed and not check.test_alert:
             return None
 
         dropped: list[str] = []
@@ -1745,11 +1751,15 @@ def _make_deliver(found: list[tuple[dict, str]], commands: list[tuple[dict, str]
         info: list[dict] = []
         quiet: dict[str, str] = {}
         told: list[dict] = []
+        alert: list[str] = []
 
         def before(record: dict) -> None:
             # a commit that fails runs this again for the fallback (0.5.0 review)
             for held in (trouble, info, quiet, told):
                 held.clear()
+            # only from the real record: after a failed commit the flag is still there, and the
+            # gate stays open for it, so the retry on a scratch record says nothing
+            alert[:] = [doctor_alert_line()] if record.pop("test_alert", None) is not None else []
             lines, silent = workers.due(_told_workers(record), check.observed,
                                         _finishes(record))
             trouble.extend(w for w in lines if w["class"] in workers.TROUBLE)
@@ -1759,7 +1769,7 @@ def _make_deliver(found: list[tuple[dict, str]], commands: list[tuple[dict, str]
         def message_for(won: list[str]) -> str | None:  # inside the claim's lock, before its write
             events = [event for event, key in found if key in won]
             mine = [(c, key) for c, key in commands if key in won]
-            parts: list[str] = []
+            parts: list[str] = list(alert)
             for index, worker in enumerate(trouble):
                 line = workers.line(worker)
                 left = len(trouble) - index - 1 + len(events) + len(mine) + overflow + len(info)
@@ -1769,7 +1779,7 @@ def _make_deliver(found: list[tuple[dict, str]], commands: list[tuple[dict, str]
                 parts.append(line)
                 told.append(worker)
             room = _HOOK_BUDGET - (len("\n".join(parts)) + 1 if parts else 0)
-            unshown = len(trouble) - len(parts)
+            unshown = len(trouble) - (len(parts) - len(alert))
             if not parts:
                 endings = message if all(k in won for _e, k in found) \
                     else _render_endings(events, main_path, follower, **reserve)
@@ -1816,6 +1826,7 @@ def _make_deliver(found: list[tuple[dict, str]], commands: list[tuple[dict, str]
     deliver.recheck_at = min(rechecks) if rechecks else None  # type: ignore[attr-defined]
     deliver.workers = check.table  # type: ignore[attr-defined]
     deliver.stall_turn = check.stall_turn  # type: ignore[attr-defined]
+    deliver.test_alert = check.test_alert  # type: ignore[attr-defined]
     return deliver
 
 
@@ -1838,6 +1849,7 @@ class _WorkerCheck:
     stall_turn: int = 0  # the next idle worker's turn at the stall read
     stall_any_size: bool = False  # the watcher's: no 3 s limit kills it, so it reads any session
     names: dict[str, str] = field(default_factory=dict)  # what each launch result printed
+    test_alert: bool = False  # `doctor --test-alert` left its flag (4.14.12)
 
 
 def _told_workers(record: object) -> dict[str, str]:
@@ -1890,12 +1902,14 @@ def _worker_check(follower, payload: dict, cache: dict, started: float,
         known.setdefault(short, {})
     while len(known) > workers.WORKERS_KEPT:
         del known[min(known, key=lambda short: known[short].get("ts") or 0)]
+    record = _store_record(cache, follower.main_path)
     check = _WorkerCheck(stall_turn=stall_turn or 0, stall_any_size=stall_any_size,
                          names={short: launch["name"] for short, launch in known.items()
-                                if isinstance(launch.get("name"), str)})
+                                if isinstance(launch.get("name"), str)},
+                         test_alert=bool(payload) and "test_alert" in record)
+    check.pending = check.test_alert  # until a claim consumed it
     if not known:
         return check
-    record = _store_record(cache, follower.main_path)
     told = _told_workers(record)
     parsed = 0
     # the file read longest ago first, so busy workers cannot hide another behind the limit

@@ -184,8 +184,8 @@ _ALLOWED_SINK_CALLS = {
     ("reader.py", 452, "path.open"):
         "_transcript_lines: read on past a torn last line, mode 'r' (surrogateescape)",
     ("reader.py", 1034, "journal_path.open"): "read journal.jsonl line by line, mode 'r'",
-    ("reader.py", 1316, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
-    ("reader.py", 3018, "transcript_path.open"):
+    ("reader.py", 1324, "meta_path.open"): "read an agent's own *.meta.json, mode 'r'",
+    ("reader.py", 3026, "transcript_path.open"):
         "probe that a transcript can be opened at all, immediately closed again, mode 'r'",
     ("state.py", 237, "os.open"):
         "_backup_writer: create 'state.json.corrupt-<timestamp>' inside the state "
@@ -279,23 +279,39 @@ _ALLOWED_SINK_CALLS = {
     ("stalls.py", 51, "<expr>.open"):
         "_last_line: read the last 1 KB of a background command's output file for codex's "
         "stdin line, mode 'rb', never written (docs/DESIGN.md 4.14.4)",
-    ("live.py", 1502, "path.open"):
+    ("live.py", 1503, "path.open"):
         "SessionFollower._nested_link: read a nested child's .meta.json (at most 64 KB) for its "
         "launcher and launch id, mode 'rb', never written (docs/DESIGN.md 4.14.3)",
-    ("cli.py", 2991, "os.open"):
+    ("cli.py", 3051, "os.open"):
         "_silence_closed_stdout: open the null device write-only and duplicate it onto stdout's "
         "descriptor after watch's reader closed the pipe, so the exit flush has somewhere to go; "
         "writes nothing else (docs/DESIGN.md 4.12)",
-    ("cli.py", 1828, "path.open"):
+    ("cli.py", 1851, "path.open"):
         "_has_a_timestamp: read a run file's first 64 KB for a timestamp before the --since "
         "pre-filter skips it, mode 'rb', never written (docs/DESIGN.md 4.14.9)",
-    ("workers.py", 179, "<expr>.open"):
+    ("doctor.py", 124, "shutil.which"):
+        "_hook_cli_found: look on PATH for the CLI the plugin's hooks would run (docs/DESIGN.md "
+        "4.14.12), by name only; a read-only PATH lookup, runs nothing, writes nothing",
+    ("doctor.py", 417, "shutil.which"):
+        "_claude_path: find the claude executable for doctor's one comparison (docs/DESIGN.md "
+        "4.14.12); a read-only PATH lookup, writes nothing",
+    ("doctor.py", 483, "subprocess.run"):
+        "_check_native: `claude agents --json --all`, one fixed argv, never a shell, stdin closed, "
+        "under a timeout, only from `doctor`, never from a hook; on a config it has run with "
+        "before it left the config's files unchanged (docs/DESIGN.md 4.14.12)",
+    ("doctor.py", 61, "path.open"):
+        "_read_json: read a small settings or plugin file, at most 4 MB, mode 'rb', never written "
+        "(docs/DESIGN.md 4.14.12)",
+    ("doctor.py", 321, "main_path.open"):
+        "_first_timestamp: read a transcript's first 256 KB for when the session started, mode "
+        "'rb', never written (docs/DESIGN.md 4.14.12)",
+    ("workers.py", 183, "<expr>.open"):
         "read_job: read a background session's job file, at most 1 MB, mode 'rb', never written "
         "(docs/DESIGN.md 4.14.5)",
-    ("watcher.py", 66, "<expr>.open"):
+    ("watcher.py", 72, "<expr>.open"):
         "_version_ok: read the main transcript's last 64 KB for the Claude Code version, mode "
         "'rb', never written (docs/DESIGN.md 4.14.5)",
-    ("watcher.py", 152, "self.main_path.open"):
+    ("watcher.py", 158, "self.main_path.open"):
         "active_again: read the main transcript's bytes appended since the watcher's last look, "
         "mode 'rb', never written (docs/DESIGN.md 4.14.5)",
     ("hook_gate.py", 105, "<expr>.open"):
@@ -303,10 +319,10 @@ _ALLOWED_SINK_CALLS = {
         "last 64 KB) to look for a mark, mode 'rb', never written (docs/DESIGN.md 4.14.5)",
     ("watch.py", 197, "path.open"):
         "_read_new_journal_lines: read appended journal bytes, mode 'rb', never written",
-    ("reader.py", 3867, "self.path.open"):
+    ("reader.py", 3875, "self.path.open"):
         "ParentIndex._hash_prefix: re-read already-parsed prefix bytes to validate the "
         "incremental cache, mode 'rb', never written",
-    ("reader.py", 4065, "self.path.open"):
+    ("reader.py", 4073, "self.path.open"):
         "ParentIndex._parse_increment: read appended parent-transcript bytes, mode 'rb', "
         "never written",
 }
@@ -326,8 +342,9 @@ def test_no_write_sink_call_outside_state_py_writes_anywhere():
     """docs/DESIGN.md 2/5.4: the tool is read-only over the data it
     inspects; it never writes inside a run directory. Structurally: every
     matched sink call outside state.py is either a Path.open() in a
-    read-only mode ('r'/'rb'), or observe.py's own subprocess.run/
-    shutil.which, which run git read-only and touch no path at all. A write
+    read-only mode ('r'/'rb'), or the pinned subprocess.run/shutil.which of
+    observe.py (git, read-only) and doctor.py (one fixed read of the native
+    list), which name no inspected path. A write
     to a caller-named path (a run/transcript path) outside the state
     directory therefore cannot exist without also breaking this test."""
     for module, line, sink, node in _write_and_exec_sink_calls():

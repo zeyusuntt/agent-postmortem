@@ -18,6 +18,10 @@ corrupted, a review finding that names a file that never appeared.
 /plugin install agent-postmortem@agent-postmortem
 ```
 
+Check it works, from inside a session: `agent-postmortem doctor --test-alert`
+(`uvx agent-postmortem doctor --test-alert` if the CLI is not on your `PATH`: the
+copy this plugin installs for its hooks is not).
+
 Uninstall with `/plugin uninstall agent-postmortem@agent-postmortem`, or
 `claude plugin uninstall agent-postmortem@agent-postmortem` outside a
 session.
@@ -72,6 +76,16 @@ raises, the hook prints nothing and exits 0.
 On SessionStart the plugin also keeps its bundled CLI at the plugin's
 version: after a plugin upgrade it reinstalls the matching CLI in the
 background, at most once a day per version.
+
+## Is it working?
+
+The hooks are quiet when all is well, and they never fail a turn, so a broken setup is quiet too. Run
+`agent-postmortem doctor` inside a session (`uvx agent-postmortem doctor` if the CLI is not on your
+`PATH`): it checks the CLI, this plugin, Claude Code's version,
+what it can read and write, this session's workers and the idle watcher, and whether the job files
+still say what `claude agents --json` says.
+`agent-postmortem doctor --test-alert` sends one line through the per-call hook, so you can see an
+alert arrive.
 
 ## The one network action
 

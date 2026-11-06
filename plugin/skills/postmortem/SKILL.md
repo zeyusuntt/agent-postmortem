@@ -83,7 +83,7 @@ Bash tool.
 2. Show the `WHAT TO DO` list too: at most 3 items, each tagged `[look]`
    (read-only, safe to run yourself) or `[decide]` (needs the user's
    judgment). If it names `agent-postmortem rules propose`, that is how to
-   see which rules across the whole fleet would have prevented failures
+   see which rules across the whole fleet might have helped
    like this one -- run it and show the result; it prints each proposal's
    backing counts, the rule text, and the `apply` command for it, and never
    writes anything.

@@ -551,3 +551,55 @@ def test_help_does_not_count_as_having_looked(tmp_path, monkeypatch, capsys, fla
     _ran(m, f"postmortem status {flag}", ago=30)
     _bg(monkeypatch)
     assert "1 subagent finished" in _stop(m, capsys, monkeypatch)
+
+
+# --- field report 2026-11-05: a timer written in Python ------------------------------------------
+
+
+PY_TIMER = "python3 -c 'import time; time.sleep(1800)'"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(PY_TIMER, id="alone"),
+        pytest.param(f'{PY_TIMER}; echo "deadline reached"', id="then a word"),
+        pytest.param(f"{PY_TIMER} && true", id="and-joined"),
+        pytest.param("/usr/bin/python3 -c 'import time; time.sleep(60)'", id="by its path"),
+        pytest.param("python -c 'import time;time.sleep(1.5)'", id="python, no spaces, a fraction"),
+    ],
+)
+def test_a_timer_written_in_python_is_a_timer(command):
+    assert commands.is_timer(command) is True
+    assert commands.quiet_by_design(command) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("python3 -c 'import time; time.sleep(0)'", id="no wait at all"),
+        pytest.param("python3 -c 'import time; time.sleep(1800); run()'", id="more after the sleep"),
+        pytest.param("python3 -c 'import time; run(); time.sleep(1)'", id="more before the sleep"),
+        pytest.param("python3 -c 'while True: pass'", id="a loop"),
+        pytest.param("python3 -c 'import time; time.sleep(float(\"inf\"))'", id="forever"),
+        pytest.param("python3 -c 'import time; time.sleep(1e9)'", id="not a plain number"),
+        pytest.param("python3 script.py", id="a script"),
+        pytest.param(f"{PY_TIMER}; make long", id="a real command after it"),
+        pytest.param(f"{PY_TIMER} > /tmp/fifo", id="a redirect"),
+        pytest.param(f'{PY_TIMER}; echo "$(tail -f x)"', id="a substitution after it"),
+        pytest.param("ruby -c 'import time; time.sleep(1)'", id="another program"),
+        pytest.param("python3 -m 'import time; time.sleep(1)'", id="not -c"),
+    ],
+)
+def test_what_is_no_timer_in_python(command):
+    assert commands.is_timer(command) is False
+
+
+def test_a_python_timer_arms_the_deadline_it_was_asked_for(tmp_path, monkeypatch, capsys):
+    """The field report: the request asked for a timer, and then asked about that timer."""
+    m = Manager(tmp_path)
+    _bg(monkeypatch, kind="interactive")
+    tasks = [{"id": "b00000001", "type": "shell", "status": "running", "command": "make long"},
+             {"id": "b00000002", "type": "shell", "status": "running",
+              "command": f'{PY_TIMER}; echo "deadline reached"'}]
+    assert _stop(m, capsys, monkeypatch, background_tasks=tasks) == ""

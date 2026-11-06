@@ -26,7 +26,7 @@ CAUSE = ("runtime", "unattributed", "parent_stop", "human")
 SILENCE = ("long", "short", "unknown")
 POSITION = ("final", "non_final")
 CLAUSE = (
-    "tests_failed", "suite_failed", "ok_false", "ready_false", "blockers", "report_path_missing",
+    "tests_failed", "suite_failed", "ok_false", "status_failed", "ready_false", "blockers", "report_path_missing",
     "self_reported_failure", "self_reported_blocked",  # G-B S1
 )
 ABSENCE = ("present_now", "absent_now", "unknown", "none")

@@ -794,7 +794,7 @@ attempt and are not affected.
 | permission_denied (G7, v0.3.1) | minor | both | one finding per attempt, the main thread of a session included, that holds at least one anchored `permission_denied` hit (4.13.2): an `is_error` tool result whose text starts with a runtime denial sentence | count, auto_mode, user, permission_rule, safety_check | none |
 | missing_artifact | critical | both | first user message names an absolute path it must write and the path does not exist at scan time; outside allowed roots: info 'unverified' | paths, verified | R-ASSERT-ARTIFACT |
 | attempt_failed | major/minor | both | a workflow attempt's `outcome` is `failed` (major when no later attempt of the key completed -- whether or not one was even tried; minor when a later attempt did complete); a session subagent's `return_state` is `reported_failed` (G1c, v0.3.1: one major finding, title `<label> failed: <cause phrase>`, `launch_result_failed` when a synchronous launch result decided it and `task_notification_failed` when a notification did, `retry_now` `unknown`, `reset_time` null, evidence the deciding result or notification `file:line`; `reported_killed` adds no finding) | cause, retry_now, reset_time | R-USAGE-LIMIT when cause is a usage limit |
-| claim_contradiction | major | workflow | a `completed` attempt's own dict `reported` reports a failure: `tests_failed`/`suite_failed` > 0, `ok`/`ready` false, `blockers_count` > 0, or a set `report_path` absent on disk (a relative path is unverified, never counted; the path is checked only when the run ended at most 72 hours ago or its end time is unknown, since temp reports are cleaned up later); (G3, v0.3.1) or, when no tests, suite, ok, ready or blockers clause holds, a returned result whose top level carries a failure count of its own (`self_reported_failure`) or `blocked: true` (`self_reported_blocked`) | clauses, claims, and for the G3 clauses `self_reported_failure_counts`, `self_reported_blocked` | none |
+| claim_contradiction | major | workflow | a `completed` attempt's own dict `reported` reports a failure: `tests_failed`/`suite_failed` > 0 (`tests.failed` or `tests.failures` read as `tests_failed`), `ok`/`ready` false, `status` of exactly `failed`, `failure`, `error` or `errored` (`status_failed`; field report 2026-11-05: none of 722 real results here said so, or used the nested form), `blockers_count` > 0, or a set `report_path` absent on disk (a relative path is unverified, never counted; the path is checked only when the run ended at most 72 hours ago or its end time is unknown, since temp reports are cleaned up later); (G3, v0.3.1) or, when no tests, suite, ok, ready or blockers clause holds, a returned result whose top level carries a failure count of its own (`self_reported_failure`) or `blocked: true` (`self_reported_blocked`) | clauses, claims, and for the G3 clauses `self_reported_failure_counts`, `self_reported_blocked` | none |
 | workflow_failed (v0.3, N2, 4.13.3, implemented in N2) | major | workflow | the run's own `Lifecycle.terminal` is `failed` -- the harness itself reported this workflow failed, independent of whatever the journal says | none | none (section 9 names no rule for this detector) |
 
 **A `reported_killed` child adds no finding, and the session header can stay CLEAN (GA-10, v0.3.1).**
@@ -815,7 +815,7 @@ chooses a severity any other way. Input names and their values are those of
 `None`; the one 300 s rule of 4.4), and `position` (`final` when the
 attempt has no later attempt of its key in `Run.attempts` or has no key,
 `non_final` otherwise). A clause of `claim_contradiction` is one of
-`tests_failed`, `suite_failed`, `ok_false`, `ready_false`, `blockers` (each
+`tests_failed`, `suite_failed`, `ok_false`, `status_failed`, `ready_false`, `blockers` (each
 the "tests/ok/ready/blockers" row), `report_path_missing`, or (G3, v0.3.1)
 `self_reported_failure` or `self_reported_blocked`.
 
@@ -872,7 +872,8 @@ How the derived inputs are read (N5b):
   any other `OSError`, a `ValueError`, or a path that is not absolute.
   `claim_contradiction` still ignores a relative `report_path` (no finding,
   as before); `missing_artifact`'s grammar only matches absolute paths that start a token and are
-  no template (v0.4, 4.14.2 R4).
+  no template (v0.4, 4.14.2 R4; field report 2026-11-05: a capital placeholder as a whole word of the
+  file name, `reply-N.json`, `part_X.md`, `item-ID.json`, is one too).
 - A finding whose absence is `absent_now` titles itself "`<path>` is absent
   now; the tool cannot tell whether it existed when the run ended"; one
   whose absence is `unknown` titles itself "`<path>` could not be checked
@@ -1283,8 +1284,9 @@ parent session." (`human`); "`<U>` were interrupted, cause unattributed."
 (`unattributed`); "`<F>` failed (`<causes, comma separated, with counts>`)."
 (one `attempt_failed` finding per failure, causes grouped by
 `metrics.cause`, first-seen order, each rendered `<phrase> (<count>)`);
-"`<W>` was spent on retries and attempts that ended without a result."
-(`wasted_time`'s own `wasted_seconds` metric, formatted with
+"`<W>` of agent time went to retries and attempts that ended without a result."
+(agent time: `wasted_time`'s own `wasted_seconds` metric, a sum across keys, so parallel attempts each
+count and it is not wall-clock time; field report 2026-11-05; formatted with
 `detectors.base.format_duration`; field milestone F, FA5: omitted at 0, under the
 one wasted-time rule stated at 4.3's `wasted_time` row).
 Session: "session ran `<T>`; `<N>` subagents, `<K>` interrupted (`<U>`
@@ -1293,7 +1295,7 @@ summary line, `report._session_summary_line`) plus the same failed-sentence
 when one applies -- (G1c, v0.3.1) a session subagent that reported failure is one
 `attempt_failed` finding, so the two account builders share the one
 failed-clause function rather than duplicating it, and likewise the one
-wasted-clause function: the same "`<W>` was spent on retries and attempts that
+wasted-clause function: the same "`<W>` of agent time went to retries and attempts that
 ended without a result." follows when the session's `wasted_seconds` is above 0
 (FA5: a subagent killed after 70 minutes is one such attempt).
 
@@ -1428,7 +1430,7 @@ and appended only while the list has fewer than 3 items already:
    exactly 72 hours counts). One item however many findings exist, no path
    in its text, the same item in JSON `next`. It counts toward the cap of
    three and goes before the rules item below.
-4. `[decide] rules that would have prevented this: agent-postmortem rules
+4. `[decide] rules that might have helped: agent-postmortem rules
    propose` when at least one major or critical finding carries a rule id.
    `run` never scans another run to report a real "N of M runs" rate (that
    would mean scanning the whole fleet from inside `run`), so this always
@@ -1694,7 +1696,10 @@ header rules as STALLED above. `scan --json` gains `blocked`, present only when 
 
 **Empty groups (field milestone F, P12).** When NEEDS ATTENTION has no candidate its
 header is followed by the one line `  nothing needs attention`, so the group is never
-a bare header; with no LIVE NOW run the LIVE NOW group is omitted entirely, header
+a bare header. When any scanned run was read only in part (`(INCOMPLETE)`, 4.6), that line reads
+`  nothing needs attention in what could be read`, and with or without candidates the group ends
+`  <i> of <N> runs could only be read in part, so it/they may hide more: agent-postmortem scan --all`
+(field report 2026-11-05: `--all` said so and the default view did not; the exit code already did); with no LIVE NOW run the LIVE NOW group is omitted entirely, header
 included.
 
 **LIVE NOW (field milestone F, FB2).** After NEEDS ATTENTION and before LAST 7
@@ -4871,7 +4876,7 @@ line names no evidence location of its own: its next step is the read-only comma
 
 | Id | When | Evidence | Line |
 |---|---|---|---|
-| R1 `result_contradiction` | a workflow attempt closes with a journal `result` | `claim_contradiction`'s major clauses (`ok_false`, `ready_false`, `tests_failed`, `suite_failed`, `blockers`, `self_reported_failure`, `self_reported_blocked`) over `Attempt.reported` | `CLAIM` |
+| R1 `result_contradiction` | a workflow attempt closes with a journal `result` | `claim_contradiction`'s major clauses (`ok_false`, `status_failed`, `ready_false`, `tests_failed`, `suite_failed`, `blockers`, `self_reported_failure`, `self_reported_blocked`) over `Attempt.reported` | `CLAIM` |
 | R2 `report_missing_at_return` | same | the result's absolute `report_path` does not exist when the result is read. Observed at return, so live mode says "is absent", where `run` must say "is absent now; cannot tell" | `CLAIM` |
 | R3 `returned_on_error` | a session subagent returns (its `completed` task notification, or a foreground Agent `tool_result`) | its own transcript's final non-attachment entry is the kill marker, an `API Error`, or a usage-limit message (the #98170 / #85066 shape: success reported after the child died) | `CLAIM` |
 | R4 `output_missing_at_return` | same | `missing_artifact`'s path from the subagent's first prompt does not exist at return. (v0.4) The shared path rule requires the path to start a token and skips templates (`<case>`, `{id}`, `*`, `$VAR`): on the corpus, 130 of 165 matches were a slash inside a relative path or a placeholder. A period that ends the sentence right after the path no longer hides it (the rule had missed "write findings to /tmp/x/review.md."); the `codex_write_denied` fixture's prompt is such a sentence, so its run gains one info `missing_artifact` finding in the goldens | `CLAIM` |
@@ -5145,8 +5150,8 @@ Over 30 days here, `codex exec` with no stdin redirect usually finished (276 in 
 line had finished, so the line counts only as the last one. A command whose outputs are not
 watchable, or one of whose files is gone, not a regular file or cannot be inspected now, is never
 judged silent (`silent_seconds` null); its stdin line still counts. A command wholly under a real
-timeout (`commands.is_bounded`: the rule `DEADLINE` uses), a timer (`commands.is_timer`, by any
-path to `sleep`), `[caffeinate -flags] perl -e 'alarm N; exec @ARGV' ...` or `'alarm shift; exec
+timeout (`commands.is_bounded`: the rule `DEADLINE` uses), a timer (`commands.is_timer`: `sleep N` by any
+path, or exactly `python3 -c 'import time; time.sleep(N)'`, N > 0), `[caffeinate -flags] perl -e 'alarm N; exec @ARGV' ...` or `'alarm shift; exec
 @ARGV' N ...`, N positive and within 2^31 and no perl option after the script, with only exact, literal steps around it (`commands.under_its_own_alarm`, which
 `DEADLINE` reads too: `cd`, `mkdir -p`, assignments, `echo`, `printf`, `date`, `true`, `ls`, `exit`,
 and `wc -l|-c`, `tail -n N|-N`, `head -n N|-N`, `cut` of a regular file or a pipe, `tee` of a pipe; no
@@ -5156,7 +5161,9 @@ or glob an unquoted `$NAME` would expand; `+=` and `printf -v` leave the variabl
 nothing backgrounded anywhere in the command,
 in a known directory and not a FIFO. Anything else is False, a forking wrapper too: a wrong False costs one line told, which says it may be fine, and a
 wrong True silences the only alarm for a real hang), or carrying the marker `# postmortem: silent-wait` is quiet by design (field report 2026-11-04: following the advice would have killed
-a deliberate wait): only its stdin line can make it silent. A session is **STALLED** when this read of its transcript completed without a failure and
+a deliberate wait): only its stdin line can make it silent. The `quiet` reading is taken once, when the command is read, and stored. So a command an older build
+read keeps that build's reading while its facts version stands: the `python3 -c` timer (0.5.1) left `MAIN_FACTS_VERSION` at 10, so one already running at the upgrade may be told once as
+silent. Moving the version would make every session read its main transcript again (4.14.5, the known limit) to spare that one line. A session is **STALLED** when this read of its transcript completed without a failure and
 reached the end of the file (never from cached facts alone, nor past a line still being written,
 review rounds 2 and 3), its turn ended at least 30 min ago with
 nothing since, no subagent of its own is running or waiting and no workflow of its own
@@ -5813,6 +5820,61 @@ triage footer said `ALL TIME` under `--since`.
 | `claude --bg` sessions and their subagents | the same hooks inside the session; `watch --session` run by the session that dispatched it; `STATE` pass-through; `session-start` on resume | as above, plus the dispatcher hears a needs-input or stopped state |
 | `claude -p` | `post-tool` at the next tool call, `check` at Stop, `agent-launched` for a foreground subagent | the existing finding notifications and R3, R4 on a foreground return; a headless run already waits for its background work (R7 not built) |
 | Background shell commands (a `codex exec` worker, a long build) | `status` only, one count line (4.14.4) | nothing: the native end is counted and the line says their output is not checked; Claude Code tells the agent each end itself |
+
+### 4.14.12 `doctor` (field report 2026-11-05)
+
+The plugin's normal success is silence, and its failures are silent too: every hook exits 0, so a
+missing plugin, an old Claude Code or an unwritable state directory look like nothing to report.
+`agent-postmortem doctor [--session S] [--root R] [--json] [--test-alert]` says which, verdict first:
+`DOCTOR  nothing here would stop an alert reaching this session`, `DOCTOR  alerts can reach you, with a
+limit: <check>: <why>`, or `DOCTOR  alerts will not reach you: <check>: <why>`, then one row per check
+(`OK`, `WARN`, `FAIL`, `INFO`): `cli` (its build stamp, which names a branch, from `--local`; and `cli
+copies`, when the plugin's bundled copy is another file), `plugin` (installed, not turned off, no
+`disableAllHooks`, in the user's or the session's project settings, its launcher present and runnable,
+its hooks readable and binding `post-tool` (for every tool: no narrower matcher), `prompt-submit` and an
+`asyncRewake` `stop-watch`, each as exactly `run.sh <word>`; a missing `post-tool` is a FAIL, the rest
+WARN; a settings file that is there and cannot be read is a WARN at the end, since it may be the one
+that turns the hooks off, and an absent one is nothing), `hooks cli` (FAIL when the plugin is installed
+and its hooks have no CLI, in run.sh's order: the data directory a hook is given, below the plugins
+folder, or with none there the XDG state directory, then `PATH` by name, leaving out the folder of a
+throwaway uvx environment, which only that command sees. This process's own `$CLAUDE_PLUGIN_DATA` is not
+read: in a session's commands it can name another plugin's directory, seen on a real machine),
+`claude code` (from what the transcript records), `transcripts` (the config's own folder not there yet is a WARN, since nothing failed to read; a `--root` that is not there is a FAIL),
+`job files`, `state` (a real transaction on the live store; WARN, since a per-call line still goes out
+unrecorded), `this session` (and `hooks`, when the hooks file changed after the session started),
+`workers` (and `worker files`, for one it could not read), `native state` (below) and `idle watcher`. Settings and the plugin
+come from the same `CLAUDE_CONFIG_DIR` as transcripts. The session is `--session`, else the caller's; with
+none, the rows that need one say so. Exit 0, or 3 when a check is `FAIL`, 2 for a named session that
+does not exist, 1 for `--test-alert` with no session to arm. It prints no path below `--raw` and no worker's name or id below `--local`. `--json`:
+`{"schema": 3, "disclosure", "document": "doctor", "verdict", "checks": [{name, status, detail}]}`.
+
+`--test-alert` (`--json`: `armed`) writes `test_alert` into the session's record in the live store and opens its gate, so
+the next tool call or prompt of that session prints `ALERT TEST from agent-postmortem doctor: ...
+Nothing is wrong.`, once, through the same claim as every per-call line, the gate staying open until a
+claim consumed it (`alert` in the gate file, kept across a hook call already in flight; an arming in the
+instant between that call's last read and its write is still lost, and a second run brings it). It proves the per-call channel
+end to end. It does not wake an idle session: that costs a model turn, so the idle channel is reported
+as eligible or not and has no test of its own. It does not check that the hooks' CLI is new enough to
+read the flag: a bundled 0.5.0 behind a 0.5.1 plugin only lasts until SessionStart replaces it, and the
+words printed on arming already say to restart when no line arrives.
+
+`native state` compares the job files with Claude Code's own list, because every worker notice rests on
+job files and they are not a published format. `doctor` runs `claude agents --json --all` once, with
+stdin closed and a 10 s limit, the only program it starts; `--test-alert` does not run it and no hook
+does, so 4.14.5 stays on job files (160 MB and 0.18 s each, measured 2026-11-05 with 110 sessions
+listed). For each row with an `id` it compares the row's `state` with `workers.effective_state` of that
+job file, passing over a file changed in the last 5 s. A row reading `working` over a job reading `done`
+with `inFlight.tasks` above 0 agrees: the worker's turn ended and something it started will wake it (the
+one difference in 101 real sessions, a worker on its own cron). All the same is `OK`. A difference, a
+missing job file or an unreadable one (a pipe, one nested too deep) is `WARN`, with the count, and the
+ids and both state words from `--local`; no other field of a row is read or printed. A state outside
+`working`, `blocked`, `done`, `stopped` and `failed` is a difference even when both sides say it, since a
+notice cannot read it, and prints as `another word`. A list that is not the shape above is `WARN`. No
+`claude` on `PATH`, a run that fails or times out, another `--root` (the list is this machine's, and an
+accepted `--root` means the job files of `CLAUDE_CONFIG_DIR`), or
+nothing to compare is `INFO`: no comparison was made, and that says nothing about alerts. The command
+wrote nothing on a repeat run, and made no connection through a proxy trap (2026-11-05); a first run
+ever with a new `CLAUDE_CONFIG_DIR` writes that folder's first-run `.claude.json`.
 
 ### 4.14.11 Plugin CLI version (fixes the 0.3.5 field report)
 
@@ -7909,7 +7971,7 @@ later events go positional).
 
 ### 8.1 Package
 
-`pyproject.toml`: name `agent-postmortem`, version `0.5.0`, console scripts
+`pyproject.toml`: name `agent-postmortem`, version `0.5.1`, console scripts
 `agent-postmortem` and `postmortem`, `requires-python >= 3.11`, no runtime
 dependencies, `[project.optional-dependencies].dev = ["pytest>=8",
 "ruff>=0.6"]`, classifiers, URLs (Homepage, Issues, Changelog). The wheel
@@ -7924,7 +7986,7 @@ checkout also ships `agent_postmortem/_build_info.json` (`branch`, short `commit
 printed, for a wheel built from the sdist (the release workflow's `uv build`, where there is no
 git), from the commit tagged `v<version>`, or for an editable install; a malformed stamp is
 ignored. The package version, the plugin manifest and `hook capabilities` stay the plain
-release version (`0.5.0`): run.sh compares `hook
+release version (`0.5.1`): run.sh compares `hook
 capabilities` with the manifest of the INSTALLED plugin copy and reinstalls a bundled CLI that
 differs (4.14.11), so a version that moved ahead of the cached manifest would have the bundled
 CLI replaced by the release from PyPI. `tests/test_build_identity.py`.

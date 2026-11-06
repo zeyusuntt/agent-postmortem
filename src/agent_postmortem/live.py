@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import commands, disclosure, ledger, markers, reader, severity, state, workers
 from .detectors.base import PARENT_SENTINEL_WINDOW_SECONDS, PARENT_STOP_WINDOW_SECONDS
-from .detectors.missing_artifact import artifact_paths
+from .detectors.missing_artifact import artifact_paths, is_placeholder
 from .redact import Redactor
 
 _AGENT_FILE_RE = re.compile(r"^agent-(a[0-9a-f]{16})\.jsonl$")
@@ -1166,10 +1166,11 @@ def final_cause(path: Path) -> str | None:
 def missing_outputs(outputs: list[str] | None, cwd: str | None = None) -> list[str]:
     """R4: the first prompt's artifact paths that are absent right now (4.14.2), leaving out one
     inside the subagent's own working directory when that directory is gone too (0.4: a worktree
-    removed after the run; nothing there can be checked)."""
+    removed after the run; nothing there can be checked). A placeholder an older build kept names
+    no one file (a store of the same facts version is read as it is)."""
     return [
         p for p in outputs or []
-        if severity.absence(p) == "absent_now"
+        if not is_placeholder(p) and severity.absence(p) == "absent_now"
         and not (cwd is not None and severity.working_dir_gone(p, (cwd,)))
     ]
 

@@ -8,7 +8,7 @@ Nothing has to be armed. The plugin reads the `claude --bg` in the session's own
 
 Which "done" in your last Claude Code run can't you trust? agent-postmortem reads the transcripts Claude Code already wrote under `~/.claude/projects` and, for every Workflow run and every session with subagents, says which agents were killed (in a Workflow, often quietly started over), which never returned, which said "done" while their own result said otherwise, and which files and commits that left at risk. Then it lists at most 3 next steps. No setup, no proxy, no LLM, no network access, and it never changes your files.
 
-On the maintainer's machine (scan 2026-10-27, 0.3.2), 13 of 166 workflow runs launched at least one agent's task a second time, and 10.2 hours went to retries and to attempts that ended without a result.
+On the maintainer's machine (scan 2026-10-27, 0.3.2), 13 of 166 workflow runs launched at least one agent's task a second time, and 10.2 hours of agent time went to retries and to attempts that ended without a result, added up across attempts, so this is not wall-clock time when agents ran in parallel.
 
 ```
 uvx agent-postmortem scan
@@ -27,7 +27,7 @@ The command-line tool is local and read-only: Python standard library only, no L
 RUN wf_00000000-d30  DEGRADED  ended 2026-01-06 19:55Z
 2 agents took 4 attempts.
 2 attempts were killed by the runtime and restarted.
-20m was spent on retries and attempts that ended without a result.
+20m of agent time went to retries and attempts that ended without a result.
 
 WORK AT RISK  2 attempts at risk: 0 paths named, 0 commits reported; the tool cannot see all of what was written.
   a:76c7463d911b (agent-1)  ran 1 shell command that may have written more
@@ -36,7 +36,7 @@ WORK AT RISK  2 attempts at risk: 0 paths named, 0 commits reported; the tool ca
   run yourself: git status --short in the repository the agent worked in
 
 WHAT TO DO
-  1. [decide] rules that would have prevented this: agent-postmortem rules propose
+  1. [decide] rules that might have helped: agent-postmortem rules propose
 
 AGENT     PHASE      ATTEMPTS  END                KILLED  PATHS  COMMITS  WASTED
 agent-1   phase-1    2         completed          1       0+     0        10m
@@ -67,7 +67,7 @@ Coverage today, checked against the failure reports in Claude Code's issue track
 | Run shape or failure | Coverage | What you get |
 |---|---|---|
 | Workflow runs: runtime kills and retries | covered | kills logged as `[Request interrupted by user]` with no one at the keyboard, cold same-key retries and the time they cost, failed attempts with their cause (usage limit and reset time, machine sleep, server error), and a workflow the harness reported failed |
-| A "done" you can't trust | covered | an agent that completed while its own result reports failed tests, `ok: false` or blockers (`claim_contradiction`), or while its Codex companion call never started (`codex_unavailable`) |
+| A "done" you can't trust | covered | an agent that completed while its own structured result reports failed tests (`tests_failed`, `tests.failed`), `status: failed`, `ok: false` or blockers (`claim_contradiction`; a plain-text result is not read, only its length is kept, nor is a value nested any deeper), or while its Codex companion call never started (`codex_unavailable`) |
 | Subagents that never returned | covered | WORK AT RISK says `unknown` instead of `none`, and names them |
 | `claude -p` (headless) | partial | killed and unreturned subagents show; with the plugin, a foreground subagent that returns on an error or without its prompted output file is reported at once. The process's own exit status (for example exit 0 with `result: success` after a kill) is not in the transcript, so the tool cannot see it |
 | Background subagents (`run_in_background`) | partial | killed and unreturned ones show; a "completed" that arrived while the agent's own background work was still running, or with a tool call that never got a result, is not flagged yet |
@@ -87,6 +87,8 @@ agent-postmortem demo
 agent-postmortem scan
 agent-postmortem run <run-id>
 ```
+
+With the plugin (Inside Claude Code, below), check it works from inside a session: `agent-postmortem doctor --test-alert`.
 
 `scan` looks under `~/.claude/projects` by default and prints the runs that need attention (a line or file it cannot read is skipped and counted on a `SKIPPED` line, never a crash): ranked, with a one-line reason and a next command for each, plus 7-day and all-time totals. Add `--all` for the full one-line-per-run list instead. `run` takes a run id (or a unique prefix of one, a session UUID, an agent transcript stem such as `agent-<id>`, an agent alias such as `a:<alias>` from a share report, or a path) and prints the verdict for that one run, what work is at risk, and at most 3 next steps; an id that matches more than one run is an error listing the candidates. Add `--evidence` for excerpt pointers or `--verbose` for the full finding list.
 
@@ -122,10 +124,11 @@ Verdict: 0.3 stops guessing. Severity, the WORK AT RISK block, and the run's end
 | `agent-postmortem watch <run-id>` | Follow one running workflow: print START, then KILL, FAILED, OK (a result came back), and QUIET as they happen, then DONE or LIMIT. DONE comes the moment the session's own record says the run ended, or after a grace period once every journal key is resolved. Read-only, designed to be a Claude Code Monitor command. |
 | `agent-postmortem watch --session [<session-id>]` | Follow one session while it runs, for a Claude Code Monitor: a line only when a subagent is interrupted with nothing in the session to explain it, fails after changing files, or returns while its own last entry says otherwise, plus background-session state changes. With no id it follows the session you are in. |
 | `agent-postmortem status [<session-id>]` | One snapshot of a session: its subagents running, returned, interrupted or failed, what an interrupted one changed, returns its own transcript contradicts, and the background sessions' states with what each waits for and whether this session dispatched it (a session that is itself a background worker lists only the rows it launched). Reads only what was appended since the last call. |
+| `agent-postmortem doctor` | Says whether alerts can reach a session, since quiet can mean healthy or broken: the CLI, the plugin, Claude Code's version, readable transcripts and job files, writable state, this session's workers and the idle watcher. It also runs `claude agents --json` once, the only time this tool starts Claude Code, to check that the job files still say what Claude Code says. `--test-alert` sends one line through the per-call hook to see it arrive. |
 | `agent-postmortem statusline subagents` | A `subagentStatusLine` command: adds a fact to a row of Claude Code's subagent panel and leaves every other row as Claude Code draws it. |
 | `agent-postmortem hook <event>` | Claude Code plugin hook entry point; reads hook JSON from stdin. |
 
-`scan`, `run`, `rules`, `trend`, `rescue`, and `status` take `--json` and the level flags; `apply` takes the level flags only; `demo` and `watch` take `--json` only; `statusline` and `hook` take neither. The level flags are `--local` and `--raw` (`--no-redact` is the same as `--raw`); see Privacy.
+`scan`, `run`, `rules`, `trend`, `rescue`, `doctor`, and `status` take `--json` and the level flags; `apply` takes the level flags only; `demo` and `watch` take `--json` only; `statusline` and `hook` take neither. The level flags are `--local` and `--raw` (`--no-redact` is the same as `--raw`); see Privacy.
 
 ## Why
 
@@ -170,6 +173,8 @@ Install the command-line tool first (Quick start above), so the plugin finds it 
 /plugin marketplace add zeyusuntt/agent-postmortem
 /plugin install agent-postmortem@agent-postmortem
 ```
+
+Check it works, from inside a session: `agent-postmortem doctor --test-alert`. Your next tool call or prompt should read a line starting `ALERT TEST`.
 
 Its hooks shell out to the same CLI, never touch a run directory, and never fail a turn. After every tool call and on every prompt they read the job files of the workers this session launched with `claude --bg` and tell each change once, in a `WORKER` line that says the state, the reason and what helps; at each Stop a watcher starts if there is something to follow, and it wakes the session when it has gone idle. It checks every 20 s, wakes at most once per 5 minutes, and leaves when the session acts again. It needs Claude Code 2.1.314 or later, a session already running starts it after `/reload-plugins` or a restart, and `AGENT_POSTMORTEM_WAKE=0` turns it off. After every tool call and on every prompt the hooks also check the session's own subagents: one that was interrupted with nothing in the session to explain it, failed after changing files, or returned while its own transcript contradicts the return is reported to the agent at its next tool call, once. A call with nothing new prints nothing. On `SessionStart` they summarize any run that finished since you last looked, and a resumed session hears which of its own subagents never returned. On `Stop` and `StopFailure` they check every subagent and workflow unit spawned so far and print a finding the moment it is detected, not only at session end. On `SessionEnd` they run the read-only tooling checks over the main thread itself. On a `Workflow` launch they register the run immediately, so it is tracked even before its own directory exists, and hand the session the `watch` command to arm as a Monitor. Two skills come with it: `/postmortem` for the verdict and `/rescue` for the bounded rescue protocol.
 

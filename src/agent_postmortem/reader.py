@@ -1240,6 +1240,14 @@ def _reported_claims(value: dict) -> dict:
         if key in value and type(value[key]) is int:
             claims[key] = value[key]
 
+    # field report 2026-11-05: `{"tests": {"failed": 2}}`, one level and only these names
+    tests = value.get("tests")
+    if "tests_failed" not in claims and isinstance(tests, dict):
+        for key in ("failed", "failures"):
+            if type(tests.get(key)) is int:
+                claims["tests_failed"] = tests[key]
+                break
+
     if "blockers" in value and isinstance(value["blockers"], list):
         claims["blockers_count"] = len(value["blockers"])
 

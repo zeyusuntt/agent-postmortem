@@ -61,25 +61,31 @@ def enabled(main_path: str | Path) -> bool:
 
 
 def _version_ok(main_path: str) -> bool:
+    version = transcript_version(main_path)
+    return version is not None and version >= MIN_VERSION
+
+
+def transcript_version(main_path: str) -> tuple[int, ...] | None:
+    """The Claude Code version the transcript's last entry that has one records, or None."""
     try:
         size = os.stat(main_path).st_size
         with Path(main_path).open("rb") as handle:
             handle.seek(max(0, size - _VERSION_TAIL))
             tail = handle.read(_VERSION_TAIL)
     except OSError:
-        return False
+        return None
     for raw in reversed(tail.split(b"\n")):
         if b'"version"' not in raw:
             continue
         try:
             entry = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         version = entry.get("version") if isinstance(entry, dict) else None
         if isinstance(version, str):  # the entry's own: a tool's input can hold one too
             found = _VERSION_RE.fullmatch(version)
-            return found is not None and tuple(map(int, found.groups())) >= MIN_VERSION
-    return False
+            return tuple(map(int, found.groups())) if found is not None else None
+    return None
 
 
 def _worth_starting(payload: dict, gate: dict | None) -> bool:

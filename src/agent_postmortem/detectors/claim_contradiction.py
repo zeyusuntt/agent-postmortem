@@ -41,10 +41,11 @@ SEVERITY = "major"
 # Every clause this detector can emit (docs/DESIGN.md 4.13.4); severity.VOCAB["clause"] has
 # exactly these, and each has a row in severity.RULES.
 CLAUSE_IDS = (
-    "tests_failed", "suite_failed", "ok_false", "ready_false", "blockers",
+    "tests_failed", "suite_failed", "ok_false", "status_failed", "ready_false", "blockers",
     "report_path_missing", "self_reported_failure", "self_reported_blocked",
 )
-_LEGACY_MAJOR = frozenset({"tests_failed", "suite_failed", "ok_false", "ready_false", "blockers"})
+_LEGACY_MAJOR = frozenset({"tests_failed", "suite_failed", "ok_false", "status_failed",
+                           "ready_false", "blockers"})
 
 # A report_path is checked on disk only while the file could still be
 # expected to exist. Reports land in temp directories that are cleaned up
@@ -88,6 +89,9 @@ def _report_path_state(claims: dict) -> str | None:
     return None if state == "present_now" else state
 
 
+_FAILED_STATUS_WORDS = frozenset({"failed", "failure", "error", "errored"})
+
+
 def _clauses(
     claims: dict, check_report_path: bool = True, self_report: SelfReport | None = None,
 ) -> list[tuple[str, str, str]]:
@@ -113,6 +117,12 @@ def _clauses(
 
     if claims.get("ok") is False:
         clauses.append(("ok_false", "ok is false", "none"))
+
+    # field report 2026-11-05: the whole value and nothing else, so `done_with_concerns` or a
+    # sentence is no failure. None of 722 real results here said so, and none was misread
+    status = claims.get("status")
+    if isinstance(status, str) and status.strip().lower() in _FAILED_STATUS_WORDS:
+        clauses.append(("status_failed", f"status is {status.strip().lower()}", "none"))
 
     if claims.get("ready") is False:
         clauses.append(("ready_false", "ready is false", "none"))

@@ -222,7 +222,8 @@ def run(command: str) -> int:
         signature = _signature(subagents) if os.path.isdir(subagents) else ""
         marked, position = _main_delta(main_path, gate)
         recheck_at = gate.get("recheck_at") if gate else None
-        due = isinstance(recheck_at, (int, float)) and time.time() >= recheck_at
+        due = (isinstance(recheck_at, (int, float)) and time.time() >= recheck_at) \
+            or bool(gate and gate.get("alert"))
         worker_changed, table = _worker_changes(main_path, gate)
         if gate is not None and gate.get("v") == _GATE_VERSION and not marked and not due \
                 and not launched and not worker_changed and not gate.get("pending") \
@@ -250,6 +251,13 @@ def run(command: str) -> int:
         turn = getattr(deliver, "stall_turn", None)
         if isinstance(turn, int) and turn:
             written["stall_turn"] = turn
+        # `doctor --test-alert` (4.14.12): it stays until a check that began after it finds the flag
+        # gone, so one armed while this call ran, which read everything before it, is not lost
+        current = _read_gate(gate_path)
+        alert = current.get("alert") if current else None
+        if alert is not None and (alert != (gate or {}).get("alert")
+                                  or getattr(deliver, "test_alert", False)):
+            written["alert"] = alert
         _write_gate(gate_path, written, new=gate is None)
         message = deliver()  # the claims, last: a call killed before here has claimed nothing
         if message:

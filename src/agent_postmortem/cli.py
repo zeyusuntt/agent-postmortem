@@ -412,7 +412,7 @@ def _build_parser(tokens: list[str] | None = None) -> argparse.ArgumentParser:
         prog="postmortem",
         description=(
             "Turn the run directories a Claude Code Workflow leaves behind into a "
-            "verdict, evidence, and the rule that would have prevented the failure."
+            "verdict, evidence, and a rule that might have helped."
         ),
     )
     parser.add_argument(
@@ -693,6 +693,29 @@ def _build_parser(tokens: list[str] | None = None) -> argparse.ArgumentParser:
         ),
     )
     _add_level_flags(rescue_status)
+
+    doctor_cmd = sub.add_parser(
+        "doctor",
+        help=(
+            "Say whether alerts can reach a session: the CLI, the plugin, Claude Code's version, "
+            "readable transcripts and job files, writable state, this session's workers and the "
+            "idle watcher. --test-alert sends one line through the per-call hook."
+        ),
+    )
+    doctor_cmd.add_argument(
+        "--session", default="", metavar="SESSION",
+        help="A session id or transcript path (default: the caller's session, if any).",
+    )
+    doctor_cmd.add_argument(
+        "--root", type=Path, default=_default_root(),
+        help="Directory to search (default: ~/.claude/projects).",
+    )
+    doctor_cmd.add_argument(
+        "--test-alert", action="store_true",
+        help="Leave one line for the session's next hook call, to see an alert arrive.",
+    )
+    doctor_cmd.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    _add_level_flags(doctor_cmd)
 
     watch_cmd = sub.add_parser(
         "watch",
@@ -2503,6 +2526,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                     both_kinds=args.kind is None,
                     all_label=f"SINCE {args.since}" if since_date is not None else "ALL TIME",
                     older_blocked=older_blocked,
+                    read_in_part=sum(1 for row in rows if "(INCOMPLETE)" in row["verdict"]),
                 ),
             ),
             end="",
@@ -2948,6 +2972,42 @@ def _cmd_trend(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    from . import doctor
+
+    root = args.root.expanduser()
+    named = args.session if args.session else os.environ.get(_CALLER_SESSION_ENV, "").strip()
+    main_path = live.resolve_session(named, root) if named else None
+    if args.session and main_path is None:
+        print("postmortem: no such session", file=sys.stderr)
+        return 2
+    if main_path is not None:
+        main_path = main_path.resolve()  # a symlink's own name is no session id
+    if args.test_alert and main_path is None:
+        print("postmortem: doctor --test-alert needs a session: run it inside one, or pass "
+              "--session", file=sys.stderr)
+        return 1
+    redactor = _redactor_for(args)
+    if args.test_alert:
+        armed = doctor.arm_test_alert(main_path)
+        words = ("test alert armed: at your next tool call or prompt in this session you should "
+                 "read a line starting ALERT TEST. If you do not, this session is not running the "
+                 "plugin's hooks: /reload-plugins or restart." if armed else
+                 "could not arm the test alert: the state directory is not writable, which is "
+                 "itself why alerts would not arrive")
+        if args.json:
+            sys.stdout.write(doctor.render_armed_json(armed, words, redactor))
+        else:
+            print(f"DOCTOR  {words}")
+        return 0 if armed else 3
+    report = doctor.diagnose(root, main_path, _version_text(_read_build_info()))
+    if args.json:
+        sys.stdout.write(doctor.render_json(report, redactor))
+    else:
+        sys.stdout.write(doctor.render_text(report, redactor, can_test=main_path is not None))
+    return 3 if report["failed"] else 0
+
+
 def _cmd_status(args: argparse.Namespace) -> int:
     root = args.root.expanduser()
     if not args.session and not os.environ.get(_CALLER_SESSION_ENV, "").strip():
@@ -3119,6 +3179,8 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         return _cmd_watch(args)
     if args.command == "status":
         return _cmd_status(args)
+    if args.command == "doctor":
+        return _cmd_doctor(args)
     if args.command == "statusline":
         return statusline.main_subagents()
     if args.command == "hook":

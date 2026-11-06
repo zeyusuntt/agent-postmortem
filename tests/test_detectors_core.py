@@ -307,7 +307,7 @@ def test_render_run_text_has_no_suggested_rules_or_next_action_sections():
     # unit M3a/M6: NEXT ACTION and SUGGESTED RULES are removed from the text
     # report entirely (docs/DESIGN.md 4.7 rule 4); "rules propose" is the
     # way to see rules now (unit M6, section 9), surfaced through WHAT TO
-    # DO's own "rules that would have prevented this" item instead of a
+    # DO's own "rules that might have helped" item instead of a
     # printed rule table.
     run = _load(SILENT_RETRY_KILL)
     findings = _all_core_findings(run)
@@ -333,7 +333,7 @@ def test_render_run_text_what_to_do_replaces_suggested_rules_and_next_action():
     assert "WHAT TO DO" in text
     what_to_do = text[text.index("WHAT TO DO"):text.index("AGENT")]
     assert "[decide]" in what_to_do
-    assert "rules that would have prevented this" in what_to_do
+    assert "rules that might have helped" in what_to_do
 
 
 def test_format_duration_hours_minutes_and_seconds():

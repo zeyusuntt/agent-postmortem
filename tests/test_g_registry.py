@@ -43,6 +43,7 @@ def test_the_g3_clauses_are_major_rows(clause):
 def test_the_clauses_the_function_emits_are_all_named():
     claims = {
         "tests_failed": 1, "suite_failed": 1, "ok": False, "ready": False, "blockers_count": 1,
+        "status": "failed",
         "report_path": "/tmp/agent-postmortem-fixture/g3/never-there.md",
     }
     from agent_postmortem.claims import SelfReport

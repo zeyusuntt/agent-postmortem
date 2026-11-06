@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from pathlib import Path
 
 WORKERS_KEPT = 128
@@ -174,14 +175,17 @@ def job_gone(path: str) -> bool:
 
 
 def read_job(path: str) -> dict | None:
-    """A job file as a dict, or None: missing, over 1 MB, unreadable, or not a JSON object."""
+    """A job file as a dict, or None: missing, over 1 MB, unreadable, not a regular file (a pipe
+    with no writer never answers), or not a JSON object."""
     try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            return None
         with Path(path).open("rb") as handle:
             raw = handle.read(_JOB_FILE_BYTES + 1)
         if len(raw) > _JOB_FILE_BYTES:
             return None
         data = json.loads(raw)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
 

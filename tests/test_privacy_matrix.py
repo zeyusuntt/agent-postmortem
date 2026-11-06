@@ -289,6 +289,22 @@ def _planted_subagent(env: Env) -> None:
                                  "message": {"role": "user", "content": envelope}}) + "\n")
 
 
+def _doctor(env: Env, flags: list[str]):
+    """docs/DESIGN.md 4.14.12: over the planted session, whose job file holds the planted strings
+    in `needs`, `detail` and `output.result`."""
+    from agent_postmortem import doctor
+
+    env.monkeypatch.setattr(doctor, "_claude_path", lambda: None)  # never the real one in a test
+    _hook_worker(env, flags)
+    env.capsys.readouterr()
+    return _run_cli(env, "doctor", "--session", env.planted.session, "--root", env.planted.root,
+                    *flags)
+
+
+def _doctor_json(env: Env, flags: list[str]):
+    return _doctor(env, ["--json", *flags])
+
+
 def _status(*extra):
     def runner(env: Env, flags: list[str]):
         _planted_subagent(env)
@@ -421,6 +437,7 @@ SINKS = [
          json_lines=True),
     Sink("hook stop-watch", ("hook", "stop-watch"), _hook_stop_watch, (), levels=SHARE_ONLY,
          silent=True),
+    Sink("doctor", ("doctor",), _doctor, ("DOCTOR  ",)),
     Sink("status", ("status",), _status(),
          ("STATUS  session s_", "returned, but its own last entry says: a server error occurred")),
     Sink("statusline subagents", ("statusline", "subagents"), _statusline,
@@ -661,6 +678,8 @@ JSON_SINKS: list[JsonSink] = [
              _rescue_args("plan", "--json", "--evidence"), ('"units"', RUN_ID), options=("--evidence",),
              local_names=("label", "agent1"), raw_names=("label", "agent1"),
              share_alias=(POINTER_ALIAS, PATH_ALIAS), evidence=True),
+    JsonSink("doctor --json", ("doctor",), _doctor_json,
+             ('"document": "doctor"', '"checks"')),
     JsonSink("status --json", ("status",), _status("--json"),
              ('"session": "s_', '"returned_on_error"'), share_alias=(r'"agent": "a:[0-9a-f]{12,}"',)),
     JsonSink("rescue status --json", ("rescue", "status"), _rescue_args("status", "--json"),

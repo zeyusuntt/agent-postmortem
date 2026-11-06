@@ -790,7 +790,7 @@ def _workflow_account_lines(run: Run, findings: list[Finding]) -> list[str]:
 
 
 def _wasted_clause(findings: list[Finding]) -> str | None:
-    """docs/DESIGN.md 4.7 (FA5): '<W> was spent on retries and attempts that ended
+    """docs/DESIGN.md 4.7 (FA5): '<W> of agent time went to retries and attempts that ended
     without a result.' from `wasted_time`'s own `wasted_seconds` (workflow and session
     alike), or None when it is 0 or there is no such finding."""
     wasted_seconds = 0.0
@@ -800,7 +800,7 @@ def _wasted_clause(findings: list[Finding]) -> str | None:
     if not wasted_seconds:
         return None
     return (
-        f"{format_duration(wasted_seconds)} was spent on retries and attempts that ended "
+        f"{format_duration(wasted_seconds)} of agent time went to retries and attempts that ended "
         "without a result."
     )
 
@@ -1373,7 +1373,7 @@ def _what_to_do_items(
         if backing_rule_ids:
             items.append({
                 "grade": "decide",
-                "text": "rules that would have prevented this",
+                "text": "rules that might have helped",
                 "command": "agent-postmortem rules propose",
             })
 
@@ -1687,6 +1687,7 @@ def _tooling_phrase(detector_id: str, count: int) -> str:
 
 _CLAIM_CLAUSE_PHRASES = {
     "ok_false": "ok is false",
+    "status_failed": "its status reports failure",
     "ready_false": "ready is false",
     "report_path_missing": "a report_path that does not exist",
     "self_reported_blocked": "being blocked",
@@ -2432,6 +2433,7 @@ def render_scan_triage_text(
     both_kinds: bool = True,
     all_label: str = "ALL TIME",
     older_blocked: int = 0,
+    read_in_part: int = 0,
 ) -> str:
     """unit M3b: the new default `scan` text output. `shown_candidates` is
     already sorted and already truncated to --limit by the caller;
@@ -2450,8 +2452,9 @@ def render_scan_triage_text(
     )
     lines = [f"NEEDS ATTENTION ({total_candidates} of {total_runs} runs{note})"]
     if not shown_candidates and not total_candidates and not older_blocked:
-        # P12: never a bare header
-        lines.append("  nothing needs attention")
+        # P12: never a bare header; and no clean bill for what could not be read whole
+        lines.append("  nothing needs attention in what could be read" if read_in_part
+                     else "  nothing needs attention")
         workflow_runs = totals_all.get("workflow", {}).get("runs", 0)
         session_children = totals_all.get("session", {}).get("subagents", 0)
         if both_kinds and not workflow_runs and not session_children:
@@ -2472,6 +2475,10 @@ def render_scan_triage_text(
     if older_blocked:  # field reports 2026-11-04
         lines.append(f"  {older_blocked} more blocked in other sessions for over 3 days: "
                      "agent-postmortem status")
+    if read_in_part:  # field report 2026-11-05: `--all` said so, the default view did not
+        lines.append(f"  {read_in_part} of {total_runs} runs could only be read in part, so "
+                     f"{'it' if read_in_part == 1 else 'they'} may hide more: "
+                     "agent-postmortem scan --all")
     if total_live_now:
         shown_live = live_now or []
         live_note = (

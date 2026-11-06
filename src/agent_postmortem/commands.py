@@ -2088,18 +2088,32 @@ def runs_this_tool(command: str) -> bool:
                for segment in lex(_without_substitutions(command)).segments)
 
 
+_PYTHON_NAME_RE = re.compile(r"python(?:3(?:\.\d+)?)?")
+_TIMER_RE = re.compile(r"\s*import\s+time\s*;\s*time\.sleep\(\s*(\d+(?:\.\d+)?)\s*\)\s*;?\s*")
+
+
+def _only_waits(words: list[str]) -> bool:
+    """`sleep N` by any path, or exactly `python3 -c 'import time; time.sleep(N)'` (field report
+    2026-11-05: an agent refused a foreground `sleep` wrote its timer this way). N > 0."""
+    name = words[0].rsplit("/", 1)[-1] if words else ""
+    if name in ("sleep", "gsleep"):
+        return len(words) == 2 and positive_duration(words[1])
+    if len(words) == 3 and _PYTHON_NAME_RE.fullmatch(name) and words[1] == "-c":
+        script = _TIMER_RE.fullmatch(words[2])
+        return script is not None and float(script.group(1)) > 0
+    return False
+
+
 def is_timer(command: str) -> bool:
-    """A shell task that only waits, and so arms a deadline: `sleep N` (N > 0) by any path, then at
-    most one literal `echo`, `printf`, `true` or `:` joined by `;` or `&&`, with no redirect,
-    expansion or substitution anywhere (review round 1: `sleep 1; echo "$(tail -f x)"` never
-    ends)."""
+    """A shell task that only waits, and so arms a deadline: `_only_waits`, then at most one literal
+    `echo`, `printf`, `true` or `:` joined by `;` or `&&`, with no redirect, expansion or
+    substitution anywhere (review round 1: `sleep 1; echo "$(tail -f x)"` never ends)."""
     lexed = lex(command)
     segments = lexed.segments
     if not lexed.placed or lexed.trailing_op or not 1 <= len(segments) <= 2:
         return False
     first = [word.text for word in segments[0].words]
-    if len(first) != 2 or first[0].rsplit("/", 1)[-1] not in ("sleep", "gsleep") \
-            or not positive_duration(first[1]) or segments[0].redirects:
+    if not _only_waits(first) or segments[0].redirects:
         return False
     if len(segments) == 2:
         second = [word.text for word in segments[1].words]

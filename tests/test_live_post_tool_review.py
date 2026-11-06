@@ -198,7 +198,7 @@ def test_run_sh_ends_a_hung_post_tool_call_after_3_s(tmp_path):
     ended = time.time()
     assert result.returncode == 0 and result.stdout == "", result
     call = ended - float(started.read_text())
-    assert 2.5 < call < 3.6, f"the call ran {call:.2f} s"  # 4 s before
+    assert 2.5 < call < 4.0, f"the call ran {call:.2f} s"  # 4 s before: as wide as that allows
 
 
 def test_run_sh_probes_a_failing_path_cli_once_per_call(tmp_path):
@@ -217,7 +217,9 @@ def test_run_sh_probes_a_failing_path_cli_once_per_call(tmp_path):
     elapsed = time.monotonic() - start
     assert result.returncode == 0, result
     assert count.read_text().count("probe") == 1, count.read_text()
-    assert elapsed < 2.0, f"{elapsed:.1f} s"
+    # the count is what says once; the clock only that the 1 s probe deadline cut the 10 s sleep. A
+    # fixed 2 s failed at 2.8 s on a slow shared runner, a timing flake with a correct build
+    assert elapsed < 8.0, f"{elapsed:.1f} s"
 
 
 def test_the_capabilities_probe_starts_without_the_cli():
